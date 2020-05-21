@@ -299,6 +299,10 @@ router.post('documents.starred', auth(), pagination(), async ctx => {
         },
         include: [
           {
+            model: Collection,
+            as: 'collection',
+          },
+          {
             model: Star,
             as: 'starred',
             where: {
@@ -887,9 +891,9 @@ router.post('documents.move', auth(), async ctx => {
 
   const user = ctx.state.user;
   const document = await Document.findByPk(id, { userId: user.id });
-  const { collection } = document;
   authorize(user, 'move', document);
 
+  const { collection } = document;
   if (collection.type !== 'atlas' && parentDocumentId) {
     throw new InvalidRequestError(
       'Document cannot be nested in this collection type'
