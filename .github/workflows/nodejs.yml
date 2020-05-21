@@ -41,6 +41,17 @@ jobs:
         image: lphoward/fake-s3
         ports:
           - 4569:4569
+      redis:
+        # Docker Hub image
+        image: redis
+        ports:
+          - 6379:6379
+        # Set health checks to wait until redis has started
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     
     env:
       # The hostname used to communicate with the PostgreSQL service container
@@ -51,6 +62,7 @@ jobs:
       SECRET_KEY: F0E5AD933D7F6FD8F4DBB3E038C501C052DC0593C686D21ACB30AE205D2F634B
       DATABASE_URL_TEST: postgres://postgres:postgres@localhost:5432/outline_test
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/outline_test
+      REDIS_URL: redis://localhost:6379
       URL: http://localhost:3000
       SMTP_FROM_EMAIL: hello@example.com
       AWS_S3_UPLOAD_BUCKET_URL: http://s3:4569
