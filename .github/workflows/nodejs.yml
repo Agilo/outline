@@ -126,7 +126,7 @@ jobs:
       uses: easingthemes/ssh-deploy@v2.1.1
       env:
         SSH_PRIVATE_KEY: ${{ secrets.SSH_KEY }}
-        ARGS: "-rltgoDzvO --delete --exclude=.env"
+        ARGS: "-rltgoDzvO --delete --exclude=.env --exclude=post-deploy"
         SOURCE: "./"
         REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
         REMOTE_USER: ${{ secrets.REMOTE_USER }}
@@ -137,7 +137,4 @@ jobs:
         host: ${{ secrets.REMOTE_HOST }}
         username: ${{ secrets.REMOTE_USER }}
         key: ${{ secrets.SSH_KEY }}
-        script: |
-          cd ${{ secrets.REMOTE_TARGET }}
-          NODE_ENV=production npm run sequelize:migrate
-          pm2 reload ecosystem.config.js --env production
+        script: bash ${{ secrets.REMOTE_TARGET }}post-deploy
