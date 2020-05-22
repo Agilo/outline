@@ -44,7 +44,6 @@ class AccountMenu extends React.Component<Props> {
 
   render() {
     const { ui } = this.props;
-    const isLightTheme = ui.theme === 'light';
 
     return (
       <React.Fragment>
@@ -82,19 +81,42 @@ class AccountMenu extends React.Component<Props> {
             Report a bug
           </DropdownMenuItem>
           <hr />
-          <DropdownMenuItem onClick={ui.toggleDarkMode}>
-            <ChangeTheme justify="space-between">
-              {isLightTheme ? (
-                <React.Fragment>
-                  Dark theme <MoonIcon />
-                </React.Fragment>
-              ) : (
-                <React.Fragment>
-                  Light theme <SunIcon />
-                </React.Fragment>
-              )}
-            </ChangeTheme>
-          </DropdownMenuItem>
+          <DropdownMenu
+            position="right"
+            style={{
+              left: 170,
+              position: 'relative',
+              top: -34,
+            }}
+            label={
+              <DropdownMenuItem>
+                <ChangeTheme justify="space-between">
+                  Appearance
+                  {ui.resolvedTheme === 'light' ? <SunIcon /> : <MoonIcon />}
+                </ChangeTheme>
+              </DropdownMenuItem>
+            }
+            hover
+          >
+            <DropdownMenuItem
+              onClick={() => ui.setTheme('system')}
+              selected={ui.theme === 'system'}
+            >
+              System
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => ui.setTheme('light')}
+              selected={ui.theme === 'light'}
+            >
+              Light
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => ui.setTheme('dark')}
+              selected={ui.theme === 'dark'}
+            >
+              Dark
+            </DropdownMenuItem>
+          </DropdownMenu>
           <hr />
           <DropdownMenuItem onClick={this.handleLogout}>
             Log out
