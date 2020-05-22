@@ -81,7 +81,7 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
     - run: yarn install --pure-lockfile
-    - run: yarn sequelize:migrate
+    - run: ./node_modules/.bin/sequelize db:migrate --url $DATABASE_URL_TEST
     - run: yarn test
     - run: yarn lint
     - run: yarn flow
