@@ -51,7 +51,7 @@ describe('#hooks.unfurl', async () => {
     } catch (err) {
       const body = await res.json();
 
-      err.message += `\n\n${body}`;
+      err.message += `\n\n${JSON.stringify(body, undefined, 2)}`;
       throw err;
     }
   });
@@ -75,7 +75,7 @@ describe('#hooks.slack', async () => {
       expect(res.status).toEqual(200);
       expect(body.attachments).toEqual(undefined);
     } catch (err) {
-      err.message += `\n\n${body}`;
+      err.message += `\n\n${JSON.stringify(body, undefined, 2)}`;
       throw err;
     }
   });
@@ -105,7 +105,7 @@ describe('#hooks.slack', async () => {
     } catch (err) {
       const body = await res.json();
 
-      err.message += `\n\n${body}`;
+      err.message += `\n\n${JSON.stringify(body, undefined, 2)}`;
       throw err;
     }
   });
