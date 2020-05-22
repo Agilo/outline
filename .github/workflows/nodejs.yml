@@ -73,6 +73,10 @@ jobs:
       AWS_S3_UPLOAD_MAX_SIZE: 26214400
       AWS_S3_ACL: private
       SLACK_MESSAGE_ACTIONS: true
+      SLACK_APP_ID: ${{ secrets.SLACK_APP_ID }}
+      SLACK_KEY: ${{ secrets.SLACK_KEY }}
+      SLACK_SECRET: ${{ secrets.SLACK_SECRET }}
+      SLACK_VERIFICATION_TOKEN: ${{ secrets.SLACK_VERIFICATION_TOKEN }}
 
     steps:
     - uses: actions/checkout@v2
