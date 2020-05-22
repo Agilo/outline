@@ -44,8 +44,16 @@ describe('#hooks.unfurl', async () => {
         },
       },
     });
-    expect(res.status).toEqual(200);
-    expect(Slack.post).toHaveBeenCalled();
+
+    try {
+      expect(res.status).toEqual(200);
+      expect(Slack.post).toHaveBeenCalled();
+    } catch (err) {
+      const body = await res.json();
+
+      err.message += `\n\n${body}`;
+      throw err;
+    }
   });
 });
 
@@ -62,8 +70,14 @@ describe('#hooks.slack', async () => {
       },
     });
     const body = await res.json();
-    expect(res.status).toEqual(200);
-    expect(body.attachments).toEqual(undefined);
+
+    try {
+      expect(res.status).toEqual(200);
+      expect(body.attachments).toEqual(undefined);
+    } catch (err) {
+      err.message += `\n\n${body}`;
+      throw err;
+    }
   });
 
   it('should return search results with summary if query is in title', async () => {
@@ -82,10 +96,18 @@ describe('#hooks.slack', async () => {
       },
     });
     const body = await res.json();
-    expect(res.status).toEqual(200);
-    expect(body.attachments.length).toEqual(1);
-    expect(body.attachments[0].title).toEqual(document.title);
-    expect(body.attachments[0].text).toEqual(document.getSummary());
+
+    try {
+      expect(res.status).toEqual(200);
+      expect(body.attachments.length).toEqual(1);
+      expect(body.attachments[0].title).toEqual(document.title);
+      expect(body.attachments[0].text).toEqual(document.getSummary());
+    } catch (err) {
+      const body = await res.json();
+
+      err.message += `\n\n${body}`;
+      throw err;
+    }
   });
 
   it('should return search results if query is regex-like', async () => {
