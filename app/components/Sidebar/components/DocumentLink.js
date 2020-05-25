@@ -1,17 +1,20 @@
 // @flow
 import * as React from 'react';
-import { observer } from 'mobx-react';
+import { observer, Observer } from 'mobx-react';
 import { observable } from 'mobx';
 import styled from 'styled-components';
+import { Draggable } from 'react-beautiful-dnd';
 import Document from 'models/Document';
 import DocumentMenu from 'menus/DocumentMenu';
 import SidebarLink from './SidebarLink';
+import Droppable from './Droppable';
 import DropToImport from 'components/DropToImport';
 import Fade from 'components/Fade';
 import Collection from 'models/Collection';
 import DocumentsStore from 'stores/DocumentsStore';
 import Flex from 'shared/components/Flex';
 import { type NavigationNode } from 'types';
+import { DraggingDocumentIdContext } from './Collections';
 
 type Props = {
   node: NavigationNode,
@@ -21,6 +24,7 @@ type Props = {
   activeDocumentRef?: (?HTMLElement) => void,
   prefetchDocument: (documentId: string) => Promise<void>,
   depth: number,
+  isDropDisabled?: boolean,
 };
 
 @observer
@@ -69,6 +73,7 @@ class DocumentLink extends React.Component<Props> {
       activeDocumentRef,
       prefetchDocument,
       depth,
+      isDropDisabled,
     } = this.props;
 
     const showChildren = !!(
@@ -81,6 +86,11 @@ class DocumentLink extends React.Component<Props> {
         this.isActiveDocument())
     );
     const document = documents.get(node.id);
+
+    let hideDisclosure;
+    if (!this.hasChildDocuments()) {
+      hideDisclosure = true;
+    }
 
     return (
       <Flex
@@ -96,7 +106,8 @@ class DocumentLink extends React.Component<Props> {
               state: { title: node.title },
             }}
             expanded={showChildren ? true : undefined}
-            label={node.title}
+            hideDisclosure={hideDisclosure}
+            label={node.title || 'Untitled'}
             depth={depth}
             exact={false}
             menuOpen={this.menuOpen}
@@ -115,21 +126,55 @@ class DocumentLink extends React.Component<Props> {
               )
             }
           >
-            {this.hasChildDocuments() && (
-              <DocumentChildren column>
-                {node.children.map(childNode => (
-                  <DocumentLink
-                    key={childNode.id}
-                    collection={collection}
-                    node={childNode}
-                    documents={documents}
-                    activeDocument={activeDocument}
-                    prefetchDocument={prefetchDocument}
-                    depth={depth + 1}
-                  />
-                ))}
-              </DocumentChildren>
-            )}
+            <DraggingDocumentIdContext.Consumer>
+              {draggingDocumentId => {
+                const disableChildDrops =
+                  isDropDisabled || draggingDocumentId === node.id;
+
+                return (
+                  <Droppable
+                    collectionId={collection.id}
+                    documentId={node.id}
+                    isDropDisabled={disableChildDrops}
+                  >
+                    {this.hasChildDocuments() && (
+                      <DocumentChildren column>
+                        <Observer>
+                          {() =>
+                            node.children.map((childNode, index) => (
+                              <Draggable
+                                key={childNode.id}
+                                draggableId={childNode.id}
+                                index={index}
+                              >
+                                {provided => (
+                                  <div
+                                    ref={provided.innerRef}
+                                    {...provided.draggableProps}
+                                    {...provided.dragHandleProps}
+                                  >
+                                    <DocumentLink
+                                      key={childNode.id}
+                                      collection={collection}
+                                      node={childNode}
+                                      documents={documents}
+                                      activeDocument={activeDocument}
+                                      prefetchDocument={prefetchDocument}
+                                      depth={depth + 1}
+                                      isDropDisabled={disableChildDrops}
+                                    />
+                                  </div>
+                                )}
+                              </Draggable>
+                            ))
+                          }
+                        </Observer>
+                      </DocumentChildren>
+                    )}
+                  </Droppable>
+                );
+              }}
+            </DraggingDocumentIdContext.Consumer>
           </SidebarLink>
         </DropToImport>
       </Flex>

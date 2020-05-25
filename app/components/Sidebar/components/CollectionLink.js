@@ -1,8 +1,9 @@
 // @flow
 import * as React from 'react';
-import { observer } from 'mobx-react';
+import { observer, Observer } from 'mobx-react';
 import { observable } from 'mobx';
 import { CollectionIcon, PrivateCollectionIcon } from 'outline-icons';
+import { Draggable } from 'react-beautiful-dnd';
 import Collection from 'models/Collection';
 import Document from 'models/Document';
 import CollectionMenu from 'menus/CollectionMenu';
@@ -11,6 +12,7 @@ import DocumentsStore from 'stores/DocumentsStore';
 import SidebarLink from './SidebarLink';
 import DocumentLink from './DocumentLink';
 import DropToImport from 'components/DropToImport';
+import Droppable from './Droppable';
 import Flex from 'shared/components/Flex';
 
 type Props = {
@@ -69,19 +71,39 @@ class CollectionLink extends React.Component<Props> {
             />
           }
         >
-          <Flex column>
-            {collection.documents.map(node => (
-              <DocumentLink
-                key={node.id}
-                node={node}
-                documents={documents}
-                collection={collection}
-                activeDocument={activeDocument}
-                prefetchDocument={prefetchDocument}
-                depth={1.5}
-              />
-            ))}
-          </Flex>
+          <Droppable collectionId={collection.id}>
+            <Flex column>
+              <Observer>
+                {() =>
+                  collection.documents.map((node, index) => (
+                    <Draggable
+                      key={node.id}
+                      draggableId={node.id}
+                      index={index}
+                    >
+                      {(provided, snapshot) => (
+                        <div
+                          ref={provided.innerRef}
+                          {...provided.draggableProps}
+                          {...provided.dragHandleProps}
+                        >
+                          <DocumentLink
+                            key={node.id}
+                            node={node}
+                            documents={documents}
+                            collection={collection}
+                            activeDocument={activeDocument}
+                            prefetchDocument={prefetchDocument}
+                            depth={1.5}
+                          />
+                        </div>
+                      )}
+                    </Draggable>
+                  ))
+                }
+              </Observer>
+            </Flex>
+          </Droppable>
         </SidebarLink>
       </DropToImport>
     );
