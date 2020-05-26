@@ -136,4 +136,3 @@ jobs:
         user: ${{ secrets.REMOTE_USER }}
         key: ${{ secrets.SSH_KEY }}
         command: bash ${{ secrets.REMOTE_TARGET }}post-deploy
-        args: "-tt -vvv"
