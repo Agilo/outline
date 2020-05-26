@@ -130,10 +130,10 @@ jobs:
         REMOTE_USER: ${{ secrets.REMOTE_USER }}
         TARGET: ${{ secrets.REMOTE_TARGET }}
     - name: Run Post deployment scripts
-      uses: appleboy/ssh-action@master
+      uses: fifsky/ssh-action@master
       with:
         host: ${{ secrets.REMOTE_HOST }}
-        username: ${{ secrets.REMOTE_USER }}
+        user: ${{ secrets.REMOTE_USER }}
         key: ${{ secrets.SSH_KEY }}
-        script: bash ${{ secrets.REMOTE_TARGET }}post-deploy
-        debug: true
+        command: bash ${{ secrets.REMOTE_TARGET }}post-deploy
+        args: "-tt -vvv"
