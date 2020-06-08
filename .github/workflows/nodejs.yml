@@ -135,5 +135,5 @@ jobs:
         host: ${{ secrets.REMOTE_HOST }}
         user: ${{ secrets.REMOTE_USER }}
         key: ${{ secrets.SSH_KEY }}
-        command: bash ${{ secrets.REMOTE_TARGET }}post-deploy
+        command: "bash ${{ secrets.REMOTE_TARGET }}post-deploy &&"
         args: "-t"
