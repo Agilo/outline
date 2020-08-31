@@ -1,19 +1,19 @@
 // @flow
-import * as React from 'react';
-import { observer, Observer } from 'mobx-react';
-import { observable } from 'mobx';
-import styled from 'styled-components';
+import * as React from "react";
+import { observer, Observer } from "mobx-react";
+import { observable } from "mobx";
+import styled from "styled-components";
 import { Draggable } from 'react-beautiful-dnd';
-import Document from 'models/Document';
-import DocumentMenu from 'menus/DocumentMenu';
-import SidebarLink from './SidebarLink';
+import Document from "models/Document";
+import DocumentMenu from "menus/DocumentMenu";
+import SidebarLink from "./SidebarLink";
+import DropToImport from "components/DropToImport";
+import Fade from "components/Fade";
+import Collection from "models/Collection";
+import DocumentsStore from "stores/DocumentsStore";
+import Flex from "shared/components/Flex";
+import { type NavigationNode } from "types";
 import Droppable from './Droppable';
-import DropToImport from 'components/DropToImport';
-import Fade from 'components/Fade';
-import Collection from 'models/Collection';
-import DocumentsStore from 'stores/DocumentsStore';
-import Flex from 'shared/components/Flex';
-import { type NavigationNode } from 'types';
 import { DraggingDocumentIdContext } from './Collections';
 
 type Props = {
@@ -107,7 +107,7 @@ class DocumentLink extends React.Component<Props> {
             }}
             expanded={showChildren ? true : undefined}
             hideDisclosure={hideDisclosure}
-            label={node.title || 'Untitled'}
+            label={node.title || "Untitled"}
             depth={depth}
             exact={false}
             menuOpen={this.menuOpen}
