@@ -3,8 +3,8 @@ import * as React from "react";
 import { observer, inject } from "mobx-react";
 import { withRouter, type RouterHistory } from "react-router-dom";
 import keydown from "react-keydown";
-import { DragDropContext } from 'react-beautiful-dnd';
-import type { DropResult, DragStart } from 'react-beautiful-dnd';
+import { DragDropContext } from "react-beautiful-dnd";
+import type { DropResult, DragStart } from "react-beautiful-dnd";
 import Flex from "shared/components/Flex";
 import { PlusIcon } from "outline-icons";
 import { newDocumentUrl } from "utils/routeHelpers";
@@ -12,7 +12,7 @@ import {
   DROPPABLE_COLLECTION_SUFFIX,
   DROPPABLE_DOCUMENT_SUFFIX,
   DROPPABLE_DOCUMENT_SEPARATOR,
-} from 'utils/dnd';
+} from "utils/dnd";
 
 import Header from "./Header";
 import SidebarLink from "./SidebarLink";
@@ -25,7 +25,7 @@ import PoliciesStore from "stores/PoliciesStore";
 import UiStore from "stores/UiStore";
 import DocumentsStore from "stores/DocumentsStore";
 
-export const DraggingDocumentIdContext = React.createContext();
+export const DraggingDocumentIdContext: any = React.createContext();
 
 type Props = {
   history: RouterHistory,
@@ -101,6 +101,7 @@ class Collections extends React.Component<Props, State> {
 
     // Get collection and parent document from doppableId
     if (
+      result.destination &&
       result.destination.droppableId.indexOf(DROPPABLE_COLLECTION_SUFFIX) === 0
     ) {
       collection = collections.get(
@@ -109,6 +110,7 @@ class Collections extends React.Component<Props, State> {
         )
       );
     } else if (
+      result.destination &&
       result.destination.droppableId.indexOf(DROPPABLE_DOCUMENT_SUFFIX) === 0 &&
       result.destination.droppableId.indexOf(DROPPABLE_DOCUMENT_SEPARATOR)
     ) {
@@ -144,7 +146,7 @@ class Collections extends React.Component<Props, State> {
       document,
       collection.id,
       parentDocumentId,
-      result.destination.index
+      result.destination ? result.destination.index : 0
     );
   };
 

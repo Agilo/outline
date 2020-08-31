@@ -3,7 +3,7 @@ import * as React from "react";
 import { observer, Observer } from "mobx-react";
 import { observable } from "mobx";
 import styled from "styled-components";
-import { Draggable } from 'react-beautiful-dnd';
+import { Draggable } from "react-beautiful-dnd";
 import Document from "models/Document";
 import DocumentMenu from "menus/DocumentMenu";
 import SidebarLink from "./SidebarLink";
@@ -13,8 +13,8 @@ import Collection from "models/Collection";
 import DocumentsStore from "stores/DocumentsStore";
 import Flex from "shared/components/Flex";
 import { type NavigationNode } from "types";
-import Droppable from './Droppable';
-import { DraggingDocumentIdContext } from './Collections';
+import Droppable from "./Droppable";
+import { DraggingDocumentIdContext } from "./Collections";
 
 type Props = {
   node: NavigationNode,
@@ -133,7 +133,7 @@ class DocumentLink extends React.Component<Props> {
 
                 return (
                   <Droppable
-                    collectionId={collection.id}
+                    collectionId={collection ? collection.id : 0}
                     documentId={node.id}
                     isDropDisabled={disableChildDrops}
                   >
