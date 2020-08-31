@@ -2,7 +2,7 @@
 import * as React from "react";
 import { observer, Observer } from "mobx-react";
 import { observable } from "mobx";
-import { Draggable } from 'react-beautiful-dnd';
+import { Draggable } from "react-beautiful-dnd";
 import Collection from "models/Collection";
 import Document from "models/Document";
 import CollectionMenu from "menus/CollectionMenu";
@@ -12,7 +12,7 @@ import SidebarLink from "./SidebarLink";
 import DocumentLink from "./DocumentLink";
 import CollectionIcon from "components/CollectionIcon";
 import DropToImport from "components/DropToImport";
-import Droppable from './Droppable';
+import Droppable from "./Droppable";
 import Flex from "shared/components/Flex";
 
 type Props = {
