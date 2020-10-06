@@ -1,24 +1,26 @@
 // @flow
-import * as React from "react";
-import { observer, Observer } from "mobx-react";
 import { observable } from "mobx";
-import styled from "styled-components";
+import { observer, Observer } from "mobx-react";
+import * as React from "react";
 import { Draggable } from "react-beautiful-dnd";
+import styled from "styled-components";
+import DocumentsStore from "stores/DocumentsStore";
+import Collection from "models/Collection";
 import Document from "models/Document";
-import DocumentMenu from "menus/DocumentMenu";
-import SidebarLink from "./SidebarLink";
 import DropToImport from "components/DropToImport";
 import Fade from "components/Fade";
-import Collection from "models/Collection";
-import DocumentsStore from "stores/DocumentsStore";
-import Flex from "shared/components/Flex";
-import { type NavigationNode } from "types";
-import Droppable from "./Droppable";
+import Flex from "components/Flex";
 import { DraggingDocumentIdContext } from "./Collections";
+import Droppable from "./Droppable";
+import EditableTitle from "./EditableTitle";
+import SidebarLink from "./SidebarLink";
+import DocumentMenu from "menus/DocumentMenu";
+import { type NavigationNode } from "types";
 
 type Props = {
   node: NavigationNode,
   documents: DocumentsStore,
+  canUpdate: boolean,
   collection?: Collection,
   activeDocument: ?Document,
   activeDocumentRef?: (?HTMLElement) => void,
@@ -53,6 +55,18 @@ class DocumentLink extends React.Component<Props> {
     prefetchDocument(node.id);
   };
 
+  handleTitleChange = async (title: string) => {
+    const document = this.props.documents.get(this.props.node.id);
+    if (!document) return;
+
+    await this.props.documents.update({
+      id: document.id,
+      lastRevision: document.revision,
+      text: document.text,
+      title,
+    });
+  };
+
   isActiveDocument = () => {
     return (
       this.props.activeDocument &&
@@ -74,6 +88,7 @@ class DocumentLink extends React.Component<Props> {
       prefetchDocument,
       depth,
       isDropDisabled,
+      canUpdate,
     } = this.props;
 
     const showChildren = !!(
@@ -81,11 +96,12 @@ class DocumentLink extends React.Component<Props> {
       collection &&
       (collection
         .pathToDocument(activeDocument)
-        .map(entry => entry.id)
+        .map((entry) => entry.id)
         .includes(node.id) ||
         this.isActiveDocument())
     );
     const document = documents.get(node.id);
+    const title = node.title || "Untitled";
 
     let hideDisclosure;
     if (!this.hasChildDocuments()) {
@@ -107,7 +123,13 @@ class DocumentLink extends React.Component<Props> {
             }}
             expanded={showChildren ? true : undefined}
             hideDisclosure={hideDisclosure}
-            label={node.title || "Untitled"}
+            label={
+              <EditableTitle
+                title={title}
+                onSubmit={this.handleTitleChange}
+                canUpdate={canUpdate}
+              />
+            }
             depth={depth}
             exact={false}
             menuOpen={this.menuOpen}
@@ -121,13 +143,11 @@ class DocumentLink extends React.Component<Props> {
                     onClose={() => (this.menuOpen = false)}
                   />
                 </Fade>
-              ) : (
-                undefined
-              )
+              ) : undefined
             }
           >
             <DraggingDocumentIdContext.Consumer>
-              {draggingDocumentId => {
+              {(draggingDocumentId) => {
                 const disableChildDrops =
                   isDropDisabled || draggingDocumentId === node.id;
 
@@ -147,7 +167,7 @@ class DocumentLink extends React.Component<Props> {
                                 draggableId={childNode.id}
                                 index={index}
                               >
-                                {provided => (
+                                {(provided) => (
                                   <div
                                     ref={provided.innerRef}
                                     {...provided.draggableProps}
@@ -161,6 +181,7 @@ class DocumentLink extends React.Component<Props> {
                                       activeDocument={activeDocument}
                                       prefetchDocument={prefetchDocument}
                                       depth={depth + 1}
+                                      canUpdate={canUpdate}
                                       isDropDisabled={disableChildDrops}
                                     />
                                   </div>

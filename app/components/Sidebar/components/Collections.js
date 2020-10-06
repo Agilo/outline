@@ -1,29 +1,28 @@
 // @flow
-import * as React from "react";
 import { observer, inject } from "mobx-react";
-import { withRouter, type RouterHistory } from "react-router-dom";
-import keydown from "react-keydown";
+import { PlusIcon } from "outline-icons";
+import * as React from "react";
 import { DragDropContext } from "react-beautiful-dnd";
 import type { DropResult, DragStart } from "react-beautiful-dnd";
-import Flex from "shared/components/Flex";
-import { PlusIcon } from "outline-icons";
-import { newDocumentUrl } from "utils/routeHelpers";
+import keydown from "react-keydown";
+import { withRouter, type RouterHistory } from "react-router-dom";
+
+import CollectionsStore from "stores/CollectionsStore";
+import DocumentsStore from "stores/DocumentsStore";
+import PoliciesStore from "stores/PoliciesStore";
+import UiStore from "stores/UiStore";
+import Fade from "components/Fade";
+import Flex from "components/Flex";
+import CollectionLink from "./CollectionLink";
+import CollectionsLoading from "./CollectionsLoading";
+import Header from "./Header";
+import SidebarLink from "./SidebarLink";
 import {
   DROPPABLE_COLLECTION_SUFFIX,
   DROPPABLE_DOCUMENT_SUFFIX,
   DROPPABLE_DOCUMENT_SEPARATOR,
 } from "utils/dnd";
-
-import Header from "./Header";
-import SidebarLink from "./SidebarLink";
-import CollectionLink from "./CollectionLink";
-import CollectionsLoading from "./CollectionsLoading";
-import Fade from "components/Fade";
-
-import CollectionsStore from "stores/CollectionsStore";
-import PoliciesStore from "stores/PoliciesStore";
-import UiStore from "stores/UiStore";
-import DocumentsStore from "stores/DocumentsStore";
+import { newDocumentUrl } from "utils/routeHelpers";
 
 export const DraggingDocumentIdContext: any = React.createContext();
 
@@ -151,23 +150,24 @@ class Collections extends React.Component<Props, State> {
   };
 
   render() {
-    const { collections, ui, documents } = this.props;
+    const { collections, ui, policies, documents } = this.props;
     const { draggingDocumentId } = this.state;
 
     const content = (
-      <React.Fragment>
+      <>
         <DragDropContext
           onDragStart={this.handleDragStart}
           onDragEnd={this.reorder}
         >
           <DraggingDocumentIdContext.Provider value={draggingDocumentId}>
-            {collections.orderedData.map(collection => (
+            {collections.orderedData.map((collection) => (
               <CollectionLink
                 key={collection.id}
                 documents={documents}
                 collection={collection}
                 activeDocument={documents.active}
                 prefetchDocument={documents.prefetchDocument}
+                canUpdate={policies.abilities(collection.id).update}
                 ui={ui}
               />
             ))}
@@ -180,7 +180,7 @@ class Collections extends React.Component<Props, State> {
           label="New collection…"
           exact
         />
-      </React.Fragment>
+      </>
     );
 
     return (
@@ -200,6 +200,9 @@ class Collections extends React.Component<Props, State> {
   }
 }
 
-export default inject("collections", "ui", "documents", "policies")(
-  withRouter(Collections)
-);
+export default inject(
+  "collections",
+  "ui",
+  "documents",
+  "policies"
+)(withRouter(Collections));

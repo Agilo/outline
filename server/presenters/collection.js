@@ -16,19 +16,12 @@ export default function present(collection: Collection) {
     description: collection.description,
     icon: collection.icon,
     color: collection.color || "#4E5C6E",
-    type: collection.type,
     private: collection.private,
     createdAt: collection.createdAt,
     updatedAt: collection.updatedAt,
     deletedAt: collection.deletedAt,
-    documents: undefined,
+    documents: collection.documentStructure ? collection.documentStructure : [],
   };
-
-  if (collection.type === "atlas") {
-    data.documents = collection.documentStructure
-      ? collection.documentStructure
-      : [];
-  }
 
   return data;
 }
