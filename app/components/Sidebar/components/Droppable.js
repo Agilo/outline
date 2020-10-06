@@ -25,9 +25,7 @@ class Droppable extends React.Component<Props> {
     let droppableId;
 
     if (documentId) {
-      droppableId = `${DROPPABLE_DOCUMENT_SUFFIX}${documentId}${
-        DROPPABLE_DOCUMENT_SEPARATOR
-      }${collectionId}`;
+      droppableId = `${DROPPABLE_DOCUMENT_SUFFIX}${documentId}${DROPPABLE_DOCUMENT_SEPARATOR}${collectionId}`;
     } else {
       droppableId = `${DROPPABLE_COLLECTION_SUFFIX}${collectionId}`;
     }
@@ -49,7 +47,7 @@ class Droppable extends React.Component<Props> {
   }
 }
 
-const DropContainer = styled.div(props => ({
+const DropContainer = styled.div((props) => ({
   backgroundColor: props.isDraggingOver
     ? props.theme.sidebarDroppableBackground
     : undefined,
