@@ -183,7 +183,7 @@
     "koa-webpack-dev-middleware": "^1.4.5",
     "koa-webpack-hot-middleware": "^1.0.3",
     "nodemon": "^1.19.4",
-    "prettier": "^2.0.5",
+    "prettier": "^2.2.0",
     "rimraf": "^2.5.4",
     "terser-webpack-plugin": "^4.1.0",
     "url-loader": "^0.6.2",
