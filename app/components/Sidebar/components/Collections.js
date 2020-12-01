@@ -4,6 +4,7 @@ import { PlusIcon } from "outline-icons";
 import * as React from "react";
 import { DragDropContext } from "react-beautiful-dnd";
 import type { DropResult, DragStart } from "react-beautiful-dnd";
+import { withTranslation, type TFunction } from "react-i18next";
 import keydown from "react-keydown";
 import { withRouter, type RouterHistory } from "react-router-dom";
 
@@ -33,6 +34,7 @@ type Props = {
   documents: DocumentsStore,
   onCreateCollection: () => void,
   ui: UiStore,
+  t: TFunction,
 };
 
 type State = {
@@ -150,7 +152,7 @@ class Collections extends React.Component<Props, State> {
   };
 
   render() {
-    const { collections, ui, policies, documents } = this.props;
+    const { collections, ui, policies, documents, t } = this.props;
     const { draggingDocumentId } = this.state;
 
     const content = (
@@ -177,7 +179,7 @@ class Collections extends React.Component<Props, State> {
           to="/collections"
           onClick={this.props.onCreateCollection}
           icon={<PlusIcon color="currentColor" />}
-          label="New collection…"
+          label={t("New collection…")}
           exact
         />
       </>
@@ -185,7 +187,7 @@ class Collections extends React.Component<Props, State> {
 
     return (
       <Flex column>
-        <Header>Collections</Header>
+        <Header>{t("Collections")}</Header>
         {collections.isLoaded ? (
           this.isPreloaded ? (
             content
@@ -200,9 +202,6 @@ class Collections extends React.Component<Props, State> {
   }
 }
 
-export default inject(
-  "collections",
-  "ui",
-  "documents",
-  "policies"
-)(withRouter(Collections));
+export default withTranslation()<Collections>(
+  inject("collections", "ui", "documents", "policies")(withRouter(Collections))
+);

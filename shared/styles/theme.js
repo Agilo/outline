@@ -167,6 +167,9 @@ export const light = {
 
   noticeInfoBackground: colors.warmGrey,
   noticeInfoText: colors.almostBlack,
+
+  scrollbarBackground: colors.smoke,
+  scrollbarThumb: darken(0.15, colors.smokeDark),
 };
 
 export const dark = {
@@ -224,6 +227,9 @@ export const dark = {
 
   noticeInfoBackground: colors.white10,
   noticeInfoText: colors.almostWhite,
+
+  scrollbarBackground: colors.black,
+  scrollbarThumb: colors.lightBlack,
 };
 
 export default light;

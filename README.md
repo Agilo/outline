@@ -139,8 +139,16 @@ To add new tests, write your tests with [Jest](https://facebook.github.io/jest/)
 
 ```shell
 # To run all tests
-yarn test
+make test
 
+# To run backend tests in watch mode
+make watch
+```
+
+Once the test database is created with  `make test` you may individually run
+frontend and backend tests directly.
+
+```shell
 # To run backend tests
 yarn test:server
 
@@ -156,6 +164,7 @@ However, before working on a pull request please let the core team know by creat
 
 If you’re looking for ways to get started, here's a list of ways to help us improve Outline:
 
+* [Translation](TRANSLATION.md) into other languages
 * Issues with [`good first issue`](https://github.com/outline/outline/labels/good%20first%20issue) label
 * Performance improvements, both on server and frontend
 * Developer happiness and documentation

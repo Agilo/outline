@@ -3,6 +3,7 @@ import { observable } from "mobx";
 import { observer, Observer } from "mobx-react";
 import * as React from "react";
 import { Draggable } from "react-beautiful-dnd";
+import { withTranslation, type TFunction } from "react-i18next";
 import styled from "styled-components";
 import DocumentsStore from "stores/DocumentsStore";
 import Collection from "models/Collection";
@@ -27,6 +28,7 @@ type Props = {
   prefetchDocument: (documentId: string) => Promise<void>,
   depth: number,
   isDropDisabled?: boolean,
+  t: TFunction,
 };
 
 @observer
@@ -89,6 +91,7 @@ class DocumentLink extends React.Component<Props> {
       depth,
       isDropDisabled,
       canUpdate,
+      t,
     } = this.props;
 
     const showChildren = !!(
@@ -101,7 +104,7 @@ class DocumentLink extends React.Component<Props> {
         this.isActiveDocument())
     );
     const document = documents.get(node.id);
-    const title = node.title || "Untitled";
+    const title = node.title || t("Untitled");
 
     let hideDisclosure;
     if (!this.hasChildDocuments()) {
@@ -183,6 +186,7 @@ class DocumentLink extends React.Component<Props> {
                                       depth={depth + 1}
                                       canUpdate={canUpdate}
                                       isDropDisabled={disableChildDrops}
+                                      t={t}
                                     />
                                   </div>
                                 )}
@@ -205,4 +209,4 @@ class DocumentLink extends React.Component<Props> {
 
 const DocumentChildren = styled(Flex)``;
 
-export default DocumentLink;
+export default withTranslation()<DocumentLink>(DocumentLink);
