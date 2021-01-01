@@ -4,7 +4,7 @@ import { observer, inject } from "mobx-react";
 import { withRouter, type RouterHistory } from "react-router-dom";
 import keydown from "react-keydown";
 import { DragDropContext } from "react-beautiful-dnd";
-import type { DropResult, BeforeCapture } from "react-beautiful-dnd";
+import type { DropResult, DragStart } from "react-beautiful-dnd";
 import Flex from "shared/components/Flex";
 import { PlusIcon } from "outline-icons";
 import { newDocumentUrl } from "utils/routeHelpers";
@@ -35,7 +35,6 @@ const initialSidebarDnDContextValue: SidebarDnDContextObject = {
   draggingDocumentId: undefined,
 };
 
-//$FlowFixMe
 export const SidebarDnDContext = React.createContext(
   initialSidebarDnDContextValue
 );
@@ -82,37 +81,10 @@ class Collections extends React.Component<Props, State> {
     this.props.history.push(newDocumentUrl(activeCollectionId));
   }
 
-  getDroppableIdParts(droppableId: string) {
-    let collection, parentDocumentId;
-    const { collections } = this.props;
-
-    if (droppableId.indexOf(DROPPABLE_COLLECTION_SUFFIX) === 0) {
-      collection = collections.get(
-        droppableId.substring(DROPPABLE_COLLECTION_SUFFIX.length)
-      );
-    } else if (
-      droppableId.indexOf(DROPPABLE_DOCUMENT_SUFFIX) === 0 &&
-      droppableId.indexOf(DROPPABLE_DOCUMENT_SEPARATOR)
-    ) {
-      const [documentId, collectionId] = droppableId
-        .substring(DROPPABLE_DOCUMENT_SUFFIX.length)
-        .split(DROPPABLE_DOCUMENT_SEPARATOR);
-
-      parentDocumentId = documentId;
-
-      collection = collections.get(collectionId);
-    }
-
-    return {
-      collection,
-      parentDocumentId,
-    };
-  }
-
-  handleBeforeCapture = (before: BeforeCapture) => {
+  handleDragStart = (initial: DragStart) => {
     this.setState({
       isDragging: true,
-      draggingDocumentId: before.draggableId,
+      draggingDocumentId: initial.draggableId,
     });
   };
 
@@ -122,53 +94,49 @@ class Collections extends React.Component<Props, State> {
       draggingDocumentId: undefined,
     });
 
-    // Bail out early if result doesn't have a destination or combine data
-    if (!result.destination && !result.combine) {
+    // Bail out early if result doesn't have a destination data
+    if (!result.destination) {
       return;
     }
 
     // Bail out early if no changes
     if (
-      (result.destination &&
-        result.destination.droppableId === result.source.droppableId &&
-        result.destination.index === result.source.index) ||
-      (result.combine && result.combine.draggableId === result.draggableId)
+      result.destination.droppableId === result.source.droppableId &&
+      result.destination.index === result.source.index
     ) {
       return;
     }
 
-    const { documents } = this.props;
+    const { documents, collections } = this.props;
     const document = documents.get(result.draggableId);
-    let collection,
-      parentDocumentId,
-      index = 0;
+    let collection, parentDocumentId;
 
     // Bail out if document doesn't exist
     if (!document) {
       return;
     }
 
-    if (result.destination) {
-      index = result.destination.index;
-      const droppableId = result.destination.droppableId;
-      const parts = this.getDroppableIdParts(droppableId);
+    // Get collection and parent document from doppableId
+    if (
+      result.destination.droppableId.indexOf(DROPPABLE_COLLECTION_SUFFIX) === 0
+    ) {
+      collection = collections.get(
+        result.destination.droppableId.substring(
+          DROPPABLE_COLLECTION_SUFFIX.length
+        )
+      );
+    } else if (
+      result.destination.droppableId.indexOf(DROPPABLE_DOCUMENT_SUFFIX) === 0 &&
+      result.destination.droppableId.indexOf(DROPPABLE_DOCUMENT_SEPARATOR)
+    ) {
+      let collectionId;
+      [
+        parentDocumentId,
+        collectionId,
+      ] = result.destination.droppableId
+        .substring(DROPPABLE_DOCUMENT_SUFFIX.length)
+        .split(DROPPABLE_DOCUMENT_SEPARATOR);
 
-      collection = parts.collection;
-      parentDocumentId = parts.parentDocumentId;
-    } else if (result.combine) {
-      const { draggableId, droppableId } = result.combine;
-      const parts = this.getDroppableIdParts(droppableId);
-
-      collection = parts.collection;
-      parentDocumentId = draggableId;
-    }
-
-    // Bail out if collection doesn't exist
-    if (!collection) {
-      return;
-    }
-
-    if (parentDocumentId) {
       // Bail out if moving document to itself
       if (parentDocumentId === document.id) {
         return;
@@ -180,9 +148,21 @@ class Collections extends React.Component<Props, State> {
       if (!parentDocument) {
         return;
       }
+
+      collection = collections.get(collectionId);
     }
 
-    documents.move(document, collection.id, parentDocumentId, index);
+    // Bail out if collection doesn't exist
+    if (!collection) {
+      return;
+    }
+
+    documents.move(
+      document,
+      collection.id,
+      parentDocumentId,
+      result.destination.index
+    );
   };
 
   render() {
@@ -192,7 +172,8 @@ class Collections extends React.Component<Props, State> {
     const content = (
       <React.Fragment>
         <DragDropContext
-          onBeforeCapture={this.handleBeforeCapture}
+          onDragStart={this.handleDragStart}
+          onDragUpdate={this.handleDragUpdate}
           onDragEnd={this.reorder}
         >
           <SidebarDnDContext.Provider
