@@ -5,17 +5,18 @@ import styled, { withTheme } from 'styled-components';
 import format from 'date-fns/format';
 import { MoreIcon } from 'outline-icons';
 
-import Flex from 'shared/components/Flex';
-import Time from 'shared/components/Time';
-import Avatar from 'components/Avatar';
-import RevisionMenu from 'menus/RevisionMenu';
-import Document from 'models/Document';
-import Revision from 'models/Revision';
+import Document from "models/Document";
+import Revision from "models/Revision";
+import Avatar from "components/Avatar";
+import Flex from "components/Flex";
+import Time from "components/Time";
+import RevisionMenu from "menus/RevisionMenu";
+import { type Theme } from "types";
 
 import { documentHistoryUrl } from 'utils/routeHelpers';
 
 type Props = {
-  theme: Object,
+  theme: Theme,
   showMenu: boolean,
   selected: boolean,
   document: Document,
@@ -36,8 +37,8 @@ class RevisionListItem extends React.Component<Props> {
           {revision.createdBy.name}
         </Author>
         <Meta>
-          <Time dateTime={revision.createdAt}>
-            {format(revision.createdAt, 'MMMM Do, YYYY h:mm a')}
+          <Time dateTime={revision.createdAt} tooltipDelay={250}>
+            {format(revision.createdAt, "MMMM Do, YYYY h:mm a")}
           </Time>
         </Meta>
         {showMenu && (

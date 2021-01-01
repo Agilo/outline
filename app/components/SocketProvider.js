@@ -90,6 +90,8 @@ class SocketProvider extends React.Component<Props> {
             if (document) {
               document.deletedAt = documentDescriptor.updatedAt;
             }
+            policies.remove(documentId);
+
             continue;
           }
 
@@ -152,8 +154,22 @@ class SocketProvider extends React.Component<Props> {
           const collectionId = collectionDescriptor.id;
           const collection = collections.get(collectionId) || {};
 
-          if (event.event === 'collections.delete') {
+          if (event.event === "collections.delete") {
+            const collection = collections.get(collectionId);
+            if (collection) {
+              collection.deletedAt = collectionDescriptor.updatedAt;
+            }
+
+            const deletedDocuments = documents.inCollection(collectionId);
+            deletedDocuments.forEach((doc) => {
+              doc.deletedAt = collectionDescriptor.updatedAt;
+              policies.remove(doc.id);
+            });
+
             documents.removeCollectionDocuments(collectionId);
+            memberships.removeCollectionMemberships(collectionId);
+            collections.remove(collectionId);
+            policies.remove(collectionId);
             continue;
           }
 
@@ -168,9 +184,10 @@ class SocketProvider extends React.Component<Props> {
             await collections.fetch(collectionId, { force: true });
           } catch (err) {
             if (err.statusCode === 404 || err.statusCode === 403) {
-              collections.remove(collectionId);
               documents.removeCollectionDocuments(collectionId);
               memberships.removeCollectionMemberships(collectionId);
+              collections.remove(collectionId);
+              policies.remove(collectionId);
               return;
             }
           }

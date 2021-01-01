@@ -1,34 +1,38 @@
 // @flow
-import * as React from 'react';
-import { withRouter, type RouterHistory } from 'react-router-dom';
-import { observable } from 'mobx';
-import { inject, observer } from 'mobx-react';
-import Button from 'components/Button';
-import Switch from 'components/Switch';
-import Input from 'components/Input';
-import InputRich from 'components/InputRich';
-import ColorPicker from 'components/ColorPicker';
-import HelpText from 'components/HelpText';
-import Flex from 'shared/components/Flex';
-
-import Collection from 'models/Collection';
-import CollectionsStore from 'stores/CollectionsStore';
-import UiStore from 'stores/UiStore';
+import { intersection } from "lodash";
+import { observable } from "mobx";
+import { inject, observer } from "mobx-react";
+import * as React from "react";
+import { withTranslation, type TFunction } from "react-i18next";
+import { withRouter, type RouterHistory } from "react-router-dom";
+import CollectionsStore from "stores/CollectionsStore";
+import UiStore from "stores/UiStore";
+import Collection from "models/Collection";
+import Button from "components/Button";
+import Flex from "components/Flex";
+import HelpText from "components/HelpText";
+import IconPicker, { icons } from "components/IconPicker";
+import Input from "components/Input";
+import InputRich from "components/InputRich";
+import Switch from "components/Switch";
 
 type Props = {
   history: RouterHistory,
   ui: UiStore,
   collections: CollectionsStore,
   onSubmit: () => void,
+  t: TFunction,
 };
 
 @observer
 class CollectionNew extends React.Component<Props> {
-  @observable name: string = '';
-  @observable description: string = '';
-  @observable color: string = '#4E5C6E';
+  @observable name: string = "";
+  @observable description: string = "";
+  @observable icon: string = "";
+  @observable color: string = "#4E5C6E";
   @observable private: boolean = false;
   @observable isSaving: boolean;
+  hasOpenedIconPicker: boolean = false;
 
   handleSubmit = async (ev: SyntheticEvent<>) => {
     ev.preventDefault();
@@ -37,6 +41,7 @@ class CollectionNew extends React.Component<Props> {
       {
         name: this.name,
         description: this.description,
+        icon: this.icon,
         color: this.color,
         private: this.private,
       },
@@ -56,9 +61,32 @@ class CollectionNew extends React.Component<Props> {
 
   handleNameChange = (ev: SyntheticInputEvent<*>) => {
     this.name = ev.target.value;
+
+    // If the user hasn't picked an icon yet, go ahead and suggest one based on
+    // the name of the collection. It's the little things sometimes.
+    if (!this.hasOpenedIconPicker) {
+      const keys = Object.keys(icons);
+      for (const key of keys) {
+        const icon = icons[key];
+        const keywords = icon.keywords.split(" ");
+        const namewords = this.name.toLowerCase().split(" ");
+        const matches = intersection(namewords, keywords);
+
+        if (matches.length > 0) {
+          this.icon = key;
+          return;
+        }
+      }
+
+      this.icon = "collection";
+    }
   };
 
-  handleDescriptionChange = getValue => {
+  handleIconPickerOpen = () => {
+    this.hasOpenedIconPicker = true;
+  };
+
+  handleDescriptionChange = (getValue: () => string) => {
     this.description = getValue();
   };
 
@@ -66,54 +94,67 @@ class CollectionNew extends React.Component<Props> {
     this.private = ev.target.checked;
   };
 
-  handleColor = (color: string) => {
+  handleChange = (color: string, icon: string) => {
     this.color = color;
+    this.icon = icon;
   };
 
   render() {
+    const { t } = this.props;
+
     return (
       <form onSubmit={this.handleSubmit}>
         <HelpText>
-          Collections are for grouping your knowledge base. They work best when
-          organized around a topic or internal team — Product or Engineering for
-          example.
+          {t(
+            "Collections are for grouping your knowledge base. They work best when organized around a topic or internal team — Product or Engineering for example."
+          )}
         </HelpText>
         <Flex>
           <Input
             type="text"
-            label="Name"
+            label={t("Name")}
             onChange={this.handleNameChange}
             value={this.name}
             required
             autoFocus
             flex
           />
-          &nbsp;<ColorPicker onChange={this.handleColor} value={this.color} />
+          &nbsp;
+          <IconPicker
+            onOpen={this.handleIconPickerOpen}
+            onChange={this.handleChange}
+            color={this.color}
+            icon={this.icon}
+          />
         </Flex>
         <InputRich
-          label="Description"
+          label={t("Description")}
           onChange={this.handleDescriptionChange}
-          defaultValue={this.description || ''}
-          placeholder="More details about this collection…"
+          defaultValue={this.description || ""}
+          placeholder={t("More details about this collection…")}
           minHeight={68}
           maxHeight={200}
         />
         <Switch
           id="private"
-          label="Private collection"
+          label={t("Private collection")}
           onChange={this.handlePrivateChange}
           checked={this.private}
         />
         <HelpText>
-          A private collection will only be visible to invited team members.
+          {t(
+            "A private collection will only be visible to invited team members."
+          )}
         </HelpText>
 
         <Button type="submit" disabled={this.isSaving || !this.name}>
-          {this.isSaving ? 'Creating…' : 'Create'}
+          {this.isSaving ? `${t("Creating")}…` : t("Create")}
         </Button>
       </form>
     );
   }
 }
 
-export default inject('collections', 'ui')(withRouter(CollectionNew));
+export default withTranslation()<CollectionNew>(
+  inject("collections", "ui")(withRouter(CollectionNew))
+);

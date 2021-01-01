@@ -37,4 +37,10 @@ jobs:
           command: yarn lint
       - run:
           name: flow
-          command: yarn flow
+          command: yarn flow check --max-workers 4
+      - run:
+          name: test
+          command: yarn test
+      - run:
+          name: build-webpack
+          command: yarn build:webpack

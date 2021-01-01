@@ -1,6 +1,7 @@
 // @flow
-import Router from 'koa-router';
-import { Team } from '../models';
+import Router from "koa-router";
+import auth from "../middlewares/authentication";
+import { Event, Team } from "../models";
 
 import auth from '../middlewares/authentication';
 import { presentTeam, presentPolicies } from '../presenters';
@@ -31,7 +32,25 @@ router.post('team.update', auth(), async ctx => {
   if (documentEmbeds !== undefined) team.documentEmbeds = documentEmbeds;
   if (guestSignin !== undefined) team.guestSignin = guestSignin;
   if (avatarUrl !== undefined) team.avatarUrl = avatarUrl;
+
+  const changes = team.changed();
+  const data = {};
+
   await team.save();
+
+  if (changes) {
+    for (const change of changes) {
+      data[change] = team[change];
+    }
+
+    await Event.create({
+      name: "teams.update",
+      actorId: user.id,
+      teamId: user.teamId,
+      data,
+      ip: ctx.request.ip,
+    });
+  }
 
   ctx.body = {
     data: presentTeam(team),

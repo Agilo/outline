@@ -1,33 +1,35 @@
 // @flow
-import * as React from 'react';
-import debug from 'debug';
-import * as Sentry from '@sentry/node';
-import nodemailer from 'nodemailer';
-import Oy from 'oy-vey';
-import { createQueue } from './utils/queue';
-import { baseStyles } from './emails/components/EmailLayout';
-import { WelcomeEmail, welcomeEmailText } from './emails/WelcomeEmail';
-import { ExportEmail, exportEmailText } from './emails/ExportEmail';
-import { SigninEmail, signinEmailText } from './emails/SigninEmail';
-import {
-  type Props as InviteEmailT,
-  InviteEmail,
-  inviteEmailText,
-} from './emails/InviteEmail';
-import {
-  type Props as DocumentNotificationEmailT,
-  DocumentNotificationEmail,
-  documentNotificationEmailText,
-} from './emails/DocumentNotificationEmail';
+import * as Sentry from "@sentry/node";
+import debug from "debug";
+import nodemailer from "nodemailer";
+import Oy from "oy-vey";
+import * as React from "react";
 import {
   type Props as CollectionNotificationEmailT,
   CollectionNotificationEmail,
   collectionNotificationEmailText,
-} from './emails/CollectionNotificationEmail';
+} from "./emails/CollectionNotificationEmail";
+import {
+  type Props as DocumentNotificationEmailT,
+  DocumentNotificationEmail,
+  documentNotificationEmailText,
+} from "./emails/DocumentNotificationEmail";
+import { ExportEmail, exportEmailText } from "./emails/ExportEmail";
+import {
+  type Props as InviteEmailT,
+  InviteEmail,
+  inviteEmailText,
+} from "./emails/InviteEmail";
+import { SigninEmail, signinEmailText } from "./emails/SigninEmail";
+import { WelcomeEmail, welcomeEmailText } from "./emails/WelcomeEmail";
+import { baseStyles } from "./emails/components/EmailLayout";
+import { createQueue } from "./utils/queue";
 
-const log = debug('emails');
+const log = debug("emails");
+const useTestEmailService =
+  process.env.NODE_ENV !== "production" && !process.env.SMTP_USERNAME;
 
-type Emails = 'welcome' | 'export';
+type Emails = "welcome" | "export";
 
 type SendMailType = {
   to: string,
@@ -67,13 +69,13 @@ export class Mailer {
     if (transporter) {
       const html = Oy.renderTemplate(data.html, {
         title: data.title,
-        headCSS: [baseStyles, data.headCSS].join(' '),
+        headCSS: [baseStyles, data.headCSS].join(" "),
         previewText: data.previewText,
       });
 
       try {
         log(`Sending email "${data.title}" to ${data.to}`);
-        await transporter.sendMail({
+        const info = await transporter.sendMail({
           from: process.env.SMTP_FROM_EMAIL,
           replyTo: process.env.SMTP_REPLY_EMAIL || process.env.SMTP_FROM_EMAIL,
           to: data.to,
@@ -82,6 +84,10 @@ export class Mailer {
           text: data.text,
           attachments: data.attachments,
         });
+
+        if (useTestEmailService) {
+          log("Email Preview URL: %s", nodemailer.getTestMessageUrl(info));
+        }
       } catch (err) {
         if (process.env.SENTRY_DSN) {
           Sentry.captureException(err);
@@ -94,9 +100,9 @@ export class Mailer {
   welcome = async (opts: { to: string, teamUrl: string }) => {
     this.sendMail({
       to: opts.to,
-      title: 'Welcome to Outline',
+      title: "Welcome to Outline",
       previewText:
-        'Outline is a place for your team to build and share knowledge.',
+        "Outline is a place for your team to build and share knowledge.",
       html: <WelcomeEmail {...opts} />,
       text: welcomeEmailText(opts),
     });
@@ -106,7 +112,7 @@ export class Mailer {
     this.sendMail({
       to: opts.to,
       attachments: opts.attachments,
-      title: 'Your requested export',
+      title: "Your requested export",
       previewText: "Here's your request data export from Outline",
       html: <ExportEmail />,
       text: exportEmailText,
@@ -116,11 +122,9 @@ export class Mailer {
   invite = async (opts: { to: string } & InviteEmailT) => {
     this.sendMail({
       to: opts.to,
-      title: `${opts.actorName} invited you to join ${
-        opts.teamName
-      }’s knowledgebase`,
+      title: `${opts.actorName} invited you to join ${opts.teamName}’s knowledge base`,
       previewText:
-        'Outline is a place for your team to build and share knowledge.',
+        "Outline is a place for your team to build and share knowledge.",
       html: <InviteEmail {...opts} />,
       text: inviteEmailText(opts),
     });
@@ -129,8 +133,8 @@ export class Mailer {
   signin = async (opts: { to: string, token: string, teamUrl: string }) => {
     this.sendMail({
       to: opts.to,
-      title: 'Magic signin link',
-      previewText: 'Here’s your link to signin to Outline.',
+      title: "Magic signin link",
+      previewText: "Here’s your link to signin to Outline.",
       html: <SigninEmail {...opts} />,
       text: signinEmailText(opts),
     });
@@ -161,11 +165,15 @@ export class Mailer {
   };
 
   constructor() {
+    this.loadTransport();
+  }
+
+  async loadTransport() {
     if (process.env.SMTP_HOST) {
       let smtpConfig = {
         host: process.env.SMTP_HOST,
         port: process.env.SMTP_PORT,
-        secure: process.env.NODE_ENV === 'production',
+        secure: process.env.NODE_ENV === "production",
         auth: undefined,
       };
 
@@ -177,6 +185,24 @@ export class Mailer {
       }
 
       this.transporter = nodemailer.createTransport(smtpConfig);
+      return;
+    }
+
+    if (useTestEmailService) {
+      log("SMTP_USERNAME not provided, generating test account…");
+      let testAccount = await nodemailer.createTestAccount();
+
+      const smtpConfig = {
+        host: "smtp.ethereal.email",
+        port: 587,
+        secure: false,
+        auth: {
+          user: testAccount.user,
+          pass: testAccount.pass,
+        },
+      };
+
+      this.transporter = nodemailer.createTransport(smtpConfig);
     }
   }
 }
@@ -184,7 +210,7 @@ export class Mailer {
 const mailer = new Mailer();
 export default mailer;
 
-export const mailerQueue = createQueue('email');
+export const mailerQueue = createQueue("email");
 
 mailerQueue.process(async (job: EmailJob) => {
   // $FlowIssue flow doesn't like dynamic values
@@ -204,7 +230,7 @@ export const sendEmail = (type: Emails, to: string, options?: Object = {}) => {
       attempts: 5,
       removeOnComplete: true,
       backoff: {
-        type: 'exponential',
+        type: "exponential",
         delay: 60 * 1000,
       },
     }

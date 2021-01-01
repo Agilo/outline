@@ -11,9 +11,38 @@ const Op = Sequelize.Op;
 const { authorize } = policy;
 const router = new Router();
 
-router.post('shares.list', auth(), pagination(), async ctx => {
-  let { sort = 'updatedAt', direction } = ctx.body;
-  if (direction !== 'ASC') direction = 'DESC';
+router.post("shares.info", auth(), async (ctx) => {
+  const { id, documentId } = ctx.body;
+  ctx.assertUuid(id || documentId, "id or documentId is required");
+
+  const user = ctx.state.user;
+  const share = await Share.findOne({
+    where: id
+      ? {
+          id,
+          revokedAt: { [Op.eq]: null },
+        }
+      : {
+          documentId,
+          userId: user.id,
+          revokedAt: { [Op.eq]: null },
+        },
+  });
+  if (!share || !share.document) {
+    return (ctx.response.status = 204);
+  }
+
+  authorize(user, "read", share);
+
+  ctx.body = {
+    data: presentShare(share),
+    policies: presentPolicies(user, [share]),
+  };
+});
+
+router.post("shares.list", auth(), pagination(), async (ctx) => {
+  let { sort = "updatedAt", direction } = ctx.body;
+  if (direction !== "ASC") direction = "DESC";
 
   const user = ctx.state.user;
   const where = {
@@ -34,7 +63,8 @@ router.post('shares.list', auth(), pagination(), async ctx => {
       {
         model: Document,
         required: true,
-        as: 'document',
+        paranoid: true,
+        as: "document",
         where: {
           collectionId: collectionIds,
         },
@@ -101,9 +131,12 @@ router.post('shares.revoke', auth(), async ctx => {
   const share = await Share.findByPk(id);
   authorize(user, 'revoke', share);
 
-  await share.revoke(user.id);
-
   const document = await Document.findByPk(share.documentId);
+  if (!document) {
+    throw new NotFoundError();
+  }
+
+  await share.revoke(user.id);
 
   await Event.create({
     name: 'shares.revoke',

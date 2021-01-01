@@ -144,6 +144,32 @@ const Sidebar = styled(Flex)`
   min-width: ${props => props.theme.sidebarWidth};
   border-left: 1px solid ${props => props.theme.divider};
   z-index: 1;
+
+  ${breakpoint("tablet")`
+    display: flex;
+  `};
+`;
+
+const Title = styled(Flex)`
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  align-items: center;
+  justify-content: flex-start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  width: 0;
+  flex-grow: 1;
+`;
+
+const Header = styled(Flex)`
+  align-items: center;
+  position: relative;
+  padding: 12px;
+  border-bottom: 1px solid ${(props) => props.theme.divider};
+  color: ${(props) => props.theme.text};
+  flex-shrink: 0;
 `;
 
 export default inject('documents', 'revisions')(DocumentHistory);

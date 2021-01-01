@@ -1,28 +1,29 @@
 // @flow
-import * as React from 'react';
-import styled from 'styled-components';
-import Abstract from './Abstract';
-import Airtable from './Airtable';
-import Codepen from './Codepen';
-import Figma from './Figma';
-import Framer from './Framer';
-import Gist from './Gist';
-import GoogleDocs from './GoogleDocs';
-import GoogleSheets from './GoogleSheets';
-import GoogleSlides from './GoogleSlides';
-import InVision from './InVision';
-import Loom from './Loom';
-import Lucidchart from './Lucidchart';
-import Marvel from './Marvel';
-import Mindmeister from './Mindmeister';
-import Miro from './Miro';
-import ModeAnalytics from './ModeAnalytics';
-import Prezi from './Prezi';
-import Spotify from './Spotify';
-import Trello from './Trello';
-import Typeform from './Typeform';
-import Vimeo from './Vimeo';
-import YouTube from './YouTube';
+import * as React from "react";
+import styled from "styled-components";
+import Abstract from "./Abstract";
+import Airtable from "./Airtable";
+import ClickUp from "./ClickUp";
+import Codepen from "./Codepen";
+import Figma from "./Figma";
+import Framer from "./Framer";
+import Gist from "./Gist";
+import GoogleDocs from "./GoogleDocs";
+import GoogleSheets from "./GoogleSheets";
+import GoogleSlides from "./GoogleSlides";
+import InVision from "./InVision";
+import Loom from "./Loom";
+import Lucidchart from "./Lucidchart";
+import Marvel from "./Marvel";
+import Mindmeister from "./Mindmeister";
+import Miro from "./Miro";
+import ModeAnalytics from "./ModeAnalytics";
+import Prezi from "./Prezi";
+import Spotify from "./Spotify";
+import Trello from "./Trello";
+import Typeform from "./Typeform";
+import Vimeo from "./Vimeo";
+import YouTube from "./YouTube";
 
 function matcher(Component) {
   return (url: string) => {
@@ -58,8 +59,15 @@ export default [
     matcher: matcher(Airtable),
   },
   {
-    title: 'Codepen',
-    keywords: 'code editor',
+    title: "ClickUp",
+    keywords: "project",
+    icon: () => <Img src="/images/clickup.png" />,
+    component: ClickUp,
+    matcher: matcher(ClickUp),
+  },
+  {
+    title: "Codepen",
+    keywords: "code editor",
     icon: () => <Img src="/images/codepen.png" />,
     component: Codepen,
     matcher: matcher(Codepen),

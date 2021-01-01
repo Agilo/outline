@@ -1,13 +1,14 @@
 // @flow
-import * as React from 'react';
-import { inject, observer } from 'mobx-react';
-import styled from 'styled-components';
-import Document from 'models/Document';
-import Flex from 'shared/components/Flex';
-import Time from 'shared/components/Time';
-import Breadcrumb from 'shared/components/Breadcrumb';
-import CollectionsStore from 'stores/CollectionsStore';
-import AuthStore from 'stores/AuthStore';
+import { observer } from "mobx-react";
+import * as React from "react";
+import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
+import styled from "styled-components";
+import Document from "models/Document";
+import Breadcrumb from "components/Breadcrumb";
+import Flex from "components/Flex";
+import Time from "components/Time";
+import useStores from "hooks/useStores";
 
 const Container = styled(Flex)`
   color: ${props => props.theme.textTertiary};
@@ -17,29 +18,28 @@ const Container = styled(Flex)`
 `;
 
 const Modified = styled.span`
-  color: ${props =>
-    props.highlight ? props.theme.text : props.theme.textTertiary};
-  font-weight: ${props => (props.highlight ? '600' : '400')};
+  color: ${(props) => props.theme.textTertiary};
+  font-weight: ${(props) => (props.highlight ? "600" : "400")};
 `;
 
 type Props = {
-  collections: CollectionsStore,
-  auth: AuthStore,
   showCollection?: boolean,
   showPublished?: boolean,
+  showLastViewed?: boolean,
   document: Document,
   children: React.Node,
 };
 
-function PublishingInfo({
-  auth,
-  collections,
+function DocumentMeta({
   showPublished,
   showCollection,
+  showLastViewed,
   document,
   children,
   ...rest
 }: Props) {
+  const { t } = useTranslation();
+  const { collections, auth } = useStores();
   const {
     modifiedSinceViewed,
     updatedAt,
@@ -49,6 +49,7 @@ function PublishingInfo({
     archivedAt,
     deletedAt,
     isDraft,
+    lastViewedAt,
   } = document;
 
   // Prevent meta information from displaying if updatedBy is not available.
@@ -62,37 +63,37 @@ function PublishingInfo({
   if (deletedAt) {
     content = (
       <span>
-        deleted <Time dateTime={deletedAt} /> ago
+        {t("deleted")} <Time dateTime={deletedAt} addSuffix />
       </span>
     );
   } else if (archivedAt) {
     content = (
       <span>
-        archived <Time dateTime={archivedAt} /> ago
+        {t("archived")} <Time dateTime={archivedAt} addSuffix />
       </span>
     );
   } else if (createdAt === updatedAt) {
     content = (
       <span>
-        created <Time dateTime={updatedAt} /> ago
+        {t("created")} <Time dateTime={updatedAt} addSuffix />
       </span>
     );
   } else if (publishedAt && (publishedAt === updatedAt || showPublished)) {
     content = (
       <span>
-        published <Time dateTime={publishedAt} /> ago
+        {t("published")} <Time dateTime={publishedAt} addSuffix />
       </span>
     );
   } else if (isDraft) {
     content = (
       <span>
-        saved <Time dateTime={updatedAt} /> ago
+        {t("saved")} <Time dateTime={updatedAt} addSuffix />
       </span>
     );
   } else {
     content = (
       <Modified highlight={modifiedSinceViewed}>
-        updated <Time dateTime={updatedAt} /> ago
+        {t("updated")} <Time dateTime={updatedAt} addSuffix />
       </Modified>
     );
   }
@@ -100,22 +101,41 @@ function PublishingInfo({
   const collection = collections.get(document.collectionId);
   const updatedByMe = auth.user && auth.user.id === updatedBy.id;
 
+  const timeSinceNow = () => {
+    if (isDraft || !showLastViewed) {
+      return null;
+    }
+    if (!lastViewedAt) {
+      return (
+        <>
+          •&nbsp;<Modified highlight>{t("Never viewed")}</Modified>
+        </>
+      );
+    }
+
+    return (
+      <span>
+        •&nbsp;{t("Viewed")} <Time dateTime={lastViewedAt} addSuffix shorten />
+      </span>
+    );
+  };
+
   return (
     <Container align="center" {...rest}>
-      {updatedByMe ? 'You' : updatedBy.name}&nbsp;
-      {content}
-      {showCollection &&
-        collection && (
-          <span>
-            &nbsp;in&nbsp;
-            <strong>
-              <Breadcrumb document={document} onlyText />
-            </strong>
-          </span>
-        )}
+      {updatedByMe ? t("You") : updatedBy.name}&nbsp;
+      {to ? <Link to={to}>{content}</Link> : content}
+      {showCollection && collection && (
+        <span>
+          &nbsp;{t("in")}&nbsp;
+          <strong>
+            <Breadcrumb document={document} onlyText />
+          </strong>
+        </span>
+      )}
+      &nbsp;{timeSinceNow()}
       {children}
     </Container>
   );
 }
 
-export default inject('collections', 'auth')(observer(PublishingInfo));
+export default observer(DocumentMeta);

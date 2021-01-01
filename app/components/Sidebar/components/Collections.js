@@ -1,11 +1,10 @@
 // @flow
-import * as React from 'react';
-import { observer, inject } from 'mobx-react';
-import { withRouter, type RouterHistory } from 'react-router-dom';
-import keydown from 'react-keydown';
-import Flex from 'shared/components/Flex';
-import { PlusIcon } from 'outline-icons';
-import { newDocumentUrl } from 'utils/routeHelpers';
+import { observer, inject } from "mobx-react";
+import { PlusIcon } from "outline-icons";
+import * as React from "react";
+import { withTranslation, type TFunction } from "react-i18next";
+import keydown from "react-keydown";
+import { withRouter, type RouterHistory } from "react-router-dom";
 
 import Header from './Header';
 import SidebarLink from './SidebarLink';
@@ -24,6 +23,7 @@ type Props = {
   documents: DocumentsStore,
   onCreateCollection: () => void,
   ui: UiStore,
+  t: TFunction,
 };
 
 @observer
@@ -52,7 +52,7 @@ class Collections extends React.Component<Props> {
   }
 
   render() {
-    const { collections, ui, documents } = this.props;
+    const { collections, ui, policies, documents, t } = this.props;
 
     const content = (
       <Flex column>
@@ -60,30 +60,40 @@ class Collections extends React.Component<Props> {
         {collections.orderedData.map(collection => (
           <CollectionLink
             key={collection.id}
-            documents={documents}
             collection={collection}
             activeDocument={documents.active}
             prefetchDocument={documents.prefetchDocument}
+            canUpdate={policies.abilities(collection.id).update}
             ui={ui}
           />
         ))}
         <SidebarLink
           to="/collections"
           onClick={this.props.onCreateCollection}
-          icon={<PlusIcon />}
-          label="New collection…"
+          icon={<PlusIcon color="currentColor" />}
+          label={`${t("New collection")}…`}
           exact
         />
       </Flex>
     );
 
     return (
-      collections.isLoaded &&
-      (this.isPreloaded ? content : <Fade>{content}</Fade>)
+      <Flex column>
+        <Header>{t("Collections")}</Header>
+        {collections.isLoaded ? (
+          this.isPreloaded ? (
+            content
+          ) : (
+            <Fade>{content}</Fade>
+          )
+        ) : (
+          <CollectionsLoading />
+        )}
+      </Flex>
     );
   }
 }
 
-export default inject('collections', 'ui', 'documents', 'policies')(
-  withRouter(Collections)
+export default withTranslation()<Collections>(
+  inject("collections", "ui", "documents", "policies")(withRouter(Collections))
 );

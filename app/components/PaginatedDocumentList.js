@@ -1,9 +1,9 @@
 // @flow
-import * as React from 'react';
-import { observer } from 'mobx-react';
-import Document from 'models/Document';
-import DocumentPreview from 'components/DocumentPreview';
-import PaginatedList from 'components/PaginatedList';
+import { observer } from "mobx-react";
+import * as React from "react";
+import Document from "models/Document";
+import DocumentListItem from "components/DocumentListItem";
+import PaginatedList from "components/PaginatedList";
 
 type Props = {
   documents: Document[],
@@ -25,8 +25,8 @@ class PaginatedDocumentList extends React.Component<Props> {
         heading={heading}
         fetch={fetch}
         options={options}
-        renderItem={item => (
-          <DocumentPreview key={item.id} document={item} {...rest} />
+        renderItem={(item) => (
+          <DocumentListItem key={item.id} document={item} {...rest} />
         )}
       />
     );

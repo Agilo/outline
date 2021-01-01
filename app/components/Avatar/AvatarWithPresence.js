@@ -1,14 +1,15 @@
 // @flow
-import * as React from 'react';
-import { observable } from 'mobx';
-import { observer } from 'mobx-react';
-import styled from 'styled-components';
-import distanceInWordsToNow from 'date-fns/distance_in_words_to_now';
-import Avatar from 'components/Avatar';
-import Tooltip from 'components/Tooltip';
-import User from 'models/User';
-import UserProfile from 'scenes/UserProfile';
-import { EditIcon } from 'outline-icons';
+import distanceInWordsToNow from "date-fns/distance_in_words_to_now";
+import { observable } from "mobx";
+import { observer } from "mobx-react";
+import { EditIcon } from "outline-icons";
+import * as React from "react";
+import { withTranslation, type TFunction } from "react-i18next";
+import styled from "styled-components";
+import User from "models/User";
+import UserProfile from "scenes/UserProfile";
+import Avatar from "components/Avatar";
+import Tooltip from "components/Tooltip";
 
 type Props = {
   user: User,
@@ -16,6 +17,7 @@ type Props = {
   isEditing: boolean,
   isCurrentUser: boolean,
   lastViewedAt: string,
+  t: TFunction,
 };
 
 @observer
@@ -37,18 +39,25 @@ class AvatarWithPresence extends React.Component<Props> {
       isPresent,
       isEditing,
       isCurrentUser,
+      t,
     } = this.props;
+
+    const action = isPresent
+      ? isEditing
+        ? t("currently editing")
+        : t("currently viewing")
+      : t("viewed {{ timeAgo }} ago", {
+          timeAgo: distanceInWordsToNow(new Date(lastViewedAt)),
+        });
 
     return (
       <React.Fragment>
         <Tooltip
           tooltip={
             <Centered>
-              <strong>{user.name}</strong> {isCurrentUser && '(You)'}
+              <strong>{user.name}</strong> {isCurrentUser && `(${t("You")})`}
               <br />
-              {isPresent
-                ? isEditing ? 'currently editing' : 'currently viewing'
-                : `viewed ${distanceInWordsToNow(new Date(lastViewedAt))} ago`}
+              {action}
             </Centered>
           }
           placement="bottom"
@@ -81,4 +90,4 @@ const AvatarWrapper = styled.div`
   transition: opacity 250ms ease-in-out;
 `;
 
-export default AvatarWithPresence;
+export default withTranslation()<AvatarWithPresence>(AvatarWithPresence);

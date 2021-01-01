@@ -1,16 +1,17 @@
 // @flow
-import * as React from 'react';
-import { Link } from 'react-router-dom';
-import { observable } from 'mobx';
-import { inject, observer } from 'mobx-react';
-import { SunIcon, MoonIcon } from 'outline-icons';
-import styled from 'styled-components';
-import UiStore from 'stores/UiStore';
-import AuthStore from 'stores/AuthStore';
-import Flex from 'shared/components/Flex';
-import { DropdownMenu, DropdownMenuItem } from 'components/DropdownMenu';
-import Modal from 'components/Modal';
-import KeyboardShortcuts from 'scenes/KeyboardShortcuts';
+import { observable } from "mobx";
+import { inject, observer } from "mobx-react";
+import { SunIcon, MoonIcon } from "outline-icons";
+import * as React from "react";
+import { withTranslation, type TFunction } from "react-i18next";
+import { Link } from "react-router-dom";
+import styled from "styled-components";
+import AuthStore from "stores/AuthStore";
+import UiStore from "stores/UiStore";
+import KeyboardShortcuts from "scenes/KeyboardShortcuts";
+import { DropdownMenu, DropdownMenuItem } from "components/DropdownMenu";
+import Flex from "components/Flex";
+import Modal from "components/Modal";
 import {
   developers,
   changelog,
@@ -24,6 +25,7 @@ type Props = {
   label: React.Node,
   ui: UiStore,
   auth: AuthStore,
+  t: TFunction,
 };
 
 @observer
@@ -43,14 +45,14 @@ class AccountMenu extends React.Component<Props> {
   };
 
   render() {
-    const { ui } = this.props;
+    const { ui, t } = this.props;
 
     return (
       <React.Fragment>
         <Modal
           isOpen={this.keyboardShortcutsOpen}
           onRequestClose={this.handleCloseKeyboardShortcuts}
-          title="Keyboard shortcuts"
+          title={t("Keyboard shortcuts")}
         >
           <KeyboardShortcuts />
         </Modal>
@@ -59,26 +61,26 @@ class AccountMenu extends React.Component<Props> {
           label={this.props.label}
         >
           <DropdownMenuItem as={Link} to={settings()}>
-            Settings
+            {t("Settings")}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={this.handleOpenKeyboardShortcuts}>
-            Keyboard shortcuts
+            {t("Keyboard shortcuts")}
           </DropdownMenuItem>
           <DropdownMenuItem href={developers()} target="_blank">
-            API documentation
+            {t("API documentation")}
           </DropdownMenuItem>
           <hr />
           <DropdownMenuItem href={changelog()} target="_blank">
-            Changelog
+            {t("Changelog")}
           </DropdownMenuItem>
           <DropdownMenuItem href={spectrumUrl()} target="_blank">
             Community
           </DropdownMenuItem>
           <DropdownMenuItem href={mailToUrl()} target="_blank">
-            Send us feedback
+            {t("Send us feedback")}
           </DropdownMenuItem>
           <DropdownMenuItem href={githubIssuesUrl()} target="_blank">
-            Report a bug
+            {t("Report a bug")}
           </DropdownMenuItem>
           <hr />
           <DropdownMenu
@@ -91,8 +93,8 @@ class AccountMenu extends React.Component<Props> {
             label={
               <DropdownMenuItem>
                 <ChangeTheme justify="space-between">
-                  Appearance
-                  {ui.resolvedTheme === 'light' ? <SunIcon /> : <MoonIcon />}
+                  {t("Appearance")}
+                  {ui.resolvedTheme === "light" ? <SunIcon /> : <MoonIcon />}
                 </ChangeTheme>
               </DropdownMenuItem>
             }
@@ -102,24 +104,24 @@ class AccountMenu extends React.Component<Props> {
               onClick={() => ui.setTheme('system')}
               selected={ui.theme === 'system'}
             >
-              System
+              {t("System")}
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => ui.setTheme('light')}
               selected={ui.theme === 'light'}
             >
-              Light
+              {t("Light")}
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => ui.setTheme('dark')}
               selected={ui.theme === 'dark'}
             >
-              Dark
+              {t("Dark")}
             </DropdownMenuItem>
           </DropdownMenu>
           <hr />
           <DropdownMenuItem onClick={this.handleLogout}>
-            Log out
+            {t("Log out")}
           </DropdownMenuItem>
         </DropdownMenu>
       </React.Fragment>
@@ -131,4 +133,6 @@ const ChangeTheme = styled(Flex)`
   width: 100%;
 `;
 
-export default inject('ui', 'auth')(AccountMenu);
+export default withTranslation()<AccountMenu>(
+  inject("ui", "auth")(AccountMenu)
+);

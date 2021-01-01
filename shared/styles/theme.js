@@ -2,43 +2,55 @@
 import { darken, lighten } from 'polished';
 
 const colors = {
-  almostBlack: '#111319',
-  lightBlack: '#2F3336',
-  almostWhite: '#E6E6E6',
-  veryDarkBlue: '#08090C',
+  transparent: "transparent",
+  almostBlack: "#111319",
+  lightBlack: "#2F3336",
+  almostWhite: "#E6E6E6",
+  veryDarkBlue: "#08090C",
 
-  slate: '#9BA6B2',
-  slateLight: '#DAE1E9',
-  slateDark: '#4E5C6E',
+  slate: "#9BA6B2",
+  slateLight: "#DAE1E9",
+  slateDark: "#4E5C6E",
 
-  smoke: '#F4F7FA',
-  smokeLight: '#F9FBFC',
-  smokeDark: '#E8EBED',
+  smoke: "#F4F7FA",
+  smokeLight: "#F9FBFC",
+  smokeDark: "#E8EBED",
 
-  white: '#FFF',
-  white10: 'rgba(255, 255, 255, 0.1)',
-  white50: 'rgba(255, 255, 255, 0.5)',
-  black: '#000',
-  black05: 'rgba(0, 0, 0, 0.05)',
-  black10: 'rgba(0, 0, 0, 0.1)',
-  black50: 'rgba(0, 0, 0, 0.50)',
-  primary: '#0366d6',
-  yellow: '#FBCA04',
-  warmGrey: '#EDF2F7',
+  white: "#FFF",
+  white10: "rgba(255, 255, 255, 0.1)",
+  white50: "rgba(255, 255, 255, 0.5)",
+  black: "#000",
+  black05: "rgba(0, 0, 0, 0.05)",
+  black10: "rgba(0, 0, 0, 0.1)",
+  black50: "rgba(0, 0, 0, 0.50)",
+  primary: "#0366d6",
+  yellow: "#FBCA04",
+  warmGrey: "#EDF2F7",
 
-  danger: '#D0021B',
-  warning: '#f08a24',
-  success: '#2f3336',
-  info: '#a0d3e8',
+  searchHighlight: "#FDEA9B",
+  danger: "#ff476f",
+  warning: "#f08a24",
+  success: "#2f3336",
+  info: "#a0d3e8",
+
+  brand: {
+    red: "#FF5C80",
+    pink: "#FF4DFA",
+    purple: "#9E5CF7",
+    blue: "#3633FF",
+    marine: "#2BC2FF",
+    green: "#42DED1",
+  },
 };
 
 const spacing = {
-  padding: '1.5vw 1.875vw',
-  vpadding: '1.5vw',
-  hpadding: '1.875vw',
-  sidebarWidth: '280px',
-  sidebarMinWidth: '250px',
-  sidebarMaxWidth: '350px',
+  padding: "1.5vw 1.875vw",
+  vpadding: "1.5vw",
+  hpadding: "1.875vw",
+  sidebarWidth: "280px",
+  sidebarCollapsedWidth: "16px",
+  sidebarMinWidth: "250px",
+  sidebarMaxWidth: "350px",
 };
 
 export const base = {
@@ -114,6 +126,7 @@ export const light = {
 
   listItemHoverBackground: colors.warmGrey,
 
+  toolbarHoverBackground: colors.black,
   toolbarBackground: colors.lightBlack,
   toolbarInput: colors.white10,
   toolbarItem: colors.white,
@@ -135,8 +148,14 @@ export const light = {
   quote: colors.slateLight,
   codeBackground: colors.smoke,
   codeBorder: colors.smokeDark,
-  embedBorder: '#DDD #DDD #CCC',
+  embedBorder: colors.slateLight,
   horizontalRule: colors.smokeDark,
+
+  noticeInfoBackground: colors.warmGrey,
+  noticeInfoText: colors.almostBlack,
+
+  scrollbarBackground: colors.smoke,
+  scrollbarThumb: darken(0.15, colors.smokeDark),
 };
 
 export const dark = {
@@ -151,7 +170,7 @@ export const dark = {
   placeholder: darken(0.5, '#B1BECC'),
 
   sidebarBackground: colors.veryDarkBlue,
-  sidebarItemBackground: colors.veryDarkBlue,
+  sidebarItemBackground: colors.transparent,
   sidebarText: colors.slate,
   shadow: 'rgba(0, 0, 0, 0.6)',
 
@@ -164,6 +183,7 @@ export const dark = {
 
   listItemHoverBackground: colors.black50,
 
+  toolbarHoverBackground: colors.slate,
   toolbarBackground: colors.white,
   toolbarInput: colors.black10,
   toolbarItem: colors.lightBlack,
@@ -188,6 +208,12 @@ export const dark = {
   codeString: '#3d8fd1',
   embedBorder: colors.black50,
   horizontalRule: darken(0.2, colors.slate),
+
+  noticeInfoBackground: colors.white10,
+  noticeInfoText: colors.almostWhite,
+
+  scrollbarBackground: colors.black,
+  scrollbarThumb: colors.lightBlack,
 };
 
 export default light;

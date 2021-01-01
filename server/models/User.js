@@ -1,15 +1,17 @@
 // @flow
-import crypto from 'crypto';
-import uuid from 'uuid';
-import JWT from 'jsonwebtoken';
-import subMinutes from 'date-fns/sub_minutes';
-import { ValidationError } from '../errors';
-import { DataTypes, sequelize, encryptedFields } from '../sequelize';
-import { publicS3Endpoint, uploadToS3FromUrl } from '../utils/s3';
-import { sendEmail } from '../mailer';
-import { Star, Team, Collection, NotificationSetting, ApiKey } from '.';
+import crypto from "crypto";
+import addMinutes from "date-fns/add_minutes";
+import subMinutes from "date-fns/sub_minutes";
+import JWT from "jsonwebtoken";
+import uuid from "uuid";
+import { languages } from "../../shared/i18n";
+import { ValidationError } from "../errors";
+import { sendEmail } from "../mailer";
+import { DataTypes, sequelize, encryptedFields } from "../sequelize";
+import { publicS3Endpoint, uploadToS3FromUrl } from "../utils/s3";
+import { Star, Team, Collection, NotificationSetting, ApiKey } from ".";
 
-const DEFAULT_AVATAR_HOST = 'https://tiley.herokuapp.com';
+const DEFAULT_AVATAR_HOST = "https://tiley.herokuapp.com";
 
 const User = sequelize.define(
   'user',
@@ -35,6 +37,13 @@ const User = sequelize.define(
     lastSigninEmailSentAt: DataTypes.DATE,
     suspendedAt: DataTypes.DATE,
     suspendedById: DataTypes.UUID,
+    language: {
+      type: DataTypes.STRING,
+      defaultValue: process.env.DEFAULT_LANGUAGE,
+      validate: {
+        isIn: [languages],
+      },
+    },
   },
   {
     paranoid: true,
@@ -71,13 +80,14 @@ User.associate = models => {
 };
 
 // Instance methods
-User.prototype.collectionIds = async function(paranoid: boolean = true) {
+User.prototype.collectionIds = async function (options = {}) {
   const collectionStubs = await Collection.scope({
     method: ['withMembership', this.id],
   }).findAll({
     attributes: ['id', 'private'],
     where: { teamId: this.teamId },
-    paranoid,
+    paranoid: true,
+    ...options,
   });
 
   return collectionStubs
@@ -90,12 +100,12 @@ User.prototype.collectionIds = async function(paranoid: boolean = true) {
     .map(c => c.id);
 };
 
-User.prototype.updateActiveAt = function(ip) {
+User.prototype.updateActiveAt = function (ip, force = false) {
   const fiveMinutesAgo = subMinutes(new Date(), 5);
 
   // ensure this is updated only every few minutes otherwise
   // we'll be constantly writing to the DB as API requests happen
-  if (this.lastActiveAt < fiveMinutesAgo) {
+  if (this.lastActiveAt < fiveMinutesAgo || force) {
     this.lastActiveAt = new Date();
     this.lastActiveIp = ip;
     return this.save({ hooks: false });
@@ -108,17 +118,42 @@ User.prototype.updateSignedIn = function(ip) {
   return this.save({ hooks: false });
 };
 
-User.prototype.getJwtToken = function() {
-  return JWT.sign({ id: this.id }, this.jwtSecret);
+// Returns a session token that is used to make API requests and is stored
+// in the client browser cookies to remain logged in.
+User.prototype.getJwtToken = function (expiresAt?: Date) {
+  return JWT.sign(
+    {
+      id: this.id,
+      expiresAt: expiresAt ? expiresAt.toISOString() : undefined,
+      type: "session",
+    },
+    this.jwtSecret
+  );
 };
 
-User.prototype.getEmailSigninToken = function() {
-  if (this.service && this.service !== 'email') {
-    throw new Error('Cannot generate email signin token for OAuth user');
+// Returns a temporary token that is only used for transferring a session
+// between subdomains or domains. It has a short expiry and can only be used once
+User.prototype.getTransferToken = function () {
+  return JWT.sign(
+    {
+      id: this.id,
+      createdAt: new Date().toISOString(),
+      expiresAt: addMinutes(new Date(), 1).toISOString(),
+      type: "transfer",
+    },
+    this.jwtSecret
+  );
+};
+
+// Returns a temporary token that is only used for logging in from an email
+// It can only be used to sign in once and has a medium length expiry
+User.prototype.getEmailSigninToken = function () {
+  if (this.service && this.service !== "email") {
+    throw new Error("Cannot generate email signin token for OAuth user");
   }
 
   return JWT.sign(
-    { id: this.id, createdAt: new Date().toISOString() },
+    { id: this.id, createdAt: new Date().toISOString(), type: "email-signin" },
     this.jwtSecret
   );
 };

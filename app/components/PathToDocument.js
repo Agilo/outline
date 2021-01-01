@@ -14,7 +14,8 @@ type Props = {
   document?: ?Document,
   collection: ?Collection,
   onSuccess?: () => void,
-  ref?: (?React.ElementRef<'div'>) => void,
+  style?: Object,
+  ref?: (?React.ElementRef<"div">) => void,
 };
 
 @observer
@@ -34,19 +35,22 @@ class PathToDocument extends React.Component<Props> {
   };
 
   render() {
-    const { result, collection, document, ref } = this.props;
+    const { result, collection, document, ref, style } = this.props;
     const Component = document ? ResultWrapperLink : ResultWrapper;
 
     if (!result) return <div />;
 
     return (
-      <Component ref={ref} onClick={this.handleClick} href="" selectable>
-        {collection &&
-          (collection.private ? (
-            <PrivateCollectionIcon color={collection.color} />
-          ) : (
-            <CollectionIcon color={collection.color} />
-          ))}
+      <Component
+        ref={ref}
+        onClick={this.handleClick}
+        href=""
+        style={style}
+        role="option"
+        selectable
+      >
+        {collection && <CollectionIcon collection={collection} />}
+        &nbsp;
         {result.path
           .map(doc => <Title key={doc.id}>{doc.title}</Title>)
           .reduce((prev, curr) => [prev, <StyledGoToIcon />, curr])}
@@ -74,17 +78,23 @@ const StyledGoToIcon = styled(GoToIcon)`
 const ResultWrapper = styled.div`
   display: flex;
   margin-bottom: 10px;
-  margin-left: -4px;
   user-select: none;
 
   color: ${props => props.theme.text};
   cursor: default;
+
+  svg {
+    flex-shrink: 0;
+  }
 `;
 
-const ResultWrapperLink = styled(ResultWrapper.withComponent('a'))`
-  margin: 0 -8px;
+const ResultWrapperLink = styled(ResultWrapper.withComponent("a"))`
   padding: 8px 4px;
   border-radius: 8px;
+
+  svg {
+    flex-shrink: 0;
+  }
 
   &:hover,
   &:active,

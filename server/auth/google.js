@@ -1,11 +1,12 @@
 // @flow
-import Sequelize from 'sequelize';
-import crypto from 'crypto';
-import Router from 'koa-router';
-import { capitalize } from 'lodash';
-import { OAuth2Client } from 'google-auth-library';
-import { User, Team, Event } from '../models';
-import auth from '../middlewares/authentication';
+import crypto from "crypto";
+import { OAuth2Client } from "google-auth-library";
+import invariant from "invariant";
+import Router from "koa-router";
+import { capitalize } from "lodash";
+import Sequelize from "sequelize";
+import auth from "../middlewares/authentication";
+import { User, Team } from "../models";
 
 const Op = Sequelize.Op;
 
@@ -70,15 +71,24 @@ router.get('google.callback', auth({ required: false }), async ctx => {
   const cbResponse = await fetch(cbUrl);
   const avatarUrl = cbResponse.status === 200 ? cbUrl : tileyUrl;
 
-  const [team, isFirstUser] = await Team.findOrCreate({
-    where: {
-      googleId,
-    },
-    defaults: {
-      name: teamName,
-      avatarUrl,
-    },
-  });
+  let team, isFirstUser;
+  try {
+    [team, isFirstUser] = await Team.findOrCreate({
+      where: {
+        googleId,
+      },
+      defaults: {
+        name: teamName,
+        avatarUrl,
+      },
+    });
+  } catch (err) {
+    if (err instanceof Sequelize.UniqueConstraintError) {
+      ctx.redirect(`/?notice=auth-error`);
+      return;
+    }
+  }
+  invariant(team, "Team must exist");
 
   try {
     const [user, isFirstSignin] = await User.findOrCreate({
@@ -122,20 +132,6 @@ router.get('google.callback', auth({ required: false }), async ctx => {
     if (isFirstUser) {
       await team.provisionFirstCollection(user.id);
       await team.provisionSubdomain(hostname);
-    }
-
-    if (isFirstSignin) {
-      await Event.create({
-        name: 'users.create',
-        actorId: user.id,
-        userId: user.id,
-        teamId: team.id,
-        data: {
-          name: user.name,
-          service: 'google',
-        },
-        ip: ctx.request.ip,
-      });
     }
 
     // set cookies on response and redirect to team subdomain

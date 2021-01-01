@@ -1,12 +1,13 @@
 // @flow
-import * as React from 'react';
-import { observable, action } from 'mobx';
-import { observer } from 'mobx-react';
-import { Waypoint } from 'react-waypoint';
-import ArrowKeyNavigation from 'boundless-arrow-key-navigation';
-
-import { DEFAULT_PAGINATION_LIMIT } from 'stores/BaseStore';
-import { ListPlaceholder } from 'components/LoadingPlaceholder';
+import ArrowKeyNavigation from "boundless-arrow-key-navigation";
+import { isEqual } from "lodash";
+import { observable, action } from "mobx";
+import { observer } from "mobx-react";
+import * as React from "react";
+import { Waypoint } from "react-waypoint";
+import { DEFAULT_PAGINATION_LIMIT } from "stores/BaseStore";
+import DelayedMount from "components/DelayedMount";
+import { ListPlaceholder } from "components/LoadingPlaceholder";
 
 type Props = {
   fetch?: (options: ?Object) => Promise<void>,
@@ -38,6 +39,9 @@ class PaginatedList extends React.Component<Props> {
 
   componentDidUpdate(prevProps: Props) {
     if (prevProps.fetch !== this.props.fetch) {
+      this.fetchResults();
+    }
+    if (!isEqual(prevProps.options, this.props.options)) {
       this.fetchResults();
     }
   }

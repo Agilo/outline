@@ -1,10 +1,10 @@
 // @flow
-import { find, concat, remove, uniq } from 'lodash';
-import slug from 'slug';
-import randomstring from 'randomstring';
-import { DataTypes, sequelize } from '../sequelize';
-import Document from './Document';
-import CollectionUser from './CollectionUser';
+import { find, findIndex, concat, remove, uniq } from "lodash";
+import randomstring from "randomstring";
+import slug from "slug";
+import { DataTypes, sequelize } from "../sequelize";
+import CollectionUser from "./CollectionUser";
+import Document from "./Document";
 
 slug.defaults.mode = 'rfc3986';
 
@@ -29,6 +29,27 @@ const Collection = sequelize.define(
 
     /* type: atlas */
     documentStructure: DataTypes.JSONB,
+    sort: {
+      type: DataTypes.JSONB,
+      validate: {
+        isSort(value) {
+          if (
+            typeof value !== "object" ||
+            !value.direction ||
+            !value.field ||
+            Object.keys(value).length !== 2
+          ) {
+            throw new Error("Sort must be an object with field,direction");
+          }
+          if (!["asc", "desc"].includes(value.direction)) {
+            throw new Error("Sort direction must be one of asc,desc");
+          }
+          if (!["title", "index"].includes(value.field)) {
+            throw new Error("Sort field must be one of title,index");
+          }
+        },
+      },
+    },
   },
   {
     tableName: 'collections',
@@ -45,6 +66,17 @@ const Collection = sequelize.define(
     },
   }
 );
+
+Collection.DEFAULT_SORT = {
+  field: "index",
+  direction: "asc",
+};
+
+Collection.addHook("beforeSave", async (model) => {
+  if (model.icon === "collection") {
+    model.icon = null;
+  }
+});
 
 // Class methods
 
@@ -301,7 +333,12 @@ Collection.prototype.updateDocument = async function(
     };
 
     this.documentStructure = updateChildren(this.documentStructure);
-    await this.save({ transaction });
+
+    // Sequelize doesn't seem to set the value with splice on JSONB field
+    // https://github.com/sequelize/sequelize/blob/e1446837196c07b8ff0c23359b958d68af40fd6d/src/model.js#L3937
+    this.changed("documentStructure", true);
+
+    await this.save({ fields: ["documentStructure"], transaction });
     await transaction.commit();
   } catch (err) {
     if (transaction) {
@@ -342,7 +379,7 @@ Collection.prototype.removeDocumentInStructure = async function(
 
       const match = find(children, { id });
       if (match) {
-        if (!returnValue) returnValue = match;
+        if (!returnValue) returnValue = [match, findIndex(children, { id })];
         remove(children, { id });
       }
 
@@ -354,10 +391,11 @@ Collection.prototype.removeDocumentInStructure = async function(
       document.id
     );
 
-    await this.save({
-      ...options,
-      transaction,
-    });
+    // Sequelize doesn't seem to set the value with splice on JSONB field
+    // https://github.com/sequelize/sequelize/blob/e1446837196c07b8ff0c23359b958d68af40fd6d/src/model.js#L3937
+    this.changed("documentStructure", true);
+
+    await this.save({ ...options, fields: ["documentStructure"], transaction });
     await transaction.commit();
   } catch (err) {
     if (transaction) {

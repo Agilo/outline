@@ -1,5 +1,5 @@
-/* eslint-disable flowtype/require-valid-file-annotation */
-import parseDocumentIds from './parseDocumentIds';
+// @flow
+import parseDocumentIds from "./parseDocumentIds";
 
 it('should not return non links', () => {
   expect(parseDocumentIds(`# Header`).length).toBe(0);
@@ -7,7 +7,7 @@ it('should not return non links', () => {
 
 it('should return an array of document ids', () => {
   const result = parseDocumentIds(`# Header
-  
+
   [internal](/doc/test-456733)
   `);
 
@@ -19,7 +19,7 @@ it('should not return duplicate document ids', () => {
   expect(parseDocumentIds(`# Header`).length).toBe(0);
 
   const result = parseDocumentIds(`# Header
-  
+
   [internal](/doc/test-456733)
 
   [another link to the same doc](/doc/test-456733)

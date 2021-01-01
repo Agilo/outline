@@ -1,13 +1,13 @@
 // @flow
-import invariant from 'invariant';
-import { observable, set, action, computed, runInAction } from 'mobx';
-import { orderBy } from 'lodash';
-import { client } from 'utils/ApiClient';
-import RootStore from 'stores/RootStore';
-import BaseModel from '../models/BaseModel';
-import type { PaginationParams } from 'types';
+import invariant from "invariant";
+import { orderBy } from "lodash";
+import { observable, set, action, computed, runInAction } from "mobx";
+import RootStore from "stores/RootStore";
+import BaseModel from "../models/BaseModel";
+import type { PaginationParams } from "types";
+import { client } from "utils/ApiClient";
 
-type Action = 'list' | 'info' | 'create' | 'update' | 'delete';
+type Action = "list" | "info" | "create" | "update" | "delete";
 
 function modelNameFromClassName(string) {
   return string.charAt(0).toLowerCase() + string.slice(1);
@@ -24,7 +24,7 @@ export default class BaseStore<T: BaseModel> {
   model: Class<T>;
   modelName: string;
   rootStore: RootStore;
-  actions: Action[] = ['list', 'info', 'create', 'update', 'delete'];
+  actions: Action[] = ["list", "info", "create", "update", "delete"];
 
   constructor(rootStore: RootStore, model: Class<T>) {
     this.rootStore = rootStore;
@@ -37,9 +37,9 @@ export default class BaseStore<T: BaseModel> {
     this.data.clear();
   }
 
-  addPolicies = policies => {
+  addPolicies = (policies) => {
     if (policies) {
-      policies.forEach(policy => this.rootStore.policies.add(policy));
+      policies.forEach((policy) => this.rootStore.policies.add(policy));
     }
   };
 
@@ -77,7 +77,7 @@ export default class BaseStore<T: BaseModel> {
 
   @action
   async create(params: Object) {
-    if (!this.actions.includes('create')) {
+    if (!this.actions.includes("create")) {
       throw new Error(`Cannot create ${this.modelName}`);
     }
     this.isSaving = true;
@@ -85,7 +85,7 @@ export default class BaseStore<T: BaseModel> {
     try {
       const res = await client.post(`/${this.modelName}s.create`, params);
 
-      invariant(res && res.data, 'Data should be available');
+      invariant(res && res.data, "Data should be available");
 
       this.addPolicies(res.policies);
       return this.add(res.data);
@@ -96,7 +96,7 @@ export default class BaseStore<T: BaseModel> {
 
   @action
   async update(params: Object): * {
-    if (!this.actions.includes('update')) {
+    if (!this.actions.includes("update")) {
       throw new Error(`Cannot update ${this.modelName}`);
     }
     this.isSaving = true;
@@ -104,7 +104,7 @@ export default class BaseStore<T: BaseModel> {
     try {
       const res = await client.post(`/${this.modelName}s.update`, params);
 
-      invariant(res && res.data, 'Data should be available');
+      invariant(res && res.data, "Data should be available");
 
       this.addPolicies(res.policies);
       return this.add(res.data);
@@ -114,8 +114,8 @@ export default class BaseStore<T: BaseModel> {
   }
 
   @action
-  async delete(item: T, options?: Object = {}) {
-    if (!this.actions.includes('delete')) {
+  async delete(item: T, options: Object = {}) {
+    if (!this.actions.includes("delete")) {
       throw new Error(`Cannot delete ${this.modelName}`);
     }
     this.isSaving = true;
@@ -132,8 +132,8 @@ export default class BaseStore<T: BaseModel> {
   }
 
   @action
-  async fetch(id: string, options?: Object = {}): Promise<*> {
-    if (!this.actions.includes('info')) {
+  async fetch(id: string, options: Object = {}): Promise<*> {
+    if (!this.actions.includes("info")) {
       throw new Error(`Cannot fetch ${this.modelName}`);
     }
 
@@ -144,7 +144,7 @@ export default class BaseStore<T: BaseModel> {
 
     try {
       const res = await client.post(`/${this.modelName}s.info`, { id });
-      invariant(res && res.data, 'Data should be available');
+      invariant(res && res.data, "Data should be available");
 
       this.addPolicies(res.policies);
       return this.add(res.data);
@@ -160,7 +160,7 @@ export default class BaseStore<T: BaseModel> {
 
   @action
   fetchPage = async (params: ?PaginationParams): Promise<*> => {
-    if (!this.actions.includes('list')) {
+    if (!this.actions.includes("list")) {
       throw new Error(`Cannot list ${this.modelName}`);
     }
     this.isFetching = true;
@@ -168,7 +168,7 @@ export default class BaseStore<T: BaseModel> {
     try {
       const res = await client.post(`/${this.modelName}s.list`, params);
 
-      invariant(res && res.data, 'Data not available');
+      invariant(res && res.data, "Data not available");
 
       runInAction(`list#${this.modelName}`, () => {
         this.addPolicies(res.policies);
@@ -183,6 +183,6 @@ export default class BaseStore<T: BaseModel> {
 
   @computed
   get orderedData(): T[] {
-    return orderBy(Array.from(this.data.values()), 'createdAt', 'desc');
+    return orderBy(Array.from(this.data.values()), "createdAt", "desc");
   }
 }

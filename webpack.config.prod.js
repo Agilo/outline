@@ -12,8 +12,8 @@ productionWebpackConfig = Object.assign(commonWebpackConfig, {
   devtool: 'source-map',
   entry: ['babel-polyfill', 'babel-regenerator-runtime', './app/index'],
   output: {
-    path: path.join(__dirname, 'dist'),
-    filename: 'bundle.[hash].js',
+    path: path.join(__dirname, 'build/app'),
+    filename: '[name].[contenthash].js',
     publicPath: '/static/',
   },
   stats: "normal"

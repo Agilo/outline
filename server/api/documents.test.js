@@ -8,8 +8,8 @@ import {
   Revision,
   Backlink,
   CollectionUser,
-} from '../models';
-import { flushdb, seed } from '../test/support';
+  SearchQuery,
+} from "../models";
 import {
   buildShare,
   buildCollection,
@@ -94,7 +94,24 @@ describe('#documents.info', async () => {
     expect(body.data.updatedBy).toEqual(undefined);
   });
 
-  it('should not return document from revoked shareId', async () => {
+  it("should not return document from shareId if sharing is disabled for team", async () => {
+    const { document, team, user } = await seed();
+    const share = await buildShare({
+      documentId: document.id,
+      teamId: document.teamId,
+      userId: user.id,
+    });
+
+    team.sharing = false;
+    await team.save();
+
+    const res = await server.post("/api/documents.info", {
+      body: { shareId: share.id },
+    });
+    expect(res.status).toEqual(403);
+  });
+
+  it("should not return document from revoked shareId", async () => {
     const { document, user } = await seed();
     const share = await buildShare({
       documentId: document.id,
@@ -185,7 +202,16 @@ describe('#documents.info', async () => {
     expect(body.data.id).toEqual(document.id);
   });
 
-  it('should require authorization without token', async () => {
+  it("should not error if document doesn't exist", async () => {
+    const user = await buildUser();
+
+    const res = await server.post("/api/documents.info", {
+      body: { token: user.getJwtToken(), id: "test" },
+    });
+    expect(res.status).toEqual(404);
+  });
+
+  it("should require authorization without token", async () => {
     const { document } = await seed();
     const res = await server.post('/api/documents.info', {
       body: { id: document.id },
@@ -238,7 +264,21 @@ describe('#documents.list', async () => {
     expect(body.data.length).toEqual(0);
   });
 
-  it('should not return documents in private collections not a member of', async () => {
+  it("should not return archived documents", async () => {
+    const { user, document } = await seed();
+    document.archivedAt = new Date();
+    await document.save();
+
+    const res = await server.post("/api/documents.list", {
+      body: { token: user.getJwtToken() },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.length).toEqual(0);
+  });
+
+  it("should not return documents in private collections not a member of", async () => {
     const { user, collection } = await seed();
     collection.private = true;
     await collection.save();
@@ -436,50 +476,58 @@ describe('#documents.drafts', async () => {
   });
 });
 
-describe('#documents.revision', async () => {
-  it("should return a document's revisions", async () => {
-    const { user, document } = await seed();
-    const res = await server.post('/api/documents.revisions', {
-      body: {
-        token: user.getJwtToken(),
-        id: document.id,
-      },
+describe("#documents.search_titles", () => {
+  it("should return case insensitive results for partial query", async () => {
+    const user = await buildUser();
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+      title: "Super secret",
+    });
+
+    const res = await server.post("/api/documents.search_titles", {
+      body: { token: user.getJwtToken(), query: "SECRET" },
     });
     const body = await res.json();
 
     expect(res.status).toEqual(200);
     expect(body.data.length).toEqual(1);
-    expect(body.data[0].id).not.toEqual(document.id);
-    expect(body.data[0].title).toEqual(document.title);
+    expect(body.data[0].id).toEqual(document.id);
   });
 
-  it('should not return revisions for document in collection not a member of', async () => {
-    const { user, document, collection } = await seed();
-    collection.private = true;
-    await collection.save();
-
-    const res = await server.post('/api/documents.revisions', {
-      body: { token: user.getJwtToken(), id: document.id },
-    });
-
-    expect(res.status).toEqual(403);
-  });
-
-  it('should require authorization', async () => {
-    const { document } = await seed();
+  it("should not include archived or deleted documents", async () => {
     const user = await buildUser();
-    const res = await server.post('/api/documents.revisions', {
-      body: {
-        token: user.getJwtToken(),
-        id: document.id,
-      },
+    await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+      title: "Super secret",
+      archivedAt: new Date(),
     });
-    expect(res.status).toEqual(403);
+
+    await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+      title: "Super secret",
+      deletedAt: new Date(),
+    });
+
+    const res = await server.post("/api/documents.search_titles", {
+      body: { token: user.getJwtToken(), query: "SECRET" },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.length).toEqual(0);
+  });
+
+  it("should require authentication", async () => {
+    const res = await server.post("/api/documents.search_titles");
+    expect(res.status).toEqual(401);
   });
 });
 
-describe('#documents.search', async () => {
-  it('should return results', async () => {
+describe("#documents.search", () => {
+  it("should return results", async () => {
     const { user } = await seed();
     const res = await server.post('/api/documents.search', {
       body: { token: user.getJwtToken(), query: 'much' },
@@ -805,6 +853,25 @@ describe('#documents.search', async () => {
     expect(res.status).toEqual(401);
     expect(body).toMatchSnapshot();
   });
+
+  it("should save search term, hits and source", async (done) => {
+    const { user } = await seed();
+    await server.post("/api/documents.search", {
+      body: { token: user.getJwtToken(), query: "my term" },
+    });
+
+    // setTimeout is needed here because SearchQuery is saved asynchronously
+    // in order to not slow down the response time.
+    setTimeout(async () => {
+      const searchQuery = await SearchQuery.findAll({
+        where: { query: "my term" },
+      });
+      expect(searchQuery.length).toBe(1);
+      expect(searchQuery[0].results).toBe(0);
+      expect(searchQuery[0].source).toBe("app");
+      done();
+    }, 100);
+  });
 });
 
 describe('#documents.archived', async () => {
@@ -997,8 +1064,110 @@ describe('#documents.pin', async () => {
   });
 });
 
-describe('#documents.restore', () => {
-  it('should allow restore of archived documents', async () => {
+describe("#documents.move", () => {
+  it("should move the document", async () => {
+    const { user, document } = await seed();
+    const collection = await buildCollection({ teamId: user.teamId });
+
+    const res = await server.post("/api/documents.move", {
+      body: {
+        token: user.getJwtToken(),
+        id: document.id,
+        collectionId: collection.id,
+      },
+    });
+    const body = await res.json();
+    expect(res.status).toEqual(200);
+    expect(body.data.documents[0].collectionId).toEqual(collection.id);
+  });
+
+  it("should not allow moving the document to a collection the user cannot access", async () => {
+    const { user, document } = await seed();
+    const collection = await buildCollection();
+
+    const res = await server.post("/api/documents.move", {
+      body: {
+        token: user.getJwtToken(),
+        id: document.id,
+        collectionId: collection.id,
+      },
+    });
+    expect(res.status).toEqual(403);
+  });
+
+  it("should require authentication", async () => {
+    const res = await server.post("/api/documents.move");
+    expect(res.status).toEqual(401);
+  });
+
+  it("should require authorization", async () => {
+    const { document, collection } = await seed();
+    const user = await buildUser();
+    const res = await server.post("/api/documents.move", {
+      body: {
+        token: user.getJwtToken(),
+        id: document.id,
+        collectionId: collection.id,
+      },
+    });
+    expect(res.status).toEqual(403);
+  });
+});
+
+describe("#documents.restore", () => {
+  it("should allow restore of trashed documents", async () => {
+    const { user, document } = await seed();
+    await document.destroy(user.id);
+
+    const res = await server.post("/api/documents.restore", {
+      body: { token: user.getJwtToken(), id: document.id },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.deletedAt).toEqual(null);
+  });
+
+  it("should allow restore of trashed documents with collectionId", async () => {
+    const { user, document } = await seed();
+    const collection = await buildCollection({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+
+    await document.destroy(user.id);
+
+    const res = await server.post("/api/documents.restore", {
+      body: {
+        token: user.getJwtToken(),
+        id: document.id,
+        collectionId: collection.id,
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.deletedAt).toEqual(null);
+    expect(body.data.collectionId).toEqual(collection.id);
+  });
+
+  it("should now allow restore of trashed documents to collection user cannot access", async () => {
+    const { user, document } = await seed();
+    const collection = await buildCollection();
+
+    await document.destroy(user.id);
+
+    const res = await server.post("/api/documents.restore", {
+      body: {
+        token: user.getJwtToken(),
+        id: document.id,
+        collectionId: collection.id,
+      },
+    });
+    expect(res.status).toEqual(403);
+  });
+
+  it("should allow restore of archived documents", async () => {
     const { user, document } = await seed();
     await document.archive(user.id);
 
@@ -1006,6 +1175,8 @@ describe('#documents.restore', () => {
       body: { token: user.getJwtToken(), id: document.id },
     });
     const body = await res.json();
+
+    expect(res.status).toEqual(200);
     expect(body.data.archivedAt).toEqual(null);
   });
 
@@ -1024,15 +1195,15 @@ describe('#documents.restore', () => {
       body: { token: user.getJwtToken(), id: childDocument.id },
     });
     const body = await res.json();
+
+    expect(res.status).toEqual(200);
     expect(body.data.parentDocumentId).toEqual(undefined);
     expect(body.data.archivedAt).toEqual(null);
   });
 
   it('should restore the document to a previous version', async () => {
     const { user, document } = await seed();
-    const revision = await Revision.findOne({
-      where: { documentId: document.id },
-    });
+    const revision = await Revision.createFromDocument(document);
     const previousText = revision.text;
     const revisionId = revision.id;
 
@@ -1044,15 +1215,15 @@ describe('#documents.restore', () => {
       body: { token: user.getJwtToken(), id: document.id, revisionId },
     });
     const body = await res.json();
+
+    expect(res.status).toEqual(200);
     expect(body.data.text).toEqual(previousText);
   });
 
   it('should not allow restoring a revision in another document', async () => {
     const { user, document } = await seed();
     const anotherDoc = await buildDocument();
-    const revision = await Revision.findOne({
-      where: { documentId: anotherDoc.id },
-    });
+    const revision = await Revision.createFromDocument(anotherDoc);
     const revisionId = revision.id;
 
     const res = await server.post('/api/documents.restore', {
@@ -1061,8 +1232,17 @@ describe('#documents.restore', () => {
     expect(res.status).toEqual(403);
   });
 
-  it('should require authentication', async () => {
-    const res = await server.post('/api/documents.restore');
+  it("should not error if document doesn't exist", async () => {
+    const user = await buildUser();
+
+    const res = await server.post("/api/documents.restore", {
+      body: { token: user.getJwtToken(), id: "test" },
+    });
+    expect(res.status).toEqual(404);
+  });
+
+  it("should require authentication", async () => {
+    const res = await server.post("/api/documents.restore");
     const body = await res.json();
 
     expect(res.status).toEqual(401);
@@ -1071,9 +1251,7 @@ describe('#documents.restore', () => {
 
   it('should require authorization', async () => {
     const { document } = await seed();
-    const revision = await Revision.findOne({
-      where: { documentId: document.id },
-    });
+    const revision = await Revision.createFromDocument(document);
     const revisionId = revision.id;
 
     const user = await buildUser();
@@ -1180,8 +1358,20 @@ describe('#documents.unstar', async () => {
   });
 });
 
-describe('#documents.create', async () => {
-  it('should create as a new document', async () => {
+describe("#documents.import", () => {
+  it("should error if no file is passed", async () => {
+    const user = await buildUser();
+    const res = await server.post("/api/documents.import", {
+      body: {
+        token: user.getJwtToken(),
+      },
+    });
+    expect(res.status).toEqual(400);
+  });
+});
+
+describe("#documents.create", () => {
+  it("should create as a new document", async () => {
     const { user, collection } = await seed();
     const res = await server.post('/api/documents.create', {
       body: {
@@ -1334,32 +1524,7 @@ describe('#documents.update', async () => {
     expect(res.status).toEqual(403);
   });
 
-  it('should not create new version when autosave=true', async () => {
-    const { user, document } = await seed();
-
-    const res = await server.post('/api/documents.update', {
-      body: {
-        token: user.getJwtToken(),
-        id: document.id,
-        title: 'Updated title',
-        text: 'Updated text',
-        lastRevision: document.revision,
-        autosave: true,
-      },
-    });
-
-    const prevRevisionRecords = await Revision.count();
-    const body = await res.json();
-
-    expect(res.status).toEqual(200);
-    expect(body.data.title).toBe('Updated title');
-    expect(body.data.text).toBe('Updated text');
-
-    const revisionRecords = await Revision.count();
-    expect(revisionRecords).toBe(prevRevisionRecords);
-  });
-
-  it('should fail if document lastRevision does not match', async () => {
+  it("should fail if document lastRevision does not match", async () => {
     const { user, document } = await seed();
 
     const res = await server.post('/api/documents.update', {
@@ -1592,5 +1757,61 @@ describe('#documents.delete', async () => {
 
     expect(res.status).toEqual(401);
     expect(body).toMatchSnapshot();
+  });
+});
+
+describe("#documents.unpublish", () => {
+  it("should unpublish a document", async () => {
+    const { user, document } = await seed();
+    const res = await server.post("/api/documents.unpublish", {
+      body: { token: user.getJwtToken(), id: document.id },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.id).toEqual(document.id);
+    expect(body.data.publishedAt).toBeNull();
+  });
+
+  it("should fail to unpublish a draft document", async () => {
+    const { user, document } = await seed();
+    document.publishedAt = null;
+    await document.save();
+
+    const res = await server.post("/api/documents.unpublish", {
+      body: { token: user.getJwtToken(), id: document.id },
+    });
+
+    expect(res.status).toEqual(403);
+  });
+
+  it("should fail to unpublish a deleted document", async () => {
+    const { user, document } = await seed();
+    await document.delete();
+
+    const res = await server.post("/api/documents.unpublish", {
+      body: { token: user.getJwtToken(), id: document.id },
+    });
+
+    expect(res.status).toEqual(403);
+  });
+
+  it("should fail to unpublish a archived document", async () => {
+    const { user, document } = await seed();
+    await document.archive();
+
+    const res = await server.post("/api/documents.unpublish", {
+      body: { token: user.getJwtToken(), id: document.id },
+    });
+
+    expect(res.status).toEqual(403);
+  });
+
+  it("should require authentication", async () => {
+    const { document } = await seed();
+    const res = await server.post("/api/documents.unpublish", {
+      body: { id: document.id },
+    });
+    expect(res.status).toEqual(401);
   });
 });

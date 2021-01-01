@@ -1,14 +1,28 @@
 // @flow
-import * as React from 'react';
-import { Switch, Route, Redirect } from 'react-router-dom';
-import { Helmet } from 'react-helmet';
-import styled, { withTheme } from 'styled-components';
-import breakpoint from 'styled-components-breakpoint';
-import { observable } from 'mobx';
-import { observer, inject } from 'mobx-react';
-import keydown from 'react-keydown';
-import Analytics from 'components/Analytics';
-import Flex from 'shared/components/Flex';
+import { observable } from "mobx";
+import { observer, inject } from "mobx-react";
+import * as React from "react";
+import { Helmet } from "react-helmet";
+import { withTranslation, type TFunction } from "react-i18next";
+import keydown from "react-keydown";
+import { Switch, Route, Redirect } from "react-router-dom";
+import styled, { withTheme } from "styled-components";
+import breakpoint from "styled-components-breakpoint";
+import AuthStore from "stores/AuthStore";
+import DocumentsStore from "stores/DocumentsStore";
+import UiStore from "stores/UiStore";
+import ErrorSuspended from "scenes/ErrorSuspended";
+import KeyboardShortcuts from "scenes/KeyboardShortcuts";
+import Analytics from "components/Analytics";
+import DocumentHistory from "components/DocumentHistory";
+import Flex from "components/Flex";
+
+import { LoadingIndicatorBar } from "components/LoadingIndicator";
+import Modal from "components/Modal";
+import Sidebar from "components/Sidebar";
+import SettingsSidebar from "components/Sidebar/Settings";
+import { type Theme } from "types";
+import { meta } from "utils/keyboard";
 import {
   homeUrl,
   searchUrl,
@@ -36,7 +50,9 @@ type Props = {
   auth: AuthStore,
   ui: UiStore,
   notifications?: React.Node,
-  theme: Object,
+  theme: Theme,
+  i18n: Object,
+  t: TFunction,
 };
 
 @observer
@@ -45,8 +61,9 @@ class Layout extends React.Component<Props> {
   @observable redirectTo: ?string;
   @observable keyboardShortcutsOpen: boolean = false;
 
-  componentWillMount() {
-    this.updateBackground();
+  constructor(props: Props) {
+    super();
+    this.updateBackground(props);
   }
 
   componentDidUpdate() {
@@ -57,7 +74,17 @@ class Layout extends React.Component<Props> {
     }
   }
 
-  @keydown('shift+/')
+  updateBackground(props: Props) {
+    // ensure the wider page color always matches the theme
+    window.document.body.style.background = props.theme.background;
+  }
+
+  @keydown(`${meta}+.`)
+  handleToggleSidebar() {
+    this.props.ui.toggleCollapsedSidebar();
+  }
+
+  @keydown("shift+/")
   handleOpenKeyboardShortcuts() {
     this.keyboardShortcutsOpen = true;
   }
@@ -66,13 +93,8 @@ class Layout extends React.Component<Props> {
     this.keyboardShortcutsOpen = false;
   };
 
-  updateBackground() {
-    // ensure the wider page color always matches the theme
-    window.document.body.style.background = this.props.theme.background;
-  }
-
-  @keydown(['t', '/', 'meta+k'])
-  goToSearch(ev) {
+  @keydown(["t", "/", `${meta}+k`])
+  goToSearch(ev: SyntheticEvent<>) {
     if (this.props.ui.editMode) return;
     ev.preventDefault();
     ev.stopPropagation();
@@ -86,7 +108,7 @@ class Layout extends React.Component<Props> {
   }
 
   render() {
-    const { auth, ui } = this.props;
+    const { auth, t, ui } = this.props;
     const { user, team } = auth;
     const showSidebar = auth.authenticated && user && team;
 
@@ -115,7 +137,11 @@ class Layout extends React.Component<Props> {
             </Switch>
           )}
 
-          <Content auto justify="center" editMode={ui.editMode}>
+          <Content
+            auto
+            justify="center"
+            sidebarCollapsed={ui.editMode || ui.sidebarCollapsed}
+          >
             {this.props.children}
           </Content>
 
@@ -130,11 +156,10 @@ class Layout extends React.Component<Props> {
         <Modal
           isOpen={this.keyboardShortcutsOpen}
           onRequestClose={this.handleCloseKeyboardShortcuts}
-          title="Keyboard shortcuts"
+          title={t("Keyboard shortcuts")}
         >
           <KeyboardShortcuts />
         </Modal>
-        <GlobalStyles />
       </Container>
     );
   }
@@ -156,9 +181,14 @@ const Content = styled(Flex)`
     margin: 0;
   }
 
-  ${breakpoint('tablet')`
-    margin-left: ${props => (props.editMode ? 0 : props.theme.sidebarWidth)};
+  ${breakpoint("tablet")`
+    margin-left: ${(props) =>
+      props.sidebarCollapsed
+        ? props.theme.sidebarCollapsedWidth
+        : props.theme.sidebarWidth};
   `};
 `;
 
-export default inject('auth', 'ui', 'documents')(withTheme(Layout));
+export default withTranslation()<Layout>(
+  inject("auth", "ui", "documents")(withTheme(Layout))
+);

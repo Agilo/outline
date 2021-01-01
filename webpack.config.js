@@ -23,8 +23,8 @@ const definePlugin = new webpack.DefinePlugin({
 
 module.exports = {
   output: {
-    path: path.join(__dirname, 'dist'),
-    filename: 'bundle.js',
+    path: path.join(__dirname, 'build/app'),
+    filename: '[name].[hash].js',
     publicPath: '/static/',
   },
   module: {

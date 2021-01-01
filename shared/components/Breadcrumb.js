@@ -1,22 +1,27 @@
 // @flow
-import * as React from 'react';
-import { observer, inject } from 'mobx-react';
-import breakpoint from 'styled-components-breakpoint';
-import styled from 'styled-components';
-import { Link } from 'react-router-dom';
+import { observer } from "mobx-react";
 import {
-  CollectionIcon,
-  PrivateCollectionIcon,
-  PadlockIcon,
+  ArchiveIcon,
+  EditIcon,
   GoToIcon,
   MoreIcon,
-} from 'outline-icons';
+  PadlockIcon,
+  ShapesIcon,
+  TrashIcon,
+} from "outline-icons";
+import * as React from "react";
+import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
+import styled from "styled-components";
+import breakpoint from "styled-components-breakpoint";
 
-import Document from 'models/Document';
-import CollectionsStore from 'stores/CollectionsStore';
-import { collectionUrl } from 'utils/routeHelpers';
-import Flex from 'shared/components/Flex';
-import BreadcrumbMenu from './BreadcrumbMenu';
+import CollectionsStore from "stores/CollectionsStore";
+import Document from "models/Document";
+import CollectionIcon from "components/CollectionIcon";
+import Flex from "components/Flex";
+import BreadcrumbMenu from "./BreadcrumbMenu";
+import useStores from "hooks/useStores";
+import { collectionUrl } from "utils/routeHelpers";
 
 type Props = {
   document: Document,
@@ -24,11 +29,78 @@ type Props = {
   onlyText: boolean,
 };
 
-const Breadcrumb = observer(({ document, collections, onlyText }: Props) => {
-  const collection = collections.get(document.collectionId);
-  if (!collection) return <div />;
+function Icon({ document }) {
+  const { t } = useTranslation();
 
-  const path = collection.pathToDocument(document).slice(0, -1);
+  if (document.isDeleted) {
+    return (
+      <>
+        <CollectionName to="/trash">
+          <TrashIcon color="currentColor" />
+          &nbsp;
+          <span>{t("Trash")}</span>
+        </CollectionName>
+        <Slash />
+      </>
+    );
+  }
+  if (document.isArchived) {
+    return (
+      <>
+        <CollectionName to="/archive">
+          <ArchiveIcon color="currentColor" />
+          &nbsp;
+          <span>{t("Archive")}</span>
+        </CollectionName>
+        <Slash />
+      </>
+    );
+  }
+  if (document.isDraft) {
+    return (
+      <>
+        <CollectionName to="/drafts">
+          <EditIcon color="currentColor" />
+          &nbsp;
+          <span>{t("Drafts")}</span>
+        </CollectionName>
+        <Slash />
+      </>
+    );
+  }
+  if (document.isTemplate) {
+    return (
+      <>
+        <CollectionName to="/templates">
+          <ShapesIcon color="currentColor" />
+          &nbsp;
+          <span>{t("Templates")}</span>
+        </CollectionName>
+        <Slash />
+      </>
+    );
+  }
+  return null;
+}
+
+const Breadcrumb = ({ document, onlyText }: Props) => {
+  const { collections } = useStores();
+  const { t } = useTranslation();
+
+  let collection = collections.get(document.collectionId);
+  if (!collection) {
+    if (!document.deletedAt) return <div />;
+
+    collection = {
+      id: document.collectionId,
+      name: t("Deleted Collection"),
+      color: "currentColor",
+    };
+  }
+
+  const path = collection.pathToDocument
+    ? collection.pathToDocument(document.id).slice(0, -1)
+    : [];
 
   if (onlyText === true) {
     return (
@@ -55,6 +127,7 @@ const Breadcrumb = observer(({ document, collections, onlyText }: Props) => {
 
   return (
     <Wrapper justify="flex-start" align="center">
+      <Icon document={document} />
       <CollectionName to={collectionUrl(collection.id)}>
         {collection.private ? (
           <PrivateCollectionIcon color={collection.color} expanded />
@@ -78,12 +151,12 @@ const Breadcrumb = observer(({ document, collections, onlyText }: Props) => {
       )}
     </Wrapper>
   );
-});
+};
 
 const Wrapper = styled(Flex)`
   display: none;
 
-  ${breakpoint('tablet')`	
+  ${breakpoint('tablet')`
     display: flex;
   `};
 `;
@@ -107,12 +180,12 @@ export const Slash = styled(GoToIcon)`
 
 const Overflow = styled(MoreIcon)`
   flex-shrink: 0;
-  opacity: 0.25;
   transition: opacity 100ms ease-in-out;
+  fill: ${(props) => props.theme.divider};
 
-  &:hover,
-  &:active {
-    opacity: 1;
+  &:active,
+  &:hover {
+    fill: ${(props) => props.theme.text};
   }
 `;
 
@@ -139,4 +212,4 @@ const CollectionName = styled(Link)`
   overflow: hidden;
 `;
 
-export default inject('collections')(Breadcrumb);
+export default observer(Breadcrumb);

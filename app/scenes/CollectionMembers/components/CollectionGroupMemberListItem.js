@@ -1,16 +1,13 @@
 // @flow
-import * as React from 'react';
-import styled from 'styled-components';
-import InputSelect from 'components/InputSelect';
-import GroupListItem from 'components/GroupListItem';
-import Group from 'models/Group';
-import CollectionGroupMembership from 'models/CollectionGroupMembership';
-import { DropdownMenu, DropdownMenuItem } from 'components/DropdownMenu';
+import * as React from "react";
+import { useTranslation } from "react-i18next";
+import styled from "styled-components";
+import CollectionGroupMembership from "models/CollectionGroupMembership";
+import Group from "models/Group";
+import { DropdownMenu, DropdownMenuItem } from "components/DropdownMenu";
+import GroupListItem from "components/GroupListItem";
+import InputSelect from "components/InputSelect";
 
-const PERMISSIONS = [
-  { label: 'Read only', value: 'read' },
-  { label: 'Read & Edit', value: 'read_write' },
-];
 type Props = {
   group: Group,
   collectionGroupMembership: ?CollectionGroupMembership,
@@ -24,34 +21,46 @@ const MemberListItem = ({
   onUpdate,
   onRemove,
 }: Props) => {
+  const { t } = useTranslation();
+
+  const PERMISSIONS = React.useMemo(
+    () => [
+      { label: t("Read only"), value: "read" },
+      { label: t("Read & Edit"), value: "read_write" },
+    ],
+    [t]
+  );
+
   return (
     <GroupListItem
       group={group}
       onRemove={onRemove}
       onUpdate={onUpdate}
       renderActions={({ openMembersModal }) => (
-        <React.Fragment>
+        <>
           <Select
-            label="Permissions"
+            label={t("Permissions")}
             options={PERMISSIONS}
             value={
               collectionGroupMembership
                 ? collectionGroupMembership.permission
                 : undefined
             }
-            onChange={ev => onUpdate(ev.target.value)}
+            onChange={(ev) => onUpdate(ev.target.value)}
             labelHidden
           />
           <ButtonWrap>
             <DropdownMenu>
               <DropdownMenuItem onClick={openMembersModal}>
-                Members…
+                {t("Members")}…
               </DropdownMenuItem>
               <hr />
-              <DropdownMenuItem onClick={onRemove}>Remove</DropdownMenuItem>
+              <DropdownMenuItem onClick={onRemove}>
+                {t("Remove")}
+              </DropdownMenuItem>
             </DropdownMenu>
           </ButtonWrap>
-        </React.Fragment>
+        </>
       )}
     />
   );

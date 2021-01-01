@@ -16,8 +16,8 @@ const prefetchTags = [
 
 try {
   const manifest = fs.readFileSync(
-    path.join(__dirname, '../../dist/manifest.json'),
-    'utf8'
+    path.join(__dirname, "../../app/manifest.json"),
+    "utf8"
   );
   const manifestData = JSON.parse(manifest);
   Object.values(manifestData).forEach(filename => {

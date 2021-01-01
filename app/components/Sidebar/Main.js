@@ -10,7 +10,10 @@ import {
   StarredIcon,
   TrashIcon,
   PlusIcon,
-} from 'outline-icons';
+} from "outline-icons";
+import * as React from "react";
+import { withTranslation, type TFunction } from "react-i18next";
+import styled from "styled-components";
 
 import Flex from 'shared/components/Flex';
 import Modal from 'components/Modal';
@@ -34,7 +37,7 @@ type Props = {
   auth: AuthStore,
   documents: DocumentsStore,
   policies: PoliciesStore,
-  ui: UiStore,
+  t: TFunction,
 };
 
 @observer
@@ -60,11 +63,10 @@ class MainSidebar extends React.Component<Props> {
   };
 
   render() {
-    const { auth, documents, policies } = this.props;
+    const { auth, documents, policies, t } = this.props;
     const { user, team } = auth;
     if (!user || !team) return null;
 
-    const draftDocumentsCount = documents.drafts.length;
     const can = policies.abilities(team.id);
 
     return (
@@ -86,30 +88,40 @@ class MainSidebar extends React.Component<Props> {
                 to="/home"
                 icon={<HomeIcon />}
                 exact={false}
-                label="Home"
+                label={t("Home")}
               />
               <SidebarLink
                 to={{
                   pathname: '/search',
                   state: { fromMenu: true },
                 }}
-                icon={<SearchIcon />}
-                label="Search"
+                icon={<SearchIcon color="currentColor" />}
+                label={t("Search")}
                 exact={false}
               />
               <SidebarLink
                 to="/starred"
                 icon={<StarredIcon />}
                 exact={false}
-                label="Starred"
+                label={t("Starred")}
+              />
+              <SidebarLink
+                to="/templates"
+                icon={<ShapesIcon color="currentColor" />}
+                exact={false}
+                label={t("Templates")}
+                active={
+                  documents.active ? documents.active.template : undefined
+                }
               />
               <SidebarLink
                 to="/drafts"
                 icon={<EditIcon />}
                 label={
                   <Drafts align="center">
-                    Drafts{draftDocumentsCount > 0 && (
-                      <Bubble count={draftDocumentsCount} />
+                    {t("Drafts")}
+                    {documents.totalDrafts > 0 && (
+                      <Bubble count={documents.totalDrafts} />
                     )}
                   </Drafts>
                 }
@@ -129,7 +141,7 @@ class MainSidebar extends React.Component<Props> {
                 to="/archive"
                 icon={<ArchiveIcon />}
                 exact={false}
-                label="Archive"
+                label={t("Archive")}
                 active={
                   documents.active
                     ? documents.active.isArchived && !documents.active.isDeleted
@@ -140,7 +152,7 @@ class MainSidebar extends React.Component<Props> {
                 to="/trash"
                 icon={<TrashIcon />}
                 exact={false}
-                label="Trash"
+                label={t("Trash")}
                 active={
                   documents.active ? documents.active.isDeleted : undefined
                 }
@@ -149,19 +161,26 @@ class MainSidebar extends React.Component<Props> {
                 <SidebarLink
                   to="/settings/people"
                   onClick={this.handleInviteModalOpen}
-                  icon={<PlusIcon />}
-                  label="Invite people…"
+                  icon={<PlusIcon color="currentColor" />}
+                  label={t("Invite people…")}
                 />
               )}
             </Section>
           </Scrollable>
         </Flex>
         <Modal
-          title="Invite people"
+          title={t("Invite people")}
           onRequestClose={this.handleInviteModalClose}
           isOpen={this.inviteModalOpen}
         >
           <Invite onSubmit={this.handleInviteModalClose} />
+        </Modal>
+        <Modal
+          title={t("Create a collection")}
+          onRequestClose={this.handleCreateCollectionModalClose}
+          isOpen={this.createCollectionModalOpen}
+        >
+          <CollectionNew onSubmit={this.handleCreateCollectionModalClose} />
         </Modal>
       </Sidebar>
     );
@@ -172,4 +191,6 @@ const Drafts = styled(Flex)`
   height: 24px;
 `;
 
-export default inject('documents', 'policies', 'auth', 'ui')(MainSidebar);
+export default withTranslation()<MainSidebar>(
+  inject("documents", "policies", "auth")(MainSidebar)
+);

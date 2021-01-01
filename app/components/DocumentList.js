@@ -1,8 +1,8 @@
 // @flow
-import * as React from 'react';
-import Document from 'models/Document';
-import DocumentPreview from 'components/DocumentPreview';
-import ArrowKeyNavigation from 'boundless-arrow-key-navigation';
+import ArrowKeyNavigation from "boundless-arrow-key-navigation";
+import * as React from "react";
+import Document from "models/Document";
+import DocumentListItem from "components/DocumentListItem";
 
 type Props = {
   documents: Document[],
@@ -17,8 +17,8 @@ export default function DocumentList({ limit, documents, ...rest }: Props) {
       mode={ArrowKeyNavigation.mode.VERTICAL}
       defaultActiveChildIndex={0}
     >
-      {items.map(document => (
-        <DocumentPreview key={document.id} document={document} {...rest} />
+      {items.map((document) => (
+        <DocumentListItem key={document.id} document={document} {...rest} />
       ))}
     </ArrowKeyNavigation>
   );

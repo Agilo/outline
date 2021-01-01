@@ -1,42 +1,43 @@
 // @flow
-import * as React from 'react';
-import { render } from 'react-dom';
-import { Provider } from 'mobx-react';
-import { BrowserRouter as Router } from 'react-router-dom';
-import stores from 'stores';
+import "mobx-react-lite/batchingForReactDom";
+import "focus-visible";
+import { Provider } from "mobx-react";
+import * as React from "react";
+import { DndProvider } from "react-dnd";
+import { HTML5Backend } from "react-dnd-html5-backend";
+import { render } from "react-dom";
+import { BrowserRouter as Router } from "react-router-dom";
+import { initI18n } from "shared/i18n";
+import stores from "stores";
+import ErrorBoundary from "components/ErrorBoundary";
+import ScrollToTop from "components/ScrollToTop";
+import Theme from "components/Theme";
+import Toasts from "components/Toasts";
+import Routes from "./routes";
+import env from "env";
 
-import ErrorBoundary from 'components/ErrorBoundary';
-import ScrollToTop from 'components/ScrollToTop';
-import Toasts from 'components/Toasts';
-import Theme from 'components/Theme';
-import Routes from './routes';
+initI18n();
 
-let DevTools;
-if (__DEV__) {
-  DevTools = require('mobx-react-devtools').default; // eslint-disable-line global-require
-}
-
-const element = document.getElementById('root');
+const element = document.getElementById("root");
 
 if (element) {
   render(
-    <React.Fragment>
-      <ErrorBoundary>
-        <Provider {...stores}>
-          <Theme>
+    <ErrorBoundary>
+      <Provider {...stores}>
+        <Theme>
+          <DndProvider backend={HTML5Backend}>
             <Router>
-              <React.Fragment>
+              <>
                 <ScrollToTop>
                   <Routes />
                 </ScrollToTop>
                 <Toasts />
-              </React.Fragment>
+              </>
             </Router>
-          </Theme>
-        </Provider>
-      </ErrorBoundary>
-      {DevTools && <DevTools position={{ bottom: 0, right: 0 }} />}
-    </React.Fragment>,
+          </DndProvider>
+        </Theme>
+      </Provider>
+    </ErrorBoundary>,
     element
   );
 }

@@ -12,10 +12,16 @@ import {
   GroupIcon,
   LinkIcon,
   TeamIcon,
-  BulletedListIcon,
-} from 'outline-icons';
-import ZapierIcon from './icons/Zapier';
-import SlackIcon from './icons/Slack';
+  ExpandedIcon,
+} from "outline-icons";
+import * as React from "react";
+import { withTranslation, type TFunction } from "react-i18next";
+import type { RouterHistory } from "react-router-dom";
+import styled from "styled-components";
+import AuthStore from "stores/AuthStore";
+import PoliciesStore from "stores/PoliciesStore";
+import Flex from "components/Flex";
+import Scrollable from "components/Scrollable";
 
 import Flex from 'shared/components/Flex';
 import Sidebar from './Sidebar';
@@ -27,10 +33,13 @@ import HeaderBlock from './components/HeaderBlock';
 import PoliciesStore from 'stores/PoliciesStore';
 import AuthStore from 'stores/AuthStore';
 
+const isHosted = env.DEPLOYMENT === "hosted";
+
 type Props = {
   history: RouterHistory,
   policies: PoliciesStore,
   auth: AuthStore,
+  t: TFunction,
 };
 
 @observer
@@ -40,7 +49,7 @@ class SettingsSidebar extends React.Component<Props> {
   };
 
   render() {
-    const { policies, auth } = this.props;
+    const { policies, t, auth } = this.props;
     const { team } = auth;
     if (!team) return null;
 
@@ -49,7 +58,11 @@ class SettingsSidebar extends React.Component<Props> {
     return (
       <Sidebar>
         <HeaderBlock
-          subheading="◄ Return to App"
+          subheading={
+            <ReturnToApp align="center">
+              <BackIcon color="currentColor" /> {t("Return to App")}
+            </ReturnToApp>
+          }
           teamName={team.name}
           logoUrl={team.avatarUrl}
           onClick={this.returnToDashboard}
@@ -61,18 +74,18 @@ class SettingsSidebar extends React.Component<Props> {
               <Header>Account</Header>
               <SidebarLink
                 to="/settings"
-                icon={<ProfileIcon />}
-                label="Profile"
+                icon={<ProfileIcon color="currentColor" />}
+                label={t("Profile")}
               />
               <SidebarLink
                 to="/settings/notifications"
-                icon={<EmailIcon />}
-                label="Notifications"
+                icon={<EmailIcon color="currentColor" />}
+                label={t("Notifications")}
               />
               <SidebarLink
                 to="/settings/tokens"
-                icon={<CodeIcon />}
-                label="API Tokens"
+                icon={<CodeIcon color="currentColor" />}
+                label={t("API Tokens")}
               />
             </Section>
             <Section>
@@ -80,62 +93,63 @@ class SettingsSidebar extends React.Component<Props> {
               {can.update && (
                 <SidebarLink
                   to="/settings/details"
-                  icon={<TeamIcon />}
-                  label="Details"
+                  icon={<TeamIcon color="currentColor" />}
+                  label={t("Details")}
                 />
               )}
               {can.update && (
                 <SidebarLink
                   to="/settings/security"
-                  icon={<PadlockIcon />}
-                  label="Security"
+                  icon={<PadlockIcon color="currentColor" />}
+                  label={t("Security")}
                 />
               )}
               <SidebarLink
                 to="/settings/people"
                 icon={<UserIcon />}
                 exact={false}
-                label="People"
+                label={t("People")}
               />
               <SidebarLink
                 to="/settings/groups"
                 icon={<GroupIcon />}
                 exact={false}
-                label="Groups"
+                label={t("Groups")}
               />
               <SidebarLink
                 to="/settings/shares"
-                icon={<LinkIcon />}
-                label="Share Links"
+                icon={<LinkIcon color="currentColor" />}
+                label={t("Share Links")}
               />
-              {can.auditLog && (
-                <SidebarLink
-                  to="/settings/events"
-                  icon={<BulletedListIcon />}
-                  label="Audit Log"
-                />
-              )}
               {can.export && (
                 <SidebarLink
                   to="/settings/export"
-                  icon={<DocumentIcon />}
-                  label="Export Data"
+                  icon={<DocumentIcon color="currentColor" />}
+                  label={t("Export Data")}
                 />
               )}
             </Section>
             {can.update && (
               <Section>
-                <Header>Integrations</Header>
+                <Header>{t("Integrations")}</Header>
                 <SidebarLink
                   to="/settings/integrations/slack"
                   icon={<SlackIcon />}
                   label="Slack"
                 />
-                <SidebarLink
-                  to="/settings/integrations/zapier"
-                  icon={<ZapierIcon />}
-                  label="Zapier"
-                />
+                {isHosted && (
+                  <SidebarLink
+                    to="/settings/integrations/zapier"
+                    icon={<ZapierIcon color="currentColor" />}
+                    label="Zapier"
+                  />
+                )}
+              </Section>
+            )}
+            {can.update && !isHosted && (
+              <Section>
+                <Header>{t("Installation")}</Header>
+                <Version />
               </Section>
             )}
           </Scrollable>
@@ -145,4 +159,15 @@ class SettingsSidebar extends React.Component<Props> {
   }
 }
 
-export default inject('auth', 'policies')(SettingsSidebar);
+const BackIcon = styled(ExpandedIcon)`
+  transform: rotate(90deg);
+  margin-left: -8px;
+`;
+
+const ReturnToApp = styled(Flex)`
+  height: 16px;
+`;
+
+export default withTranslation()<SettingsSidebar>(
+  inject("auth", "policies")(SettingsSidebar)
+);
