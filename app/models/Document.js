@@ -1,13 +1,14 @@
 // @flow
+import { action, set, observable, computed } from "mobx";
 import addDays from "date-fns/add_days";
 import invariant from "invariant";
-import { action, set, observable, computed } from "mobx";
+import { client } from "utils/ApiClient";
 import parseTitle from "shared/utils/parseTitle";
 import unescape from "shared/utils/unescape";
-import DocumentsStore from "stores/DocumentsStore";
 import BaseModel from "models/BaseModel";
 import Revision from "models/Revision";
 import User from "models/User";
+import DocumentsStore from "stores/DocumentsStore";
 
 type SaveOptions = {
   publish?: boolean,
@@ -19,7 +20,6 @@ type SaveOptions = {
 export default class Document extends BaseModel {
   @observable isSaving: boolean = false;
   @observable embedsDisabled: boolean = false;
-  @observable injectTemplate: boolean = false;
   store: DocumentsStore;
 
   collaborators: User[];
@@ -35,32 +35,18 @@ export default class Document extends BaseModel {
   text: string;
   title: string;
   emoji: string;
-  template: boolean;
-  templateId: ?string;
   parentDocumentId: ?string;
   publishedAt: ?string;
   archivedAt: string;
   deletedAt: ?string;
   url: string;
   urlId: string;
+  shareUrl: ?string;
   revision: number;
-
-  constructor(fields: Object, store: DocumentsStore) {
-    super(fields, store);
-
-    if (this.isNew && this.isFromTemplate) {
-      this.title = "";
-    }
-  }
 
   get emoji() {
     const { emoji } = parseTitle(this.title);
     return emoji;
-  }
-
-  @computed
-  get noun(): string {
-    return this.template ? "template" : "document";
   }
 
   @computed
@@ -89,18 +75,8 @@ export default class Document extends BaseModel {
   }
 
   @computed
-  get isTemplate(): boolean {
-    return !!this.template;
-  }
-
-  @computed
   get isDraft(): boolean {
     return !this.publishedAt;
-  }
-
-  @computed
-  get titleWithDefault(): string {
-    return this.title || "Untitled";
   }
 
   @computed
@@ -112,28 +88,16 @@ export default class Document extends BaseModel {
     return addDays(new Date(this.deletedAt), 30).toString();
   }
 
-  @computed
-  get isNew(): boolean {
-    return this.createdAt === this.updatedAt;
-  }
-
-  @computed
-  get isFromTemplate(): boolean {
-    return !!this.templateId;
-  }
-
-  @computed
-  get placeholder(): ?string {
-    return this.isTemplate ? "Start your template…" : "Start with a title…";
-  }
-
   @action
   share = async () => {
-    return this.store.rootStore.shares.create({ documentId: this.id });
+    const res = await client.post("/shares.create", { documentId: this.id });
+    invariant(res && res.data, "Share data should be available");
+    this.shareUrl = res.data.url;
+    return this.shareUrl;
   };
 
   @action
-  updateFromJson = (data) => {
+  updateFromJson = data => {
     set(this, data);
   };
 
@@ -153,6 +117,7 @@ export default class Document extends BaseModel {
   @action
   disableEmbeds = () => {
     this.embedsDisabled = true;
+    debugger;
   };
 
   @action
@@ -197,16 +162,10 @@ export default class Document extends BaseModel {
   };
 
   @action
-  templatize = async () => {
-    return this.store.templatize(this.id);
-  };
-
-  @action
-  updateFromTemplate = async (template: Document) => {
-    this.templateId = template.id;
-    this.title = template.title;
-    this.text = template.text;
-    this.injectTemplate = true;
+  fetch = async () => {
+    const res = await client.post("/documents.info", { id: this.id });
+    invariant(res && res.data, "Data should be available");
+    this.updateFromJson(res.data);
   };
 
   @action
@@ -232,7 +191,6 @@ export default class Document extends BaseModel {
           id: this.id,
           title: this.title,
           text: this.text,
-          templateId: this.templateId,
           lastRevision: options.lastRevision,
           ...options,
         });
@@ -252,12 +210,6 @@ export default class Document extends BaseModel {
     return this.store.duplicate(this);
   };
 
-  getSummary = (paragraphs: number = 4) => {
-    const result = this.text.trim().split("\n").slice(0, paragraphs).join("\n");
-
-    return result;
-  };
-
   download = async () => {
     // Ensure the document is upto date with latest server contents
     await this.fetch();
@@ -272,7 +224,7 @@ export default class Document extends BaseModel {
     // Firefox support requires the anchor tag be in the DOM to trigger the dl
     if (document.body) document.body.appendChild(a);
     a.href = url;
-    a.download = `${this.titleWithDefault}.md`;
+    a.download = `${this.title || "Untitled"}.md`;
     a.click();
   };
 }

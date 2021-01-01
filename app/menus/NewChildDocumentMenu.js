@@ -1,14 +1,14 @@
 // @flow
+import * as React from "react";
+import { Redirect } from "react-router-dom";
 import { observable } from "mobx";
 import { observer, inject } from "mobx-react";
 import { MoreIcon } from "outline-icons";
-import * as React from "react";
-import { Redirect } from "react-router-dom";
 
-import CollectionsStore from "stores/CollectionsStore";
-import Document from "models/Document";
-import { DropdownMenu, DropdownMenuItem } from "components/DropdownMenu";
 import { newDocumentUrl } from "utils/routeHelpers";
+import Document from "models/Document";
+import CollectionsStore from "stores/CollectionsStore";
+import { DropdownMenu, DropdownMenuItem } from "components/DropdownMenu";
 
 type Props = {
   label?: React.Node,
@@ -31,9 +31,7 @@ class NewChildDocumentMenu extends React.Component<Props> {
 
   handleNewChild = () => {
     const { document } = this.props;
-    this.redirectTo = newDocumentUrl(document.collectionId, {
-      parentDocumentId: document.id,
-    });
+    this.redirectTo = newDocumentUrl(document.collectionId, document.id);
   };
 
   render() {

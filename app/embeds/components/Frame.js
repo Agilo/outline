@@ -1,22 +1,19 @@
 // @flow
+import * as React from "react";
 import { observable } from "mobx";
 import { observer } from "mobx-react";
-import * as React from "react";
 import styled from "styled-components";
 
 type Props = {
   src?: string,
   border?: boolean,
+  forwardedRef: *,
   width?: string,
   height?: string,
 };
 
-type PropsWithRef = Props & {
-  forwardedRef: React.Ref<typeof StyledIframe>,
-};
-
 @observer
-class Frame extends React.Component<PropsWithRef> {
+class Frame extends React.Component<Props> {
   mounted: boolean;
   @observable isLoaded: boolean = false;
 
@@ -68,20 +65,21 @@ class Frame extends React.Component<PropsWithRef> {
 const Rounded = styled.div`
   border-radius: 3px;
   overflow: hidden;
-  width: ${(props) => props.width};
-  height: ${(props) => props.height};
+  width: ${props => props.width};
+  height: ${props => props.height};
 `;
 
 // This wrapper allows us to pass non-standard HTML attributes through to the DOM element
 // https://www.styled-components.com/docs/basics#passed-props
-const Iframe = (props) => <iframe {...props} />;
+const Iframe = props => <iframe {...props} />;
 
 const StyledIframe = styled(Iframe)`
   border: 1px solid;
-  border-color: ${(props) => props.theme.embedBorder};
+  border-color: ${props => props.theme.embedBorder};
   border-radius: 3px;
 `;
 
-export default React.forwardRef<Props, typeof Frame>((props, ref) => (
+// $FlowIssue - https://github.com/facebook/flow/issues/6103
+export default React.forwardRef((props, ref) => (
   <Frame {...props} forwardedRef={ref} />
 ));

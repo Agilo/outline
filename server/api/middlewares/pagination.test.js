@@ -5,10 +5,10 @@ import { flushdb, seed } from "../../test/support";
 
 const server = new TestServer(app.callback());
 
-beforeEach(() => flushdb());
-afterAll(() => server.close());
+beforeEach(flushdb);
+afterAll(server.close);
 
-describe("#pagination", () => {
+describe("#pagination", async () => {
   it("should allow offset and limit", async () => {
     const { user } = await seed();
     const res = await server.post("/api/users.list", {

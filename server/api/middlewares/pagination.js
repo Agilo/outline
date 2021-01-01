@@ -1,7 +1,7 @@
 // @flow
 import querystring from "querystring";
-import { type Context } from "koa";
 import { InvalidRequestError } from "../../errors";
+import { type Context } from "koa";
 
 export default function pagination(options?: Object) {
   return async function paginationMiddleware(
@@ -16,8 +16,9 @@ export default function pagination(options?: Object) {
     };
 
     let query = ctx.request.query;
-    let body = ctx.request.body;
 
+    // $FlowFixMe
+    let body = ctx.request.body;
     // $FlowFixMe
     let limit = query.limit || body.limit;
     // $FlowFixMe
@@ -47,20 +48,15 @@ export default function pagination(options?: Object) {
       );
     }
 
-    /* $FlowFixMeNowPlease This comment suppresses an error found when upgrading
-     * flow-bin@0.104.0. To view the error, delete this comment and run Flow. */
     ctx.state.pagination = {
-      limit,
-      offset,
+      limit: limit,
+      offset: offset,
     };
 
     // $FlowFixMe
     query.limit = ctx.state.pagination.limit;
     // $FlowFixMe
     query.offset = ctx.state.pagination.offset + query.limit;
-
-    /* $FlowFixMeNowPlease This comment suppresses an error found when upgrading
-     * flow-bin@0.104.0. To view the error, delete this comment and run Flow. */
     ctx.state.pagination.nextPath = `/api${
       ctx.request.path
     }?${querystring.stringify(query)}`;

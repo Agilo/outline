@@ -1,8 +1,8 @@
 // @flow
-import { Table, TBody, TR, TD } from "oy-vey";
 import * as React from "react";
+import { Table, TBody, TR, TD } from "oy-vey";
+import { twitterUrl, spectrumUrl } from "../../../shared/utils/routeHelpers";
 import theme from "../../../shared/styles/theme";
-import { twitterUrl } from "../../../shared/utils/routeHelpers";
 
 type Props = {
   unsubscribeUrl?: string,
@@ -45,6 +45,9 @@ export default ({ unsubscribeUrl }: Props) => {
             </a>
             <a href={twitterUrl()} style={externalLinkStyle}>
               Twitter
+            </a>
+            <a href={spectrumUrl()} style={externalLinkStyle}>
+              Spectrum
             </a>
           </TD>
         </TR>

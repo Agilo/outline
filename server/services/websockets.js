@@ -1,6 +1,4 @@
 // @flow
-import subHours from "date-fns/sub_hours";
-import { socketio } from "../";
 import type { Event } from "../events";
 import {
   Document,
@@ -9,13 +7,13 @@ import {
   CollectionGroup,
   GroupUser,
 } from "../models";
+import { socketio } from "../";
 import { Op } from "../sequelize";
+import subHours from "date-fns/sub_hours";
 
 export default class Websockets {
   async on(event: Event) {
-    if (!socketio) {
-      return;
-    }
+    if (process.env.WEBSOCKETS_ENABLED !== "true" || !socketio) return;
 
     switch (event.name) {
       case "documents.publish":
@@ -127,7 +125,7 @@ export default class Websockets {
           },
           paranoid: false,
         });
-        documents.forEach((document) => {
+        documents.forEach(document => {
           socketio.to(`collection-${document.collectionId}`).emit("entities", {
             event: event.name,
             documentIds: [
@@ -138,7 +136,7 @@ export default class Websockets {
             ],
           });
         });
-        event.data.collectionIds.forEach((collectionId) => {
+        event.data.collectionIds.forEach(collectionId => {
           socketio.to(`collection-${collectionId}`).emit("entities", {
             event: event.name,
             collectionIds: [{ id: collectionId }],

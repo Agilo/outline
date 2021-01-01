@@ -1,31 +1,28 @@
 // @flow
+import * as React from "react";
 import invariant from "invariant";
+import { withRouter } from "react-router-dom";
+import type { Location, RouterHistory } from "react-router-dom";
 import { observable } from "mobx";
 import { observer, inject } from "mobx-react";
-import * as React from "react";
-import type { RouterHistory, Match } from "react-router-dom";
-import { withRouter } from "react-router-dom";
+import { matchDocumentEdit, updateDocumentUrl } from "utils/routeHelpers";
+import DocumentComponent from "./Document";
+import Revision from "models/Revision";
+import Document from "models/Document";
+import SocketPresence from "./SocketPresence";
+import Loading from "./Loading";
+import HideSidebar from "./HideSidebar";
+import Error404 from "scenes/Error404";
+import ErrorOffline from "scenes/ErrorOffline";
 import DocumentsStore from "stores/DocumentsStore";
 import PoliciesStore from "stores/PoliciesStore";
 import RevisionsStore from "stores/RevisionsStore";
-import SharesStore from "stores/SharesStore";
 import UiStore from "stores/UiStore";
-import Document from "models/Document";
-import Revision from "models/Revision";
-import Error404 from "scenes/Error404";
-import ErrorOffline from "scenes/ErrorOffline";
-import DocumentComponent from "./Document";
-import HideSidebar from "./HideSidebar";
-import Loading from "./Loading";
-import SocketPresence from "./SocketPresence";
-import { type LocationWithState } from "types";
-import { NotFoundError, OfflineError } from "utils/errors";
-import { matchDocumentEdit, updateDocumentUrl } from "utils/routeHelpers";
+import { OfflineError } from "utils/errors";
 
 type Props = {|
-  match: Match,
-  location: LocationWithState,
-  shares: SharesStore,
+  match: Object,
+  location: Location,
   documents: DocumentsStore,
   policies: PoliciesStore,
   revisions: RevisionsStore,
@@ -64,6 +61,12 @@ class DataLoader extends React.Component<Props> {
     }
   }
 
+  goToDocumentCanonical = () => {
+    if (this.document) {
+      this.props.history.push(this.document.url);
+    }
+  };
+
   get isEditing() {
     return this.props.match.path === matchDocumentEdit;
   }
@@ -72,8 +75,8 @@ class DataLoader extends React.Component<Props> {
     const results = await this.props.documents.search(term);
 
     return results
-      .filter((result) => result.document.title)
-      .map((result) => ({
+      .filter(result => result.document.title)
+      .map((result, index) => ({
         title: result.document.title,
         url: result.document.url,
       }));
@@ -119,27 +122,10 @@ class DataLoader extends React.Component<Props> {
     const document = this.document;
 
     if (document) {
-      const can = this.props.policies.abilities(document.id);
-
-      // sets the document as active in the sidebar, ideally in the future this
-      // will be route driven.
       this.props.ui.setActiveDocument(document);
 
-      // If we're attempting to update an archived, deleted, or otherwise
-      // uneditable document then forward to the canonical read url.
-      if (!can.update && this.isEditing) {
-        this.props.history.push(document.url);
-        return;
-      }
-
-      // Prevents unauthorized request to load share information for the document
-      // when viewing a public share link
-      if (can.read) {
-        this.props.shares.fetch(document.id).catch((err) => {
-          if (!(err instanceof NotFoundError)) {
-            throw err;
-          }
-        });
+      if (document.isArchived && this.isEditing) {
+        return this.goToDocumentCanonical();
       }
 
       const isMove = this.props.location.pathname.match(/move$/);
@@ -172,10 +158,10 @@ class DataLoader extends React.Component<Props> {
 
     if (!document) {
       return (
-        <>
+        <React.Fragment>
           <Loading location={location} />
           {this.isEditing && <HideSidebar ui={ui} />}
-        </>
+        </React.Fragment>
       );
     }
 
@@ -191,7 +177,7 @@ class DataLoader extends React.Component<Props> {
           revision={revision}
           abilities={abilities}
           location={location}
-          readOnly={!this.isEditing || !abilities.update || document.isArchived}
+          readOnly={!this.isEditing}
           onSearchLink={this.onSearchLink}
           onCreateLink={this.onCreateLink}
         />
@@ -201,12 +187,5 @@ class DataLoader extends React.Component<Props> {
 }
 
 export default withRouter(
-  inject(
-    "ui",
-    "auth",
-    "documents",
-    "revisions",
-    "policies",
-    "shares"
-  )(DataLoader)
+  inject("ui", "auth", "documents", "revisions", "policies")(DataLoader)
 );

@@ -2,15 +2,15 @@
 import TestServer from "fetch-test-server";
 import app from "../app";
 
-import { buildUser } from "../test/factories";
 import { flushdb, seed } from "../test/support";
+import { buildUser } from "../test/factories";
 
 const server = new TestServer(app.callback());
 
-beforeEach(() => flushdb());
-afterAll(() => server.close());
+beforeEach(flushdb);
+afterAll(server.close);
 
-describe("#users.list", () => {
+describe("#users.list", async () => {
   it("should allow filtering by user name", async () => {
     const user = await buildUser({ name: "Tester" });
 
@@ -85,7 +85,7 @@ describe("#users.list", () => {
   });
 });
 
-describe("#users.info", () => {
+describe("#users.info", async () => {
   it("should return known user", async () => {
     const user = await buildUser();
     const res = await server.post("/api/users.info", {
@@ -104,7 +104,7 @@ describe("#users.info", () => {
   });
 });
 
-describe("#users.invite", () => {
+describe("#users.invite", async () => {
   it("should return sent invites", async () => {
     const user = await buildUser();
     const res = await server.post("/api/users.invite", {
@@ -124,7 +124,7 @@ describe("#users.invite", () => {
   });
 });
 
-describe("#users.delete", () => {
+describe("#users.delete", async () => {
   it("should not allow deleting without confirmation", async () => {
     const user = await buildUser();
     const res = await server.post("/api/users.delete", {
@@ -189,7 +189,7 @@ describe("#users.delete", () => {
   });
 });
 
-describe("#users.update", () => {
+describe("#users.update", async () => {
   it("should update user profile information", async () => {
     const { user } = await seed();
     const res = await server.post("/api/users.update", {
@@ -210,7 +210,7 @@ describe("#users.update", () => {
   });
 });
 
-describe("#users.promote", () => {
+describe("#users.promote", async () => {
   it("should promote a new admin", async () => {
     const { admin, user } = await seed();
 
@@ -235,7 +235,7 @@ describe("#users.promote", () => {
   });
 });
 
-describe("#users.demote", () => {
+describe("#users.demote", async () => {
   it("should demote an admin", async () => {
     const { admin, user } = await seed();
     await user.update({ isAdmin: true }); // Make another admin
@@ -279,7 +279,7 @@ describe("#users.demote", () => {
   });
 });
 
-describe("#users.suspend", () => {
+describe("#users.suspend", async () => {
   it("should suspend an user", async () => {
     const { admin, user } = await seed();
 
@@ -321,7 +321,7 @@ describe("#users.suspend", () => {
   });
 });
 
-describe("#users.activate", () => {
+describe("#users.activate", async () => {
   it("should activate a suspended user", async () => {
     const { admin, user } = await seed();
     await user.update({

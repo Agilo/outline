@@ -4,11 +4,9 @@ import { sequelize } from "../sequelize";
 
 export function flushdb() {
   const sql = sequelize.getQueryInterface();
-  const tables = Object.keys(sequelize.models).map((model) => {
+  const tables = Object.keys(sequelize.models).map(model => {
     const n = sequelize.models[model].getTableName();
-    return sql.queryGenerator.quoteTable(
-      typeof n === "string" ? n : n.tableName
-    );
+    return sql.quoteTable(typeof n === "string" ? n : n.tableName);
   });
 
   const query = `TRUNCATE ${tables.join(", ")} CASCADE`;
@@ -62,6 +60,7 @@ const seed = async () => {
     urlId: "collection",
     teamId: team.id,
     creatorId: user.id,
+    type: "atlas",
   });
 
   const document = await Document.create({

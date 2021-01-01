@@ -1,15 +1,15 @@
 /* eslint-disable flowtype/require-valid-file-annotation */
 import TestServer from "fetch-test-server";
 import app from "../app";
-import { Collection, CollectionUser, CollectionGroup } from "../models";
-import { buildUser, buildGroup, buildCollection } from "../test/factories";
 import { flushdb, seed } from "../test/support";
+import { buildUser, buildGroup, buildCollection } from "../test/factories";
+import { Collection, CollectionUser, CollectionGroup } from "../models";
 const server = new TestServer(app.callback());
 
-beforeEach(() => flushdb());
-afterAll(() => server.close());
+beforeEach(flushdb);
+afterAll(server.close);
 
-describe("#collections.list", () => {
+describe("#collections.list", async () => {
   it("should require authentication", async () => {
     const res = await server.post("/api/collections.list");
     const body = await res.json();
@@ -104,7 +104,7 @@ describe("#collections.list", () => {
   });
 });
 
-describe("#collections.export", () => {
+describe("#collections.export", async () => {
   it("should now allow export of private collection not a member", async () => {
     const { user } = await seed();
     const collection = await buildCollection({
@@ -176,7 +176,7 @@ describe("#collections.export", () => {
   });
 });
 
-describe("#collections.export_all", () => {
+describe("#collections.export_all", async () => {
   it("should require authentication", async () => {
     const res = await server.post("/api/collections.export_all");
     const body = await res.json();
@@ -215,7 +215,7 @@ describe("#collections.export_all", () => {
   });
 });
 
-describe("#collections.add_user", () => {
+describe("#collections.add_user", async () => {
   it("should add user to collection", async () => {
     const user = await buildUser();
     const collection = await buildCollection({
@@ -279,7 +279,7 @@ describe("#collections.add_user", () => {
   });
 });
 
-describe("#collections.add_group", () => {
+describe("#collections.add_group", async () => {
   it("should add group to collection", async () => {
     const user = await buildUser({ isAdmin: true });
     const collection = await buildCollection({
@@ -342,7 +342,7 @@ describe("#collections.add_group", () => {
   });
 });
 
-describe("#collections.remove_group", () => {
+describe("#collections.remove_group", async () => {
   it("should remove group from collection", async () => {
     const user = await buildUser({ isAdmin: true });
     const collection = await buildCollection({
@@ -418,7 +418,7 @@ describe("#collections.remove_group", () => {
   });
 });
 
-describe("#collections.remove_user", () => {
+describe("#collections.remove_user", async () => {
   it("should remove user from collection", async () => {
     const user = await buildUser();
     const collection = await buildCollection({
@@ -491,7 +491,7 @@ describe("#collections.remove_user", () => {
   });
 });
 
-describe("#collections.users", () => {
+describe("#collections.users", async () => {
   it("should return users in private collection", async () => {
     const { collection, user } = await seed();
     collection.private = true;
@@ -531,7 +531,7 @@ describe("#collections.users", () => {
   });
 });
 
-describe("#collections.group_memberships", () => {
+describe("#collections.group_memberships", async () => {
   it("should return groups in private collection", async () => {
     const user = await buildUser();
     const group = await buildGroup({ teamId: user.teamId });
@@ -680,7 +680,7 @@ describe("#collections.group_memberships", () => {
   });
 });
 
-describe("#collections.memberships", () => {
+describe("#collections.memberships", async () => {
   it("should return members in private collection", async () => {
     const { collection, user } = await seed();
     collection.private = true;
@@ -783,7 +783,7 @@ describe("#collections.memberships", () => {
   });
 });
 
-describe("#collections.info", () => {
+describe("#collections.info", async () => {
   it("should return collection", async () => {
     const { user, collection } = await seed();
     const res = await server.post("/api/collections.info", {
@@ -845,7 +845,7 @@ describe("#collections.info", () => {
   });
 });
 
-describe("#collections.create", () => {
+describe("#collections.create", async () => {
   it("should require authentication", async () => {
     const res = await server.post("/api/collections.create");
     const body = await res.json();
@@ -884,7 +884,7 @@ describe("#collections.create", () => {
   });
 });
 
-describe("#collections.update", () => {
+describe("#collections.update", async () => {
   it("should require authentication", async () => {
     const collection = await buildCollection();
     const res = await server.post("/api/collections.update", {
@@ -1029,7 +1029,7 @@ describe("#collections.update", () => {
   });
 });
 
-describe("#collections.delete", () => {
+describe("#collections.delete", async () => {
   it("should require authentication", async () => {
     const res = await server.post("/api/collections.delete");
     const body = await res.json();
@@ -1062,6 +1062,7 @@ describe("#collections.delete", () => {
       urlId: "blah",
       teamId: user.teamId,
       creatorId: user.id,
+      type: "atlas",
     });
 
     const res = await server.post("/api/collections.delete", {

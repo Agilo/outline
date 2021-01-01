@@ -4,17 +4,17 @@ import app from "../app";
 import { flushdb } from "../test/support";
 const server = new TestServer(app.callback());
 
-beforeEach(() => flushdb());
-afterAll(() => server.close());
+beforeEach(flushdb);
+afterAll(server.close);
 
-describe("POST unknown endpoint", () => {
+describe("POST unknown endpoint", async () => {
   it("should be not found", async () => {
     const res = await server.post("/api/blah");
     expect(res.status).toEqual(404);
   });
 });
 
-describe("GET unknown endpoint", () => {
+describe("GET unknown endpoint", async () => {
   it("should be not found", async () => {
     const res = await server.get("/api/blah");
     expect(res.status).toEqual(404);

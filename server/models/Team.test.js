@@ -1,8 +1,8 @@
 /* eslint-disable flowtype/require-valid-file-annotation */
-import { buildTeam } from "../test/factories";
 import { flushdb } from "../test/support";
+import { buildTeam } from "../test/factories";
 
-beforeEach(() => flushdb());
+beforeEach(flushdb);
 
 it("should set subdomain if available", async () => {
   const team = await buildTeam();

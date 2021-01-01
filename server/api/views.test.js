@@ -2,15 +2,15 @@
 import TestServer from "fetch-test-server";
 import app from "../app";
 import { View, CollectionUser } from "../models";
-import { buildUser } from "../test/factories";
 import { flushdb, seed } from "../test/support";
+import { buildUser } from "../test/factories";
 
 const server = new TestServer(app.callback());
 
-beforeEach(() => flushdb());
-afterAll(() => server.close());
+beforeEach(flushdb);
+afterAll(server.close);
 
-describe("#views.list", () => {
+describe("#views.list", async () => {
   it("should return views for a document", async () => {
     const { user, document } = await seed();
     await View.increment({ documentId: document.id, userId: user.id });
@@ -70,7 +70,7 @@ describe("#views.list", () => {
   });
 });
 
-describe("#views.create", () => {
+describe("#views.create", async () => {
   it("should allow creating a view record for document", async () => {
     const { user, document } = await seed();
     const res = await server.post("/api/views.create", {

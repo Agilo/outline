@@ -1,11 +1,9 @@
 // @flow
-import { observer, inject } from "mobx-react";
 import * as React from "react";
-import { Redirect } from "react-router-dom";
-import { isCustomSubdomain } from "shared/utils/domains";
+import { observer, inject } from "mobx-react";
 import AuthStore from "stores/AuthStore";
 import LoadingIndicator from "components/LoadingIndicator";
-import env from "env";
+import { isCustomSubdomain } from "shared/utils/domains";
 
 type Props = {
   auth: AuthStore,
@@ -24,7 +22,7 @@ const Authenticated = observer(({ auth, children }: Props) => {
     // If we're authenticated but viewing a subdomain that doesn't match the
     // currently authenticated team then kick the user to the teams subdomain.
     if (
-      env.SUBDOMAINS_ENABLED &&
+      process.env.SUBDOMAINS_ENABLED &&
       team.subdomain &&
       isCustomSubdomain(hostname) &&
       !hostname.startsWith(`${team.subdomain}.`)
@@ -37,7 +35,7 @@ const Authenticated = observer(({ auth, children }: Props) => {
   }
 
   auth.logout(true);
-  return <Redirect to="/" />;
+  return null;
 });
 
 export default inject("auth")(Authenticated);

@@ -13,16 +13,31 @@ type Props = {|
 |};
 
 class Gist extends React.Component<Props> {
+  iframeNode: ?HTMLIFrameElement;
+
   static ENABLED = [URL_REGEX];
+
+  componentDidMount() {
+    this.updateIframeContent();
+  }
 
   get id() {
     const gistUrl = new URL(this.props.attrs.href);
     return gistUrl.pathname.split("/")[2];
   }
 
-  updateIframeContent = (iframe: ?HTMLIFrameElement) => {
-    if (!iframe) return;
+  updateIframeContent() {
     const id = this.id;
+    const iframe = this.iframeNode;
+    if (!iframe) return;
+
+    // We need to add some temporary content to the iframe for the document
+    // to be available, otherwise it's undefined on first load
+    const temp = document.getElementById("gist");
+    if (temp) {
+      temp.innerHTML = "";
+      temp.appendChild(iframe);
+    }
 
     // $FlowFixMe
     let doc = iframe.document;
@@ -33,22 +48,28 @@ class Gist extends React.Component<Props> {
     }
 
     const gistLink = `https://gist.github.com/${id}.js`;
-    const gistScript = `<script type="text/javascript" src="${gistLink}"></script>`;
+    const gistScript = `<script type="text/javascript" src="${
+      gistLink
+    }"></script>`;
     const styles =
       "<style>*{ font-size:12px; } body { margin: 0; } .gist .blob-wrapper.data { max-height:150px; overflow:auto; }</style>";
-    const iframeHtml = `<html><head><base target="_parent">${styles}</head><body>${gistScript}</body></html>`;
+    const iframeHtml = `<html><head><base target="_parent">${
+      styles
+    }</head><body>${gistScript}</body></html>`;
 
     doc.open();
     doc.writeln(iframeHtml);
     doc.close();
-  };
+  }
 
   render() {
     const id = this.id;
 
     return (
       <iframe
-        ref={this.updateIframeContent}
+        ref={ref => {
+          this.iframeNode = ref;
+        }}
         type="text/html"
         frameBorder="0"
         width="100%"

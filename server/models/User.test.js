@@ -1,8 +1,8 @@
 /* eslint-disable flowtype/require-valid-file-annotation */
-import { buildUser } from "../test/factories";
 import { flushdb } from "../test/support";
+import { buildUser } from "../test/factories";
 
-beforeEach(() => flushdb());
+beforeEach(flushdb);
 
 it("should set JWT secret", async () => {
   const user = await buildUser();

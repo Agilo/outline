@@ -1,6 +1,6 @@
 // @flow
-import { type Context } from "koa";
 import queryString from "query-string";
+import { type Context } from "koa";
 
 export default function methodOverride() {
   return async function methodOverrideMiddleware(

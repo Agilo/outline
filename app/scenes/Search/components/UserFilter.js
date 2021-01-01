@@ -1,8 +1,8 @@
 // @flow
-import { observer, inject } from "mobx-react";
 import * as React from "react";
-import UsersStore from "stores/UsersStore";
+import { observer, inject } from "mobx-react";
 import FilterOptions from "./FilterOptions";
+import UsersStore from "stores/UsersStore";
 
 const defaultOption = {
   key: undefined,
@@ -23,7 +23,7 @@ class UserFilter extends React.Component<Props> {
 
   render() {
     const { onSelect, userId, users } = this.props;
-    const userOptions = users.all.map((user) => ({
+    const userOptions = users.all.map(user => ({
       key: user.id,
       label: user.name,
     }));

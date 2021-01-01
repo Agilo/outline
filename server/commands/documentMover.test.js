@@ -1,11 +1,11 @@
 /* eslint-disable flowtype/require-valid-file-annotation */
 import documentMover from "../commands/documentMover";
-import { buildDocument, buildCollection } from "../test/factories";
 import { flushdb, seed } from "../test/support";
+import { buildDocument, buildCollection } from "../test/factories";
 
-beforeEach(() => flushdb());
+beforeEach(flushdb);
 
-describe("documentMover", () => {
+describe("documentMover", async () => {
   const ip = "127.0.0.1";
 
   it("should move within a collection", async () => {

@@ -11,7 +11,7 @@ export default class BaseModel {
     this.store = store;
   }
 
-  save = async (params: ?Object) => {
+  save = async params => {
     this.isSaving = true;
 
     try {
@@ -27,7 +27,7 @@ export default class BaseModel {
     }
   };
 
-  fetch = (options?: any) => {
+  fetch = (options: *) => {
     return this.store.fetch(this.id, options);
   };
 
@@ -44,7 +44,7 @@ export default class BaseModel {
     }
   };
 
-  toJS = (): Object => {
+  toJS = () => {
     return { ...this };
   };
 }

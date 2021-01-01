@@ -2,20 +2,20 @@
 import TestServer from "fetch-test-server";
 import app from "../app";
 import { Authentication } from "../models";
-import * as Slack from "../slack";
-import { buildDocument } from "../test/factories";
 import { flushdb, seed } from "../test/support";
+import { buildDocument } from "../test/factories";
+import * as Slack from "../slack";
 
 const server = new TestServer(app.callback());
 
-beforeEach(() => flushdb());
-afterAll(() => server.close());
+beforeEach(flushdb);
+afterAll(server.close);
 
 jest.mock("../slack", () => ({
   post: jest.fn(),
 }));
 
-describe("#hooks.unfurl", () => {
+describe("#hooks.unfurl", async () => {
   it("should return documents", async () => {
     const { user, document } = await seed();
     await Authentication.create({
@@ -49,7 +49,7 @@ describe("#hooks.unfurl", () => {
   });
 });
 
-describe("#hooks.slack", () => {
+describe("#hooks.slack", async () => {
   it("should return no matches", async () => {
     const { user, team } = await seed();
 
@@ -210,7 +210,7 @@ describe("#hooks.slack", () => {
   });
 });
 
-describe("#hooks.interactive", () => {
+describe("#hooks.interactive", async () => {
   it("should respond with replacement message", async () => {
     const { user, team } = await seed();
     const document = await buildDocument({

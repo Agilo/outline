@@ -18,7 +18,7 @@ const loadingFrame = keyframes`
 const Container = styled.div`
   position: fixed;
   top: 0;
-  z-index: ${(props) => props.theme.depths.loadingIndicatorBar};
+  z-index: 9999;
 
   background-color: #03a9f4;
   width: 100%;

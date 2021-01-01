@@ -1,48 +1,43 @@
 /* eslint-disable */
 const path = require('path');
 const webpack = require('webpack');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const UglifyJsPlugin = require('uglifyjs-webpack-plugin');
 const ManifestPlugin = require('webpack-manifest-plugin');
-const TerserPlugin = require('terser-webpack-plugin');
 
 commonWebpackConfig = require('./webpack.config');
 
 productionWebpackConfig = Object.assign(commonWebpackConfig, {
+  cache: true,
+  devtool: 'source-map',
+  entry: ['babel-polyfill', 'babel-regenerator-runtime', './app/index'],
   output: {
     path: path.join(__dirname, 'dist'),
-    filename: '[name].[contenthash].js',
+    filename: 'bundle.[hash].js',
     publicPath: '/static/',
   },
-  cache: true,
-  mode: "production",
-  devtool: 'source-map',
-  entry: ['./app/index'],
-  stats: "normal",
-  optimization: {
-    ...commonWebpackConfig.optimization,
-    minimizer: [
-      new TerserPlugin({
-        terserOptions: {
-          ecma: undefined,
-          parse: {},
-          compress: {},
-          mangle: true, // Note `mangle.properties` is `false` by default.
-          module: false,
-          output: null,
-          toplevel: false,
-          nameCache: null,
-          ie8: false,
-          keep_classnames: undefined,
-          keep_fnames: true,
-          safari10: false,
-        },
-      }),
-    ],
-  },
+  stats: "normal"
 });
-
 productionWebpackConfig.plugins = [
   ...productionWebpackConfig.plugins,
-  new ManifestPlugin()
+  new ManifestPlugin(),
+  new HtmlWebpackPlugin({
+    template: 'server/static/index.html',
+  }),
+  new UglifyJsPlugin({
+    sourceMap: true,
+    uglifyOptions: {
+      compress: true,
+      keep_fnames: true
+    }
+  }),
+  new webpack.DefinePlugin({
+    'process.env.URL': JSON.stringify(process.env.URL),
+    'process.env.NODE_ENV': JSON.stringify('production'),
+    'process.env.GOOGLE_ANALYTICS_ID': JSON.stringify(process.env.GOOGLE_ANALYTICS_ID),
+    'process.env.SUBDOMAINS_ENABLED': JSON.stringify(process.env.SUBDOMAINS_ENABLED === 'true'),
+    'process.env.WEBSOCKETS_ENABLED': JSON.stringify(process.env.WEBSOCKETS_ENABLED === 'true'),
+  }),
 ];
 
 module.exports = productionWebpackConfig;

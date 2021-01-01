@@ -1,6 +1,7 @@
 // @flow
-import invariant from "invariant";
+import pkg from "rich-markdown-editor/package.json";
 import { map, trim } from "lodash";
+import invariant from "invariant";
 import stores from "stores";
 import download from "./download";
 import {
@@ -33,7 +34,6 @@ class ApiClient {
   ) => {
     let body;
     let modifiedPath;
-    let urlToFetch;
 
     if (method === "GET") {
       if (data) {
@@ -45,18 +45,12 @@ class ApiClient {
       body = data ? JSON.stringify(data) : undefined;
     }
 
-    if (path.match(/^http/)) {
-      urlToFetch = modifiedPath || path;
-    } else {
-      urlToFetch = this.baseUrl + (modifiedPath || path);
-    }
-
     // Construct headers
     const headers = new Headers({
       Accept: "application/json",
       "Content-Type": "application/json",
       "cache-control": "no-cache",
-      "x-editor-version": EDITOR_VERSION,
+      "x-editor-version": pkg.version,
       pragma: "no-cache",
     });
     if (stores.auth.authenticated) {
@@ -66,7 +60,7 @@ class ApiClient {
 
     let response;
     try {
-      response = await fetch(urlToFetch, {
+      response = await fetch(this.baseUrl + (modifiedPath || path), {
         method,
         body,
         headers,

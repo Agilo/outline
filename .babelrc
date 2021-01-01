@@ -1,29 +1,18 @@
 {
-  "presets": [
-    "@babel/preset-react",
-    "@babel/preset-flow",
-    [
-      "@babel/preset-env",
-      {
-        "corejs": {
-          "version": "2",
-          "proposals": true
-        },
-        "useBuiltIns": "usage"
-      }
-    ]
-  ],
+  "presets": ["react", "env"],
   "plugins": [
     "lodash",
     "styled-components",
-    [
-      "@babel/plugin-proposal-decorators",
-      {
-        "legacy": true
-      }
-    ],
-    "@babel/plugin-transform-destructuring",
-    "@babel/plugin-transform-regenerator",
-    "transform-class-properties"
-  ]
+    "transform-decorators-legacy",
+    "transform-es2015-destructuring",
+    "transform-object-rest-spread",
+    "transform-regenerator",
+    "transform-class-properties",
+    "syntax-dynamic-import"
+  ],
+  "env": {
+    "development": {
+      "presets": ["react-hmre"]
+    }
+  }
 }

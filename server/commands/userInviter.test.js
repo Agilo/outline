@@ -1,11 +1,11 @@
 /* eslint-disable flowtype/require-valid-file-annotation */
 import userInviter from "../commands/userInviter";
-import { buildUser } from "../test/factories";
 import { flushdb } from "../test/support";
+import { buildUser } from "../test/factories";
 
-beforeEach(() => flushdb());
+beforeEach(flushdb);
 
-describe("userInviter", () => {
+describe("userInviter", async () => {
   const ip = "127.0.0.1";
 
   it("should return sent invites", async () => {

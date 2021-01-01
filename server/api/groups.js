@@ -1,23 +1,23 @@
 // @flow
 import Router from "koa-router";
-import { MAX_AVATAR_DISPLAY } from "../../shared/constants";
 import auth from "../middlewares/authentication";
+import pagination from "./middlewares/pagination";
+import { Op } from "../sequelize";
+import { MAX_AVATAR_DISPLAY } from "../../shared/constants";
 
-import { User, Event, Group, GroupUser } from "../models";
-import policy from "../policies";
 import {
   presentGroup,
   presentPolicies,
   presentUser,
   presentGroupMembership,
 } from "../presenters";
-import { Op } from "../sequelize";
-import pagination from "./middlewares/pagination";
+import { User, Event, Group, GroupUser } from "../models";
+import policy from "../policies";
 
 const { authorize } = policy;
 const router = new Router();
 
-router.post("groups.list", auth(), pagination(), async (ctx) => {
+router.post("groups.list", auth(), pagination(), async ctx => {
   const { sort = "updatedAt" } = ctx.body;
   let direction = ctx.body.direction;
   if (direction !== "ASC") direction = "DESC";
@@ -34,8 +34,7 @@ router.post("groups.list", auth(), pagination(), async (ctx) => {
 
   if (!user.isAdmin) {
     groups = groups.filter(
-      (group) =>
-        group.groupMemberships.filter((gm) => gm.userId === user.id).length
+      group => group.groupMemberships.filter(gm => gm.userId === user.id).length
     );
   }
 
@@ -44,9 +43,9 @@ router.post("groups.list", auth(), pagination(), async (ctx) => {
     data: {
       groups: groups.map(presentGroup),
       groupMemberships: groups
-        .map((g) =>
+        .map(g =>
           g.groupMemberships
-            .filter((membership) => !!membership.user)
+            .filter(membership => !!membership.user)
             .slice(0, MAX_AVATAR_DISPLAY)
         )
         .flat()
@@ -56,7 +55,7 @@ router.post("groups.list", auth(), pagination(), async (ctx) => {
   };
 });
 
-router.post("groups.info", auth(), async (ctx) => {
+router.post("groups.info", auth(), async ctx => {
   const { id } = ctx.body;
   ctx.assertUuid(id, "id is required");
 
@@ -70,7 +69,7 @@ router.post("groups.info", auth(), async (ctx) => {
   };
 });
 
-router.post("groups.create", auth(), async (ctx) => {
+router.post("groups.create", auth(), async ctx => {
   const { name } = ctx.body;
   ctx.assertPresent(name, "name is required");
 
@@ -101,7 +100,7 @@ router.post("groups.create", auth(), async (ctx) => {
   };
 });
 
-router.post("groups.update", auth(), async (ctx) => {
+router.post("groups.update", auth(), async ctx => {
   const { id, name } = ctx.body;
   ctx.assertPresent(name, "name is required");
   ctx.assertUuid(id, "id is required");
@@ -131,7 +130,7 @@ router.post("groups.update", auth(), async (ctx) => {
   };
 });
 
-router.post("groups.delete", auth(), async (ctx) => {
+router.post("groups.delete", auth(), async ctx => {
   const { id } = ctx.body;
   ctx.assertUuid(id, "id is required");
 
@@ -155,7 +154,7 @@ router.post("groups.delete", auth(), async (ctx) => {
   };
 });
 
-router.post("groups.memberships", auth(), pagination(), async (ctx) => {
+router.post("groups.memberships", auth(), pagination(), async ctx => {
   const { id, query } = ctx.body;
   ctx.assertUuid(id, "id is required");
 
@@ -191,12 +190,12 @@ router.post("groups.memberships", auth(), pagination(), async (ctx) => {
     pagination: ctx.state.pagination,
     data: {
       groupMemberships: memberships.map(presentGroupMembership),
-      users: memberships.map((membership) => presentUser(membership.user)),
+      users: memberships.map(membership => presentUser(membership.user)),
     },
   };
 });
 
-router.post("groups.add_user", auth(), async (ctx) => {
+router.post("groups.add_user", auth(), async ctx => {
   const { id, userId } = ctx.body;
   ctx.assertUuid(id, "id is required");
   ctx.assertUuid(userId, "userId is required");
@@ -250,7 +249,7 @@ router.post("groups.add_user", auth(), async (ctx) => {
   };
 });
 
-router.post("groups.remove_user", auth(), async (ctx) => {
+router.post("groups.remove_user", auth(), async ctx => {
   const { id, userId } = ctx.body;
   ctx.assertUuid(id, "id is required");
   ctx.assertUuid(userId, "userId is required");

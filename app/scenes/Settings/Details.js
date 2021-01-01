@@ -1,19 +1,18 @@
 // @flow
+import * as React from "react";
 import { observable } from "mobx";
 import { observer, inject } from "mobx-react";
-import * as React from "react";
 import styled from "styled-components";
 
 import AuthStore from "stores/AuthStore";
 import UiStore from "stores/UiStore";
+import ImageUpload from "./components/ImageUpload";
+import Input, { LabelText } from "components/Input";
 import Button from "components/Button";
 import CenteredContent from "components/CenteredContent";
-import Flex from "components/Flex";
-import HelpText from "components/HelpText";
-import Input, { LabelText } from "components/Input";
 import PageTitle from "components/PageTitle";
-import ImageUpload from "./components/ImageUpload";
-import env from "env";
+import HelpText from "components/HelpText";
+import Flex from "shared/components/Flex";
 
 type Props = {
   auth: AuthStore,
@@ -106,7 +105,7 @@ class Details extends React.Component<Props> {
             </ImageUpload>
           </AvatarContainer>
         </ProfilePicture>
-        <form onSubmit={this.handleSubmit} ref={(ref) => (this.form = ref)}>
+        <form onSubmit={this.handleSubmit} ref={ref => (this.form = ref)}>
           <Input
             label="Name"
             name="name"
@@ -116,8 +115,8 @@ class Details extends React.Component<Props> {
             required
             short
           />
-          {env.SUBDOMAINS_ENABLED && (
-            <>
+          {process.env.SUBDOMAINS_ENABLED && (
+            <React.Fragment>
               <Input
                 label="Subdomain"
                 name="subdomain"
@@ -130,11 +129,11 @@ class Details extends React.Component<Props> {
               />
               {this.subdomain && (
                 <HelpText small>
-                  Your knowledge base will be accessible at{" "}
+                  Your knowledgebase will be accessible at{" "}
                   <strong>{this.subdomain}.getoutline.com</strong>
                 </HelpText>
               )}
-            </>
+            </React.Fragment>
           )}
           <Button type="submit" disabled={isSaving || !this.isValid}>
             {isSaving ? "Saving…" : "Save"}
@@ -159,7 +158,7 @@ const AvatarContainer = styled(Flex)`
   ${avatarStyles};
   position: relative;
   box-shadow: 0 0 0 1px #dae1e9;
-  background: ${(props) => props.theme.white};
+  background: ${props => props.theme.white};
 
   div div {
     ${avatarStyles};
@@ -176,7 +175,7 @@ const AvatarContainer = styled(Flex)`
   &:hover div {
     opacity: 1;
     background: rgba(0, 0, 0, 0.75);
-    color: ${(props) => props.theme.white};
+    color: ${props => props.theme.white};
   }
 `;
 

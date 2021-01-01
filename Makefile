@@ -8,12 +8,10 @@ build:
 	docker-compose build --pull outline
 
 test:
-	docker-compose up -d redis postgres s3
-	yarn test
+	docker-compose run --rm outline yarn test
 
 watch:
-	docker-compose up -d redis postgres s3
-	yarn test:watch
+	docker-compose run --rm outline yarn test:watch
 
 destroy:
 	docker-compose stop

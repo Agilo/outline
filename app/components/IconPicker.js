@@ -1,6 +1,8 @@
 // @flow
+import * as React from "react";
 import { observable } from "mobx";
 import { observer } from "mobx-react";
+import { TwitterPicker } from "react-color";
 import {
   CollectionIcon,
   CoinsIcon,
@@ -21,17 +23,11 @@ import {
   SunIcon,
   VehicleIcon,
 } from "outline-icons";
-import * as React from "react";
 import styled from "styled-components";
-import { DropdownMenu } from "components/DropdownMenu";
-import Flex from "components/Flex";
-import HelpText from "components/HelpText";
 import { LabelText } from "components/Input";
+import { DropdownMenu } from "components/DropdownMenu";
 import NudeButton from "components/NudeButton";
-
-const TwitterPicker = React.lazy(() =>
-  import("react-color/lib/components/twitter/Twitter")
-);
+import Flex from "shared/components/Flex";
 
 export const icons = {
   collection: {
@@ -170,12 +166,11 @@ class IconPicker extends React.Component<Props> {
     const Component = icons[this.props.icon || "collection"].component;
 
     return (
-      <Wrapper ref={(ref) => (this.node = ref)}>
+      <Wrapper ref={ref => (this.node = ref)}>
         <label>
           <LabelText>Icon</LabelText>
         </label>
         <DropdownMenu
-          onOpen={this.handleOpen}
           label={
             <LabelButton>
               <Component role="button" color={this.props.color} size={30} />
@@ -183,7 +178,7 @@ class IconPicker extends React.Component<Props> {
           }
         >
           <Icons onClick={preventEventBubble}>
-            {Object.keys(icons).map((name) => {
+            {Object.keys(icons).map(name => {
               const Component = icons[name].component;
               return (
                 <IconButton
@@ -197,16 +192,14 @@ class IconPicker extends React.Component<Props> {
             })}
           </Icons>
           <Flex onClick={preventEventBubble}>
-            <React.Suspense fallback={<Loading>Loading…</Loading>}>
-              <ColorPicker
-                color={this.props.color}
-                onChange={(color) =>
-                  this.props.onChange(color.hex, this.props.icon)
-                }
-                colors={colors}
-                triangle="hide"
-              />
-            </React.Suspense>
+            <ColorPicker
+              color={this.props.color}
+              onChange={color =>
+                this.props.onChange(color.hex, this.props.icon)
+              }
+              colors={colors}
+              triangle="hide"
+            />
           </Flex>
         </DropdownMenu>
       </Wrapper>
@@ -220,7 +213,7 @@ const Icons = styled.div`
 `;
 
 const LabelButton = styled(NudeButton)`
-  border: 1px solid ${(props) => props.theme.inputBorder};
+  border: 1px solid ${props => props.theme.inputBorder};
   width: 32px;
   height: 32px;
 `;
@@ -230,10 +223,6 @@ const IconButton = styled(NudeButton)`
   margin: 0px 6px 6px 0px;
   width: 30px;
   height: 30px;
-`;
-
-const Loading = styled(HelpText)`
-  padding: 16px;
 `;
 
 const ColorPicker = styled(TwitterPicker)`

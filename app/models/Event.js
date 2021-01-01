@@ -17,8 +17,6 @@ class Event extends BaseModel {
     name: string,
     email: string,
     title: string,
-    published: boolean,
-    templateId: string,
   };
 
   get model() {

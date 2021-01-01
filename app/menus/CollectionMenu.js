@@ -1,22 +1,20 @@
 // @flow
+import * as React from "react";
 import { observable } from "mobx";
 import { inject, observer } from "mobx-react";
-import * as React from "react";
 import { withRouter, type RouterHistory } from "react-router-dom";
-import DocumentsStore from "stores/DocumentsStore";
-import PoliciesStore from "stores/PoliciesStore";
-import UiStore from "stores/UiStore";
-import Collection from "models/Collection";
-import CollectionDelete from "scenes/CollectionDelete";
-import CollectionEdit from "scenes/CollectionEdit";
-import CollectionExport from "scenes/CollectionExport";
-import CollectionMembers from "scenes/CollectionMembers";
-import { DropdownMenu, DropdownMenuItem } from "components/DropdownMenu";
 import Modal from "components/Modal";
 import VisuallyHidden from "components/VisuallyHidden";
+import CollectionMembers from "scenes/CollectionMembers";
+
+import { newDocumentUrl } from "utils/routeHelpers";
 import getDataTransferFiles from "utils/getDataTransferFiles";
 import importFile from "utils/importFile";
-import { newDocumentUrl } from "utils/routeHelpers";
+import Collection from "models/Collection";
+import UiStore from "stores/UiStore";
+import DocumentsStore from "stores/DocumentsStore";
+import PoliciesStore from "stores/PoliciesStore";
+import { DropdownMenu, DropdownMenuItem } from "components/DropdownMenu";
 
 type Props = {
   position?: "left" | "right" | "center",
@@ -32,10 +30,7 @@ type Props = {
 @observer
 class CollectionMenu extends React.Component<Props> {
   file: ?HTMLInputElement;
-  @observable showCollectionMembers = false;
-  @observable showCollectionEdit = false;
-  @observable showCollectionDelete = false;
-  @observable showCollectionExport = false;
+  @observable membersModalOpen: boolean = false;
 
   onNewDocument = (ev: SyntheticEvent<>) => {
     ev.preventDefault();
@@ -66,40 +61,31 @@ class CollectionMenu extends React.Component<Props> {
     }
   };
 
-  handleEditCollectionOpen = (ev: SyntheticEvent<>) => {
+  onEdit = (ev: SyntheticEvent<>) => {
     ev.preventDefault();
-    this.showCollectionEdit = true;
+    const { collection } = this.props;
+    this.props.ui.setActiveModal("collection-edit", { collection });
   };
 
-  handleEditCollectionClose = () => {
-    this.showCollectionEdit = false;
-  };
-
-  handleDeleteCollectionOpen = (ev: SyntheticEvent<>) => {
+  onDelete = (ev: SyntheticEvent<>) => {
     ev.preventDefault();
-    this.showCollectionDelete = true;
+    const { collection } = this.props;
+    this.props.ui.setActiveModal("collection-delete", { collection });
   };
 
-  handleDeleteCollectionClose = () => {
-    this.showCollectionDelete = false;
-  };
-
-  handleExportCollectionOpen = (ev: SyntheticEvent<>) => {
+  onExport = (ev: SyntheticEvent<>) => {
     ev.preventDefault();
-    this.showCollectionExport = true;
+    const { collection } = this.props;
+    this.props.ui.setActiveModal("collection-export", { collection });
   };
 
-  handleExportCollectionClose = () => {
-    this.showCollectionExport = false;
-  };
-
-  handleMembersModalOpen = (ev: SyntheticEvent<>) => {
+  onPermissions = (ev: SyntheticEvent<>) => {
     ev.preventDefault();
-    this.showCollectionMembers = true;
+    this.membersModalOpen = true;
   };
 
   handleMembersModalClose = () => {
-    this.showCollectionMembers = false;
+    this.membersModalOpen = false;
   };
 
   render() {
@@ -107,13 +93,13 @@ class CollectionMenu extends React.Component<Props> {
     const can = policies.abilities(collection.id);
 
     return (
-      <>
+      <React.Fragment>
         <VisuallyHidden>
           <input
             type="file"
-            ref={(ref) => (this.file = ref)}
+            ref={ref => (this.file = ref)}
             onChange={this.onFilePicked}
-            onClick={(ev) => ev.stopPropagation()}
+            onClick={ev => ev.stopPropagation()}
             accept="text/markdown, text/plain"
           />
         </VisuallyHidden>
@@ -121,18 +107,17 @@ class CollectionMenu extends React.Component<Props> {
         <Modal
           title="Collection permissions"
           onRequestClose={this.handleMembersModalClose}
-          isOpen={this.showCollectionMembers}
+          isOpen={this.membersModalOpen}
         >
           <CollectionMembers
             collection={collection}
             onSubmit={this.handleMembersModalClose}
-            handleEditCollectionOpen={this.handleEditCollectionOpen}
-            onEdit={this.handleEditCollectionOpen}
+            onEdit={this.onEdit}
           />
         </Modal>
         <DropdownMenu onOpen={onOpen} onClose={onClose} position={position}>
           {collection && (
-            <>
+            <React.Fragment>
               {can.update && (
                 <DropdownMenuItem onClick={this.onNewDocument}>
                   New document
@@ -145,65 +130,29 @@ class CollectionMenu extends React.Component<Props> {
               )}
               {can.update && <hr />}
               {can.update && (
-                <DropdownMenuItem onClick={this.handleEditCollectionOpen}>
-                  Edit…
-                </DropdownMenuItem>
+                <DropdownMenuItem onClick={this.onEdit}>Edit…</DropdownMenuItem>
               )}
               {can.update && (
-                <DropdownMenuItem onClick={this.handleMembersModalOpen}>
+                <DropdownMenuItem onClick={this.onPermissions}>
                   Permissions…
                 </DropdownMenuItem>
               )}
               {can.export && (
-                <DropdownMenuItem onClick={this.handleExportCollectionOpen}>
+                <DropdownMenuItem onClick={this.onExport}>
                   Export…
                 </DropdownMenuItem>
               )}
-            </>
+            </React.Fragment>
           )}
           {can.delete && (
-            <DropdownMenuItem onClick={this.handleDeleteCollectionOpen}>
-              Delete…
-            </DropdownMenuItem>
+            <DropdownMenuItem onClick={this.onDelete}>Delete…</DropdownMenuItem>
           )}
         </DropdownMenu>
-        <Modal
-          title="Edit collection"
-          isOpen={this.showCollectionEdit}
-          onRequestClose={this.handleEditCollectionClose}
-        >
-          <CollectionEdit
-            onSubmit={this.handleEditCollectionClose}
-            collection={collection}
-          />
-        </Modal>
-        <Modal
-          title="Delete collection"
-          isOpen={this.showCollectionDelete}
-          onRequestClose={this.handleDeleteCollectionClose}
-        >
-          <CollectionDelete
-            onSubmit={this.handleDeleteCollectionClose}
-            collection={collection}
-          />
-        </Modal>
-        <Modal
-          title="Export collection"
-          isOpen={this.showCollectionExport}
-          onRequestClose={this.handleExportCollectionClose}
-        >
-          <CollectionExport
-            onSubmit={this.handleExportCollectionClose}
-            collection={collection}
-          />
-        </Modal>
-      </>
+      </React.Fragment>
     );
   }
 }
 
-export default inject(
-  "ui",
-  "documents",
-  "policies"
-)(withRouter(CollectionMenu));
+export default inject("ui", "documents", "policies")(
+  withRouter(CollectionMenu)
+);

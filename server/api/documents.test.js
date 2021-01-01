@@ -9,20 +9,20 @@ import {
   Backlink,
   CollectionUser,
 } from "../models";
+import { flushdb, seed } from "../test/support";
 import {
   buildShare,
   buildCollection,
   buildUser,
   buildDocument,
 } from "../test/factories";
-import { flushdb, seed } from "../test/support";
 
 const server = new TestServer(app.callback());
 
-beforeEach(() => flushdb());
-afterAll(() => server.close());
+beforeEach(flushdb);
+afterAll(server.close);
 
-describe("#documents.info", () => {
+describe("#documents.info", async () => {
   it("should return published document", async () => {
     const { user, document } = await seed();
     const res = await server.post("/api/documents.info", {
@@ -210,189 +210,7 @@ describe("#documents.info", () => {
   });
 });
 
-describe("#documents.export", () => {
-  it("should return published document", async () => {
-    const { user, document } = await seed();
-    const res = await server.post("/api/documents.export", {
-      body: { token: user.getJwtToken(), id: document.id },
-    });
-    const body = await res.json();
-
-    expect(res.status).toEqual(200);
-    expect(body.data).toEqual(document.toMarkdown());
-  });
-
-  it("should return archived document", async () => {
-    const { user, document } = await seed();
-    await document.archive(user.id);
-    const res = await server.post("/api/documents.export", {
-      body: { token: user.getJwtToken(), id: document.id },
-    });
-    const body = await res.json();
-
-    expect(res.status).toEqual(200);
-    expect(body.data).toEqual(document.toMarkdown());
-  });
-
-  it("should not return published document in collection not a member of", async () => {
-    const user = await buildUser();
-    const collection = await buildCollection({
-      private: true,
-      teamId: user.teamId,
-    });
-    const document = await buildDocument({ collectionId: collection.id });
-
-    const res = await server.post("/api/documents.export", {
-      body: { token: user.getJwtToken(), id: document.id },
-    });
-
-    expect(res.status).toEqual(403);
-  });
-
-  it("should return drafts", async () => {
-    const { user, document } = await seed();
-    document.publishedAt = null;
-    await document.save();
-
-    const res = await server.post("/api/documents.export", {
-      body: { token: user.getJwtToken(), id: document.id },
-    });
-    const body = await res.json();
-
-    expect(res.status).toEqual(200);
-    expect(body.data).toEqual(document.toMarkdown());
-  });
-
-  it("should return document from shareId without token", async () => {
-    const { document, user } = await seed();
-    const share = await buildShare({
-      documentId: document.id,
-      teamId: document.teamId,
-      userId: user.id,
-    });
-
-    const res = await server.post("/api/documents.export", {
-      body: { shareId: share.id },
-    });
-    const body = await res.json();
-
-    expect(res.status).toEqual(200);
-    expect(body.data).toEqual(document.toMarkdown());
-  });
-
-  it("should not return document from revoked shareId", async () => {
-    const { document, user } = await seed();
-    const share = await buildShare({
-      documentId: document.id,
-      teamId: document.teamId,
-      userId: user.id,
-    });
-    await share.revoke(user.id);
-
-    const res = await server.post("/api/documents.export", {
-      body: { shareId: share.id },
-    });
-    expect(res.status).toEqual(400);
-  });
-
-  it("should not return document from archived shareId", async () => {
-    const { document, user } = await seed();
-    const share = await buildShare({
-      documentId: document.id,
-      teamId: document.teamId,
-      userId: user.id,
-    });
-    await document.archive(user.id);
-
-    const res = await server.post("/api/documents.export", {
-      body: { shareId: share.id },
-    });
-    expect(res.status).toEqual(400);
-  });
-
-  it("should return document from shareId with token", async () => {
-    const { user, document } = await seed();
-    const share = await buildShare({
-      documentId: document.id,
-      teamId: document.teamId,
-      userId: user.id,
-    });
-
-    const res = await server.post("/api/documents.export", {
-      body: { token: user.getJwtToken(), shareId: share.id },
-    });
-    const body = await res.json();
-
-    expect(res.status).toEqual(200);
-    expect(body.data).toEqual(document.toMarkdown());
-  });
-
-  it("should return draft document from shareId with token", async () => {
-    const { user, document } = await seed();
-    document.publishedAt = null;
-    await document.save();
-
-    const share = await buildShare({
-      documentId: document.id,
-      teamId: document.teamId,
-      userId: user.id,
-    });
-
-    const res = await server.post("/api/documents.export", {
-      body: { token: user.getJwtToken(), shareId: share.id },
-    });
-    const body = await res.json();
-
-    expect(res.status).toEqual(200);
-    expect(body.data).toEqual(document.toMarkdown());
-  });
-
-  it("should return document from shareId in collection not a member of", async () => {
-    const { user, document, collection } = await seed();
-    const share = await buildShare({
-      documentId: document.id,
-      teamId: document.teamId,
-      userId: user.id,
-    });
-
-    collection.private = true;
-    await collection.save();
-
-    const res = await server.post("/api/documents.export", {
-      body: { token: user.getJwtToken(), shareId: share.id },
-    });
-    const body = await res.json();
-
-    expect(res.status).toEqual(200);
-    expect(body.data).toEqual(document.toMarkdown());
-  });
-
-  it("should require authorization without token", async () => {
-    const { document } = await seed();
-    const res = await server.post("/api/documents.export", {
-      body: { id: document.id },
-    });
-    expect(res.status).toEqual(403);
-  });
-
-  it("should require authorization with incorrect token", async () => {
-    const { document } = await seed();
-    const user = await buildUser();
-    const res = await server.post("/api/documents.export", {
-      body: { token: user.getJwtToken(), id: document.id },
-    });
-    expect(res.status).toEqual(403);
-  });
-
-  it("should require a valid shareId", async () => {
-    const res = await server.post("/api/documents.export", {
-      body: { shareId: 123 },
-    });
-    expect(res.status).toEqual(400);
-  });
-});
-
-describe("#documents.list", () => {
+describe("#documents.list", async () => {
   it("should return documents", async () => {
     const { user, document } = await seed();
 
@@ -524,7 +342,7 @@ describe("#documents.list", () => {
   });
 });
 
-describe("#documents.pinned", () => {
+describe("#documents.pinned", async () => {
   it("should return pinned documents", async () => {
     const { user, document } = await seed();
     document.pinnedById = user.id;
@@ -585,7 +403,7 @@ describe("#documents.pinned", () => {
   });
 });
 
-describe("#documents.drafts", () => {
+describe("#documents.drafts", async () => {
   it("should return unpublished documents", async () => {
     const { user, document } = await seed();
     document.publishedAt = null;
@@ -618,7 +436,7 @@ describe("#documents.drafts", () => {
   });
 });
 
-describe("#documents.search", () => {
+describe("#documents.search", async () => {
   it("should return results", async () => {
     const { user } = await seed();
     const res = await server.post("/api/documents.search", {
@@ -947,7 +765,7 @@ describe("#documents.search", () => {
   });
 });
 
-describe("#documents.archived", () => {
+describe("#documents.archived", async () => {
   it("should return archived documents", async () => {
     const { user } = await seed();
     const document = await buildDocument({
@@ -1007,7 +825,7 @@ describe("#documents.archived", () => {
   });
 });
 
-describe("#documents.viewed", () => {
+describe("#documents.viewed", async () => {
   it("should return empty result if no views", async () => {
     const { user } = await seed();
     const res = await server.post("/api/documents.viewed", {
@@ -1071,7 +889,7 @@ describe("#documents.viewed", () => {
   });
 });
 
-describe("#documents.starred", () => {
+describe("#documents.starred", async () => {
   it("should return empty result if no stars", async () => {
     const { user } = await seed();
     const res = await server.post("/api/documents.starred", {
@@ -1107,7 +925,7 @@ describe("#documents.starred", () => {
   });
 });
 
-describe("#documents.pin", () => {
+describe("#documents.pin", async () => {
   it("should pin the document", async () => {
     const { user, document } = await seed();
 
@@ -1224,7 +1042,7 @@ describe("#documents.restore", () => {
   });
 });
 
-describe("#documents.unpin", () => {
+describe("#documents.unpin", async () => {
   it("should unpin the document", async () => {
     const { user, document } = await seed();
     document.pinnedBy = user;
@@ -1256,7 +1074,7 @@ describe("#documents.unpin", () => {
   });
 });
 
-describe("#documents.star", () => {
+describe("#documents.star", async () => {
   it("should star the document", async () => {
     const { user, document } = await seed();
 
@@ -1288,7 +1106,7 @@ describe("#documents.star", () => {
   });
 });
 
-describe("#documents.unstar", () => {
+describe("#documents.unstar", async () => {
   it("should unstar the document", async () => {
     const { user, document } = await seed();
     await Star.create({ documentId: document.id, userId: user.id });
@@ -1320,7 +1138,7 @@ describe("#documents.unstar", () => {
   });
 });
 
-describe("#documents.create", () => {
+describe("#documents.create", async () => {
   it("should create as a new document", async () => {
     const { user, collection } = await seed();
     const res = await server.post("/api/documents.create", {
@@ -1406,7 +1224,7 @@ describe("#documents.create", () => {
   });
 });
 
-describe("#documents.update", () => {
+describe("#documents.update", async () => {
   it("should update document details in the root", async () => {
     const { user, document } = await seed();
 
@@ -1677,7 +1495,7 @@ describe("#documents.update", () => {
   });
 });
 
-describe("#documents.archive", () => {
+describe("#documents.archive", async () => {
   it("should allow archiving document", async () => {
     const { user, document } = await seed();
     const res = await server.post("/api/documents.archive", {
@@ -1699,7 +1517,7 @@ describe("#documents.archive", () => {
   });
 });
 
-describe("#documents.delete", () => {
+describe("#documents.delete", async () => {
   it("should allow deleting document", async () => {
     const { user, document } = await seed();
     const res = await server.post("/api/documents.delete", {

@@ -1,15 +1,15 @@
 // @flow
-import { debounce } from "lodash";
+import * as React from "react";
 import { observable } from "mobx";
 import { observer, inject } from "mobx-react";
-import * as React from "react";
+import { debounce } from "lodash";
 
 import AuthStore from "stores/AuthStore";
 import UiStore from "stores/UiStore";
-import CenteredContent from "components/CenteredContent";
 import Checkbox from "components/Checkbox";
-import HelpText from "components/HelpText";
+import CenteredContent from "components/CenteredContent";
 import PageTitle from "components/PageTitle";
+import HelpText from "components/HelpText";
 
 type Props = {
   auth: AuthStore,
@@ -60,35 +60,39 @@ class Security extends React.Component<Props> {
   }, 500);
 
   render() {
+    const { team } = this.props.auth;
+
     return (
       <CenteredContent>
         <PageTitle title="Security" />
         <h1>Security</h1>
         <HelpText>
           Settings that impact the access, security, and content of your
-          knowledge base.
+          knowledgebase.
         </HelpText>
 
         <Checkbox
-          label="Allow email authentication"
+          label="Allow guest invites"
           name="guestSignin"
           checked={this.guestSignin}
           onChange={this.handleChange}
-          note="When enabled, users can sign-in using their email address"
+          note={`When enabled guests can be invited by email address and are able to signin without ${
+            team ? team.signinMethods : "SSO"
+          }`}
         />
         <Checkbox
           label="Public document sharing"
           name="sharing"
           checked={this.sharing}
           onChange={this.handleChange}
-          note="When enabled, documents can be shared publicly on the internet by any team member"
+          note="When enabled documents can be shared publicly by any team member"
         />
         <Checkbox
           label="Rich service embeds"
           name="documentEmbeds"
           checked={this.documentEmbeds}
           onChange={this.handleChange}
-          note="Links to supported services are shown as rich embeds within your documents"
+          note="Convert links to supported services into rich embeds within your documents"
         />
       </CenteredContent>
     );

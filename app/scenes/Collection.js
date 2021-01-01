@@ -1,49 +1,49 @@
 // @flow
+import * as React from "react";
 import { observable } from "mobx";
 import { observer, inject } from "mobx-react";
+import { Redirect, Link, Switch, Route } from "react-router-dom";
 
-import { NewDocumentIcon, PlusIcon, PinIcon } from "outline-icons";
-import * as React from "react";
-import { Redirect, Link, Switch, Route, type Match } from "react-router-dom";
 import styled, { withTheme } from "styled-components";
+import { NewDocumentIcon, PlusIcon, PinIcon } from "outline-icons";
+import RichMarkdownEditor from "rich-markdown-editor";
 
+import { newDocumentUrl, collectionUrl } from "utils/routeHelpers";
 import CollectionsStore from "stores/CollectionsStore";
 import DocumentsStore from "stores/DocumentsStore";
 import PoliciesStore from "stores/PoliciesStore";
 import UiStore from "stores/UiStore";
 import Collection from "models/Collection";
 
-import CollectionEdit from "scenes/CollectionEdit";
-import CollectionMembers from "scenes/CollectionMembers";
 import Search from "scenes/Search";
-import Actions, { Action, Separator } from "components/Actions";
-import Button from "components/Button";
-import CenteredContent from "components/CenteredContent";
-import CollectionIcon from "components/CollectionIcon";
-import DocumentList from "components/DocumentList";
-import Editor from "components/Editor";
-import Flex from "components/Flex";
-import Heading from "components/Heading";
-import HelpText from "components/HelpText";
-import InputSearch from "components/InputSearch";
-import { ListPlaceholder } from "components/LoadingPlaceholder";
-import Mask from "components/Mask";
-import Modal from "components/Modal";
-import PageTitle from "components/PageTitle";
-import PaginatedDocumentList from "components/PaginatedDocumentList";
-import Subheading from "components/Subheading";
-import Tab from "components/Tab";
-import Tabs from "components/Tabs";
-import Tooltip from "components/Tooltip";
+import CollectionEdit from "scenes/CollectionEdit";
 import CollectionMenu from "menus/CollectionMenu";
-import { newDocumentUrl, collectionUrl } from "utils/routeHelpers";
+import Actions, { Action, Separator } from "components/Actions";
+import Heading from "components/Heading";
+import Tooltip from "components/Tooltip";
+import CenteredContent from "components/CenteredContent";
+import { ListPlaceholder } from "components/LoadingPlaceholder";
+import InputSearch from "components/InputSearch";
+import Mask from "components/Mask";
+import Button from "components/Button";
+import HelpText from "components/HelpText";
+import DocumentList from "components/DocumentList";
+import Subheading from "components/Subheading";
+import PageTitle from "components/PageTitle";
+import Flex from "shared/components/Flex";
+import Modal from "components/Modal";
+import CollectionMembers from "scenes/CollectionMembers";
+import Tabs from "components/Tabs";
+import Tab from "components/Tab";
+import PaginatedDocumentList from "components/PaginatedDocumentList";
+import CollectionIcon from "components/CollectionIcon";
 
 type Props = {
   ui: UiStore,
   documents: DocumentsStore,
   collections: CollectionsStore,
   policies: PoliciesStore,
-  match: Match,
+  match: Object,
   theme: Object,
 };
 
@@ -56,17 +56,12 @@ class CollectionScene extends React.Component<Props> {
   @observable redirectTo: ?string;
 
   componentDidMount() {
-    const { id } = this.props.match.params;
-    if (id) {
-      this.loadContent(id);
-    }
+    this.loadContent(this.props.match.params.id);
   }
 
-  componentDidUpdate(prevProps) {
-    const { id } = this.props.match.params;
-
-    if (id && id !== prevProps.match.params.id) {
-      this.loadContent(id);
+  componentWillReceiveProps(nextProps) {
+    if (nextProps.match.params.id !== this.props.match.params.id) {
+      this.loadContent(nextProps.match.params.id);
     }
   }
 
@@ -116,12 +111,12 @@ class CollectionScene extends React.Component<Props> {
 
   renderActions() {
     const { match, policies } = this.props;
-    const can = policies.abilities(match.params.id || "");
+    const can = policies.abilities(match.params.id);
 
     return (
       <Actions align="center" justify="flex-end">
         {can.update && (
-          <>
+          <React.Fragment>
             <Action>
               <InputSearch
                 placeholder="Search in collection…"
@@ -141,7 +136,7 @@ class CollectionScene extends React.Component<Props> {
               </Tooltip>
             </Action>
             <Separator />
-          </>
+          </React.Fragment>
         )}
         <Action>
           <CollectionMenu collection={this.collection} />
@@ -165,23 +160,20 @@ class CollectionScene extends React.Component<Props> {
     return (
       <CenteredContent>
         {collection ? (
-          <>
+          <React.Fragment>
             <PageTitle title={collection.name} />
             {collection.isEmpty ? (
               <Centered column>
                 <HelpText>
                   <strong>{collection.name}</strong> doesn’t contain any
-                  documents yet.
-                  <br />
-                  Get started by creating a new one!
+                  documents yet.<br />Get started by creating a new one!
                 </HelpText>
                 <Wrapper>
                   <Link to={newDocumentUrl(collection.id)}>
                     <Button icon={<NewDocumentIcon color={theme.buttonText} />}>
                       Create a document
                     </Button>
-                  </Link>
-                  &nbsp;&nbsp;
+                  </Link>&nbsp;&nbsp;
                   {collection.private && (
                     <Button onClick={this.onPermissions} neutral>
                       Manage members…
@@ -211,30 +203,29 @@ class CollectionScene extends React.Component<Props> {
                 </Modal>
               </Centered>
             ) : (
-              <>
+              <React.Fragment>
                 <Heading>
                   <CollectionIcon collection={collection} size={40} expanded />{" "}
                   {collection.name}
                 </Heading>
 
                 {collection.description && (
-                  <React.Suspense fallback={<p>Loading…</p>}>
-                    <Editor
-                      id={collection.id}
-                      key={collection.description}
-                      defaultValue={collection.description}
-                      readOnly
-                    />
-                  </React.Suspense>
+                  <RichMarkdownEditor
+                    id={collection.id}
+                    key={collection.description}
+                    defaultValue={collection.description}
+                    theme={theme}
+                    readOnly
+                  />
                 )}
 
                 {hasPinnedDocuments && (
-                  <>
+                  <React.Fragment>
                     <Subheading>
                       <TinyPinIcon size={18} /> Pinned
                     </Subheading>
                     <DocumentList documents={pinnedDocuments} showPin />
-                  </>
+                  </React.Fragment>
                 )}
 
                 <Tabs>
@@ -297,18 +288,18 @@ class CollectionScene extends React.Component<Props> {
                     />
                   </Route>
                 </Switch>
-              </>
+              </React.Fragment>
             )}
 
             {this.renderActions()}
-          </>
+          </React.Fragment>
         ) : (
-          <>
+          <React.Fragment>
             <Heading>
               <Mask height={35} />
             </Heading>
             <ListPlaceholder count={5} />
-          </>
+          </React.Fragment>
         )}
       </CenteredContent>
     );
@@ -333,9 +324,6 @@ const Wrapper = styled(Flex)`
   margin: 10px 0;
 `;
 
-export default inject(
-  "collections",
-  "policies",
-  "documents",
-  "ui"
-)(withTheme(CollectionScene));
+export default inject("collections", "policies", "documents", "ui")(
+  withTheme(CollectionScene)
+);

@@ -1,5 +1,5 @@
-// flow-typed signature: c69369aa4bc769d5f1d4f6ec9c76d8f2
-// flow-typed version: c6154227d1/react-dropzone_v4.x.x/flow_>=v0.104.x
+// flow-typed signature: b7af14fb84f1e89e79e941a6bcd03d15
+// flow-typed version: 80022b0008/react-dropzone_v4.x.x/flow_>=v0.53.x
 
 declare module "react-dropzone" {
   declare type ChildrenProps = {
@@ -9,10 +9,11 @@ declare module "react-dropzone" {
     isDragActive: boolean,
     isDragAccept: boolean,
     isDragReject: boolean,
-    ...
   }
 
-  declare type DropzoneFile = File & { preview?: string, ... }
+  declare type DropzoneFile = File & {
+    preview?: string;
+  }
 
   declare type DropzoneProps = {
     accept?: string,
@@ -45,7 +46,6 @@ declare module "react-dropzone" {
     onDragOver?: (event: SyntheticDragEvent<>) => mixed,
     onDragLeave?: (event: SyntheticDragEvent<>) => mixed,
     onFileDialogCancel?: () => mixed,
-    ...
   };
 
   declare class Dropzone extends React$Component<DropzoneProps> {

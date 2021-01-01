@@ -17,7 +17,6 @@ export default function apiWrapper() {
     ) {
       // $FlowFixMe
       ctx.body = {
-        // $FlowFixMe
         ...ctx.body,
         status: ctx.status,
         ok,

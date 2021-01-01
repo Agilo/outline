@@ -1,5 +1,4 @@
 // @flow
-import uuid from "uuid";
 import {
   Share,
   Team,
@@ -11,6 +10,7 @@ import {
   GroupUser,
   Attachment,
 } from "../models";
+import uuid from "uuid";
 
 let count = 0;
 
@@ -24,10 +24,7 @@ export async function buildShare(overrides: Object = {}) {
     overrides.userId = user.id;
   }
 
-  return Share.create({
-    published: true,
-    ...overrides,
-  });
+  return Share.create(overrides);
 }
 
 export function buildTeam(overrides: Object = {}) {
@@ -85,6 +82,7 @@ export async function buildCollection(overrides: Object = {}) {
     name: `Test Collection ${count}`,
     description: "Test collection description",
     creatorId: overrides.userId,
+    type: "atlas",
     ...overrides,
   });
 }

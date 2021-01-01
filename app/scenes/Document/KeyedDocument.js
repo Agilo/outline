@@ -1,6 +1,6 @@
 // @flow
-import { inject } from "mobx-react";
 import * as React from "react";
+import { inject } from "mobx-react";
 import DataLoader from "./components/DataLoader";
 
 class KeyedDocument extends React.Component<*> {

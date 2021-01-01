@@ -9,10 +9,9 @@ type Domain = {
 
 // we originally used the parse-domain npm module however this includes
 // a large list of possible TLD's which increase the size of the bundle
-// unnecessarily for our usecase of trusted input.
+// unneccessarily for our usecase of trusted input.
 export function parseDomain(url: string): ?Domain {
   if (typeof url !== "string") return null;
-  if (url === "") return null;
 
   // strip extermeties and whitespace from input
   const normalizedDomain = trim(url.replace(/(https?:)?\/\//, ""));
@@ -40,16 +39,15 @@ export function parseDomain(url: string): ?Domain {
     };
   }
 
-  // one-part domain handler for things like localhost
-  if (parts.length === 1) {
-    return {
-      subdomain: "",
-      domain: cleanTLD(parts.slice(0).join()),
-      tld: "",
-    };
-  }
-
   return null;
+}
+
+export function getCookieDomain(domain: string) {
+  // TODO: All the process.env parsing needs centralizing
+  return process.env.SUBDOMAINS_ENABLED === "true" ||
+    process.env.SUBDOMAINS_ENABLED === true
+    ? stripSubdomain(domain)
+    : domain;
 }
 
 export function stripSubdomain(hostname: string) {
@@ -62,14 +60,8 @@ export function stripSubdomain(hostname: string) {
 
 export function isCustomSubdomain(hostname: string) {
   const parsed = parseDomain(hostname);
-  if (
-    !parsed ||
-    !parsed.subdomain ||
-    parsed.subdomain === "app" ||
-    parsed.subdomain === "www"
-  ) {
-    return false;
-  }
+  if (!parsed) return false;
+  if (!parsed.subdomain || parsed.subdomain === "www") return false;
   return true;
 }
 
@@ -79,7 +71,6 @@ export const RESERVED_SUBDOMAINS = [
   "admin",
   "advertising",
   "api",
-  "app",
   "assets",
   "archive",
   "beta",

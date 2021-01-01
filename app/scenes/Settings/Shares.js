@@ -1,17 +1,17 @@
 // @flow
-import { observer, inject } from "mobx-react";
 import * as React from "react";
+import { observer, inject } from "mobx-react";
 import { Link } from "react-router-dom";
-import AuthStore from "stores/AuthStore";
 import SharesStore from "stores/SharesStore";
+import AuthStore from "stores/AuthStore";
 
-import CenteredContent from "components/CenteredContent";
-import Empty from "components/Empty";
-import HelpText from "components/HelpText";
-import List from "components/List";
-import PageTitle from "components/PageTitle";
-import Subheading from "components/Subheading";
 import ShareListItem from "./components/ShareListItem";
+import Empty from "components/Empty";
+import List from "components/List";
+import CenteredContent from "components/CenteredContent";
+import Subheading from "components/Subheading";
+import PageTitle from "components/PageTitle";
+import HelpText from "components/HelpText";
 
 type Props = {
   shares: SharesStore,
@@ -39,19 +39,20 @@ class Shares extends React.Component<Props> {
           public link can access a read-only version of the document until the
           link has been revoked.
         </HelpText>
-        {user && user.isAdmin && (
-          <HelpText>
-            {!canShareDocuments && (
-              <strong>Sharing is currently disabled.</strong>
-            )}{" "}
-            You can turn {canShareDocuments ? "off" : "on"} public document
-            sharing in <Link to="/settings/security">security settings</Link>.
-          </HelpText>
-        )}
+        {user &&
+          user.isAdmin && (
+            <HelpText>
+              {!canShareDocuments && (
+                <strong>Sharing is currently disabled.</strong>
+              )}{" "}
+              You can turn {canShareDocuments ? "off" : "on"} public document
+              sharing in <Link to="/settings/security">security settings</Link>.
+            </HelpText>
+          )}
         <Subheading>Shared Documents</Subheading>
         {hasSharedDocuments ? (
           <List>
-            {shares.published.map((share) => (
+            {shares.orderedData.map(share => (
               <ShareListItem key={share.id} share={share} />
             ))}
           </List>

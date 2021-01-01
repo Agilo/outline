@@ -1,18 +1,18 @@
 /* eslint-disable flowtype/require-valid-file-annotation */
-import subDays from "date-fns/sub_days";
 import TestServer from "fetch-test-server";
+import subDays from "date-fns/sub_days";
 import app from "../app";
 import { Document } from "../models";
 import { sequelize } from "../sequelize";
-import { buildDocument } from "../test/factories";
 import { flushdb } from "../test/support";
+import { buildDocument } from "../test/factories";
 
 const server = new TestServer(app.callback());
 
-beforeEach(() => flushdb());
-afterAll(() => server.close());
+beforeEach(flushdb);
+afterAll(server.close);
 
-describe("#utils.gc", () => {
+describe("#utils.gc", async () => {
   it("should destroy documents deleted more than 30 days ago", async () => {
     const document = await buildDocument({
       publishedAt: new Date(),

@@ -1,9 +1,10 @@
 // @flow
-import addHours from "date-fns/add_hours";
-import Router from "koa-router";
 import Sequelize from "sequelize";
-import { slackAuth } from "../../shared/utils/routeHelpers";
+import Router from "koa-router";
 import auth from "../middlewares/authentication";
+import addHours from "date-fns/add_hours";
+import { getCookieDomain } from "../../shared/utils/domains";
+import { slackAuth } from "../../shared/utils/routeHelpers";
 import {
   Authentication,
   Collection,
@@ -13,14 +14,15 @@ import {
   Team,
 } from "../models";
 import * as Slack from "../slack";
-import { getCookieDomain } from "../utils/domains";
 
 const Op = Sequelize.Op;
 const router = new Router();
 
 // start the oauth process and redirect user to Slack
-router.get("slack", async (ctx) => {
-  const state = Math.random().toString(36).substring(7);
+router.get("slack", async ctx => {
+  const state = Math.random()
+    .toString(36)
+    .substring(7);
 
   ctx.cookies.set("state", state, {
     httpOnly: false,
@@ -31,7 +33,7 @@ router.get("slack", async (ctx) => {
 });
 
 // signin callback from Slack
-router.get("slack.callback", auth({ required: false }), async (ctx) => {
+router.get("slack.callback", auth({ required: false }), async ctx => {
   const { code, error, state } = ctx.request.query;
   ctx.assertPresent(code || error, "code is required");
   ctx.assertPresent(state, "state is required");
@@ -140,7 +142,7 @@ router.get("slack.callback", auth({ required: false }), async (ctx) => {
   }
 });
 
-router.get("slack.commands", auth({ required: false }), async (ctx) => {
+router.get("slack.commands", auth({ required: false }), async ctx => {
   const { code, state, error } = ctx.request.query;
   const user = ctx.state.user;
   ctx.assertPresent(code || error, "code is required");
@@ -192,7 +194,7 @@ router.get("slack.commands", auth({ required: false }), async (ctx) => {
   ctx.redirect("/settings/integrations/slack");
 });
 
-router.get("slack.post", auth({ required: false }), async (ctx) => {
+router.get("slack.post", auth({ required: false }), async ctx => {
   const { code, error, state } = ctx.request.query;
   const user = ctx.state.user;
   ctx.assertPresent(code || error, "code is required");

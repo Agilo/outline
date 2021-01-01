@@ -1,14 +1,14 @@
 // @flow
 import invariant from "invariant";
-import { Document, Revision, User } from "../models";
 import policy from "./policy";
+import { Document, Revision, User } from "../models";
 
 const { allow, cannot } = policy;
 
 allow(User, "create", Document);
 
 allow(User, ["read", "download"], Document, (user, document) => {
-  // existence of collection option is not required here to account for share tokens
+  // existance of collection option is not required here to account for share tokens
   if (document.collection && cannot(user, "read", document.collection)) {
     return false;
   }
@@ -20,7 +20,7 @@ allow(User, ["share"], Document, (user, document) => {
   if (document.archivedAt) return false;
   if (document.deletedAt) return false;
 
-  // existence of collection option is not required here to account for share tokens
+  // existance of collection option is not required here to account for share tokens
   if (document.collection && cannot(user, "read", document.collection)) {
     return false;
   }
@@ -31,7 +31,6 @@ allow(User, ["share"], Document, (user, document) => {
 allow(User, ["star", "unstar"], Document, (user, document) => {
   if (document.archivedAt) return false;
   if (document.deletedAt) return false;
-  if (document.template) return false;
   if (!document.publishedAt) return false;
 
   invariant(
@@ -59,7 +58,6 @@ allow(User, "update", Document, (user, document) => {
 allow(User, "createChildDocument", Document, (user, document) => {
   if (document.archivedAt) return false;
   if (document.archivedAt) return false;
-  if (document.template) return false;
   if (!document.publishedAt) return false;
 
   invariant(
@@ -71,24 +69,9 @@ allow(User, "createChildDocument", Document, (user, document) => {
   return user.teamId === document.teamId;
 });
 
-allow(User, "move", Document, (user, document) => {
+allow(User, ["move", "pin", "unpin"], Document, (user, document) => {
   if (document.archivedAt) return false;
   if (document.deletedAt) return false;
-  if (!document.publishedAt) return false;
-
-  invariant(
-    document.collection,
-    "collection is missing, did you forget to include in the query scope?"
-  );
-  if (cannot(user, "update", document.collection)) return false;
-
-  return user.teamId === document.teamId;
-});
-
-allow(User, ["pin", "unpin"], Document, (user, document) => {
-  if (document.archivedAt) return false;
-  if (document.deletedAt) return false;
-  if (document.template) return false;
   if (!document.publishedAt) return false;
 
   invariant(
@@ -126,15 +109,15 @@ allow(User, "restore", Document, (user, document) => {
 });
 
 allow(User, "archive", Document, (user, document) => {
-  if (!document.publishedAt) return false;
-  if (document.archivedAt) return false;
-  if (document.deletedAt) return false;
-
   invariant(
     document.collection,
     "collection is missing, did you forget to include in the query scope?"
   );
   if (cannot(user, "update", document.collection)) return false;
+
+  if (!document.publishedAt) return false;
+  if (document.archivedAt) return false;
+  if (document.deletedAt) return false;
 
   return user.teamId === document.teamId;
 });

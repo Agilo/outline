@@ -1,25 +1,19 @@
 // @flow
+import * as React from "react";
 import { observable } from "mobx";
 import { inject, observer } from "mobx-react";
-import { PlusIcon } from "outline-icons";
-import * as React from "react";
 import { Redirect } from "react-router-dom";
+import { PlusIcon } from "outline-icons";
 
+import { newDocumentUrl } from "utils/routeHelpers";
 import CollectionsStore from "stores/CollectionsStore";
-import DocumentsStore from "stores/DocumentsStore";
 import PoliciesStore from "stores/PoliciesStore";
+import { DropdownMenu, DropdownMenuItem } from "components/DropdownMenu";
 import Button from "components/Button";
 import CollectionIcon from "components/CollectionIcon";
-import {
-  DropdownMenu,
-  DropdownMenuItem,
-  Header,
-} from "components/DropdownMenu";
-import { newDocumentUrl } from "utils/routeHelpers";
 
 type Props = {
   label?: React.Node,
-  documents: DocumentsStore,
   collections: CollectionsStore,
   policies: PoliciesStore,
 };
@@ -32,8 +26,8 @@ class NewDocumentMenu extends React.Component<Props> {
     this.redirectTo = undefined;
   }
 
-  handleNewDocument = (collectionId: string, options) => {
-    this.redirectTo = newDocumentUrl(collectionId, options);
+  handleNewDocument = (collectionId: string) => {
+    this.redirectTo = newDocumentUrl(collectionId);
   };
 
   onOpen = () => {
@@ -47,23 +41,22 @@ class NewDocumentMenu extends React.Component<Props> {
   render() {
     if (this.redirectTo) return <Redirect to={this.redirectTo} push />;
 
-    const { collections, documents, policies, label, ...rest } = this.props;
-    const singleCollection = collections.orderedData.length === 1;
+    const { collections, policies, label, ...rest } = this.props;
 
     return (
       <DropdownMenu
         label={
           label || (
             <Button icon={<PlusIcon />} small>
-              New doc{singleCollection ? "" : "…"}
+              New doc
             </Button>
           )
         }
         onOpen={this.onOpen}
         {...rest}
       >
-        <Header>Choose a collection</Header>
-        {collections.orderedData.map((collection) => {
+        <DropdownMenuItem disabled>Choose a collection…</DropdownMenuItem>
+        {collections.orderedData.map(collection => {
           const can = policies.abilities(collection.id);
 
           return (
@@ -72,8 +65,7 @@ class NewDocumentMenu extends React.Component<Props> {
               onClick={() => this.handleNewDocument(collection.id)}
               disabled={!can.update}
             >
-              <CollectionIcon collection={collection} />
-              &nbsp;{collection.name}
+              <CollectionIcon collection={collection} /> {collection.name}
             </DropdownMenuItem>
           );
         })}
@@ -82,4 +74,4 @@ class NewDocumentMenu extends React.Component<Props> {
   }
 }
 
-export default inject("collections", "documents", "policies")(NewDocumentMenu);
+export default inject("collections", "policies")(NewDocumentMenu);
