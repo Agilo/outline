@@ -20,8 +20,14 @@ export default function present(collection: Collection) {
     createdAt: collection.createdAt,
     updatedAt: collection.updatedAt,
     deletedAt: collection.deletedAt,
-    documents: collection.documentStructure ? collection.documentStructure : [],
+    documents: undefined,
   };
+
+  if (collection.type === "atlas") {
+    data.documents = collection.documentStructure
+      ? collection.documentStructure
+      : [];
+  }
 
   return data;
 }
