@@ -367,34 +367,22 @@ export default class DocumentsStore extends BaseStore<Document> {
     index: ?number
   ) => {
     const oldCollection = this.rootStore.collections.get(document.collectionId);
-    let newCollection = oldCollection;
+    // Retrive all children documents
+    const childDocuments = oldCollection.getDocumentChildren(document.id);
+    // Remove document from old collection
+    oldCollection.removeDocumentInStructure(document.id);
 
-    if (document.collectionId !== collectionId) {
-      newCollection = this.rootStore.collections.get(collectionId);
-    }
+    // Recreate navigation node object
+    const navigationNode: NavigationNode = {
+      id: document.id,
+      title: document.title,
+      url: document.url,
+      children: childDocuments,
+    };
 
-    // Update UI
-    if (oldCollection && newCollection) {
-      // Retrive all children documents
-      const childDocuments = oldCollection.getDocumentChildren(document.id);
-      // Remove document from old collection
-      oldCollection.removeDocumentInStructure(document.id);
-
-      // Recreate navigation node object
-      const navigationNode: NavigationNode = {
-        id: document.id,
-        title: document.title,
-        url: document.url,
-        children: childDocuments,
-      };
-
-      // Move document to new location
-      newCollection.addDocumentToStructure(
-        navigationNode,
-        parentDocumentId,
-        index
-      );
-    }
+    const collection = this.rootStore.collections.get(collectionId);
+    // Move document to new location on the client side
+    collection.addDocumentToStructure(navigationNode, parentDocumentId, index);
 
     // Send data to server
     const res = await client.post('/documents.move', {
