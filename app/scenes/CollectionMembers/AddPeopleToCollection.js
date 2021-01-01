@@ -83,7 +83,6 @@ class AddPeopleToCollection extends React.Component<Props> {
           value={this.query}
           onChange={this.handleFilter}
           label="Search people"
-          autoFocus
           labelHidden
           flex
         />

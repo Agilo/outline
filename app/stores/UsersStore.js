@@ -138,6 +138,6 @@ export default class UsersStore extends BaseStore<User> {
 
 function queriedUsers(users, query) {
   return filter(users, user =>
-    user.name.toLowerCase().includes(query.toLowerCase())
+    user.name.toLowerCase().match(query.toLowerCase())
   );
 }
