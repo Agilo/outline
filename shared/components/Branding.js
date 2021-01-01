@@ -1,7 +1,7 @@
 // @flow
-import * as React from "react";
-import styled from "styled-components";
-import OutlineLogo from "./OutlineLogo";
+import * as React from 'react';
+import styled from 'styled-components';
+import OutlineLogo from './OutlineLogo';
 
 type Props = {
   href?: string,
@@ -10,7 +10,7 @@ type Props = {
 function Branding({ href = process.env.URL }: Props) {
   return (
     <Link href={href}>
-      <OutlineLogo size={16} />&nbsp;Outline
+      <OutlineLogo size={16} fill="#000" />&nbsp;Outline
     </Link>
   );
 }
@@ -24,17 +24,15 @@ const Link = styled.a`
   font-size: 14px;
   text-decoration: none;
   border-top-right-radius: 2px;
-  color: ${props => props.theme.text};
+  color: ${props => props.theme.black};
   display: flex;
   align-items: center;
-  padding: 16px;
-
-  svg {
-    fill: ${props => props.theme.text};
-  }
+  padding: 12px;
+  opacity: 0.8;
 
   &:hover {
-    background: ${props => props.theme.sidebarBackground};
+    opacity: 1;
+    background: ${props => props.theme.smoke};
   }
 `;
 

@@ -1,17 +1,22 @@
 // @flow
-import * as React from "react";
-import { observer, inject } from "mobx-react";
-import breakpoint from "styled-components-breakpoint";
-import styled from "styled-components";
-import { Link } from "react-router-dom";
-import { PadlockIcon, GoToIcon, MoreIcon } from "outline-icons";
+import * as React from 'react';
+import { observer, inject } from 'mobx-react';
+import breakpoint from 'styled-components-breakpoint';
+import styled from 'styled-components';
+import { Link } from 'react-router-dom';
+import {
+  CollectionIcon,
+  PrivateCollectionIcon,
+  PadlockIcon,
+  GoToIcon,
+  MoreIcon,
+} from 'outline-icons';
 
-import Document from "models/Document";
-import CollectionsStore from "stores/CollectionsStore";
-import { collectionUrl } from "utils/routeHelpers";
-import Flex from "shared/components/Flex";
-import BreadcrumbMenu from "./BreadcrumbMenu";
-import CollectionIcon from "components/CollectionIcon";
+import Document from 'models/Document';
+import CollectionsStore from 'stores/CollectionsStore';
+import { collectionUrl } from 'utils/routeHelpers';
+import Flex from 'shared/components/Flex';
+import BreadcrumbMenu from './BreadcrumbMenu';
 
 type Props = {
   document: Document,
@@ -30,7 +35,7 @@ const Breadcrumb = observer(({ document, collections, onlyText }: Props) => {
       <React.Fragment>
         {collection.private && (
           <React.Fragment>
-            <SmallPadlockIcon color="currentColor" size={16} />{" "}
+            <SmallPadlockIcon color="currentColor" size={16} />{' '}
           </React.Fragment>
         )}
         {collection.name}
@@ -51,7 +56,11 @@ const Breadcrumb = observer(({ document, collections, onlyText }: Props) => {
   return (
     <Wrapper justify="flex-start" align="center">
       <CollectionName to={collectionUrl(collection.id)}>
-        <CollectionIcon collection={collection} expanded />{" "}
+        {collection.private ? (
+          <PrivateCollectionIcon color={collection.color} expanded />
+        ) : (
+          <CollectionIcon color={collection.color} expanded />
+        )}{' '}
         <span>{collection.name}</span>
       </CollectionName>
       {isNestedDocument && (
@@ -61,7 +70,7 @@ const Breadcrumb = observer(({ document, collections, onlyText }: Props) => {
       )}
       {lastPath && (
         <React.Fragment>
-          <Slash />{" "}
+          <Slash />{' '}
           <Crumb to={lastPath.url} title={lastPath.title}>
             {lastPath.title}
           </Crumb>
@@ -74,7 +83,7 @@ const Breadcrumb = observer(({ document, collections, onlyText }: Props) => {
 const Wrapper = styled(Flex)`
   display: none;
 
-  ${breakpoint("tablet")`	
+  ${breakpoint('tablet')`	
     display: flex;
   `};
 `;
@@ -130,4 +139,4 @@ const CollectionName = styled(Link)`
   overflow: hidden;
 `;
 
-export default inject("collections")(Breadcrumb);
+export default inject('collections')(Breadcrumb);

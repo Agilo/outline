@@ -35,6 +35,11 @@
       "generator": "secret",
       "required": true
     },
+    "DEPLOYMENT": {
+      "description": "Should be 'self' for self hosted installations, turns off things like pricing pages",
+      "value": "self",
+      "required": true
+    },
     "ENABLE_UPDATES": {
       "value": "true",
       "required": true

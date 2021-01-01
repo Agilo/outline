@@ -1,14 +1,10 @@
 // @flow
-import * as React from "react";
+import * as React from 'react';
 
-type Props = {
-  color?: string,
-};
-
-export default function SlackIcon({ color = "#4E5C6E" }: Props) {
+export default function SlackIcon() {
   return (
     <svg
-      fill={color}
+      fill="#4E5C6E"
       width="24px"
       height="24px"
       viewBox="0 0 24 24"
