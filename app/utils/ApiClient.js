@@ -4,14 +4,6 @@ import { map, trim } from 'lodash';
 import invariant from 'invariant';
 import stores from 'stores';
 import download from './download';
-import {
-  AuthorizationError,
-  NetworkError,
-  NotFoundError,
-  OfflineError,
-  RequestError,
-  UpdateRequiredError,
-} from './errors';
 
 type Options = {
   baseUrl?: string,
@@ -70,9 +62,9 @@ class ApiClient {
       });
     } catch (err) {
       if (window.navigator.onLine) {
-        throw new NetworkError('A network error occurred, try again?');
+        throw new Error('A network error occurred, try again?');
       } else {
-        throw new OfflineError('No internet connection available');
+        throw new Error('No internet connection available');
       }
     }
 
@@ -112,18 +104,10 @@ class ApiClient {
 
     if (response.status === 400 && error.error === 'editor_update_required') {
       window.location.reload(true);
-      throw new UpdateRequiredError(error.message);
+      return;
     }
 
-    if (response.status === 403) {
-      throw new AuthorizationError(error.message);
-    }
-
-    if (response.status === 404) {
-      throw new NotFoundError(error.message);
-    }
-
-    throw new RequestError(error.message);
+    throw error;
   };
 
   get = (path: string, data: ?Object, options?: Object) => {

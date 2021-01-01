@@ -53,7 +53,9 @@ class DocumentEditor extends React.Component<Props> {
   render() {
     const { document, title, onChangeTitle, isDraft, readOnly } = this.props;
     const { emoji } = parseTitle(title);
-    const startsWithEmojiAndSpace = !!(emoji && title.startsWith(`${emoji} `));
+    const startsWithEmojiAndSpace = !!(
+      emoji && title.match(new RegExp(`^${emoji}\\s`))
+    );
 
     return (
       <Flex auto column>

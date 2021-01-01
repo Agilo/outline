@@ -67,17 +67,16 @@ class UserMenu extends React.Component<Props> {
 
     return (
       <DropdownMenu>
-        {user.isAdmin && (
-          <DropdownMenuItem onClick={this.handleDemote}>
-            Make {user.name} a member…
-          </DropdownMenuItem>
-        )}
-        {!user.isAdmin &&
-          !user.isSuspended && (
+        {!user.isSuspended &&
+          (user.isAdmin ? (
+            <DropdownMenuItem onClick={this.handleDemote}>
+              Make {user.name} a member…
+            </DropdownMenuItem>
+          ) : (
             <DropdownMenuItem onClick={this.handlePromote}>
               Make {user.name} an admin…
             </DropdownMenuItem>
-          )}
+          ))}
         {!user.lastActiveAt && (
           <DropdownMenuItem onClick={this.handleRevoke}>
             Revoke invite…

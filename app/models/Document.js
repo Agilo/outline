@@ -10,12 +10,7 @@ import Revision from 'models/Revision';
 import User from 'models/User';
 import DocumentsStore from 'stores/DocumentsStore';
 
-type SaveOptions = {
-  publish?: boolean,
-  done?: boolean,
-  autosave?: boolean,
-  lastRevision?: number,
-};
+type SaveOptions = { publish?: boolean, done?: boolean, autosave?: boolean };
 
 export default class Document extends BaseModel {
   @observable isSaving: boolean = false;
@@ -186,17 +181,13 @@ export default class Document extends BaseModel {
         });
       }
 
-      if (options.lastRevision) {
-        return await this.store.update({
-          id: this.id,
-          title: this.title,
-          text: this.text,
-          lastRevision: options.lastRevision,
-          ...options,
-        });
-      }
-
-      throw new Error('Attempting to update without a lastRevision');
+      return await this.store.update({
+        id: this.id,
+        title: this.title,
+        text: this.text,
+        lastRevision: this.revision,
+        ...options,
+      });
     } finally {
       this.isSaving = false;
     }

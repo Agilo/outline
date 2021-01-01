@@ -254,12 +254,6 @@ type SearchOptions = {
   includeDrafts?: boolean,
 };
 
-function escape(query: string): string {
-  // replace "\" with escaped "\\" because sequelize.escape doesn't do it
-  // https://github.com/sequelize/sequelize/issues/2950
-  return sequelize.escape(query).replace('\\', '\\\\');
-}
-
 Document.searchForTeam = async (
   team,
   query,
@@ -267,7 +261,7 @@ Document.searchForTeam = async (
 ): Promise<SearchResult[]> => {
   const limit = options.limit || 15;
   const offset = options.offset || 0;
-  const wildcardQuery = `${escape(query)}:*`;
+  const wildcardQuery = `${sequelize.escape(query)}:*`;
   const collectionIds = await team.collectionIds();
 
   // If the team has access no public collections then shortcircuit the rest of this
@@ -333,7 +327,7 @@ Document.searchForUser = async (
 ): Promise<SearchResult[]> => {
   const limit = options.limit || 15;
   const offset = options.offset || 0;
-  const wildcardQuery = `${escape(query)}:*`;
+  const wildcardQuery = `${sequelize.escape(query)}:*`;
 
   // Ensure we're filtering by the users accessible collections. If
   // collectionId is passed as an option it is assumed that the authorization

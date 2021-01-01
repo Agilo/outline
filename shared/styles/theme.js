@@ -149,7 +149,7 @@ export const dark = {
   text: colors.almostWhite,
   textSecondary: lighten(0.1, colors.slate),
   textTertiary: colors.slate,
-  placeholder: colors.slateDark,
+  placeholder: darken(0.5, '#B1BECC'),
 
   sidebarBackground: colors.veryDarkBlue,
   sidebarItemBackground: colors.veryDarkBlue,

@@ -59,7 +59,6 @@ class Layout extends React.Component<Props> {
 
   @keydown('shift+/')
   handleOpenKeyboardShortcuts() {
-    if (this.props.ui.editMode) return;
     this.keyboardShortcutsOpen = true;
   }
 
