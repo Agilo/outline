@@ -24,9 +24,7 @@ export default function present(collection: Collection) {
   };
 
   if (collection.type === 'atlas') {
-    data.documents = collection.documentStructure
-      ? collection.documentStructure
-      : [];
+    data.documents = collection.documentStructure;
   }
 
   return data;
