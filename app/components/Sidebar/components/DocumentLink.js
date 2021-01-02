@@ -26,7 +26,7 @@ type Props = {
   depth: number,
   index: number,
   parentId?: string,
-|};
+};
 
 function DocumentLink({
   node,
