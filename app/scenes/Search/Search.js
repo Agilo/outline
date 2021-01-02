@@ -21,7 +21,7 @@ import UsersStore from "stores/UsersStore";
 
 import Button from "components/Button";
 import CenteredContent from "components/CenteredContent";
-import DocumentPreview from "components/DocumentPreview";
+import DocumentListItem from "components/DocumentListItem";
 import Empty from "components/Empty";
 import Fade from "components/Fade";
 import Flex from "components/Flex";
@@ -35,7 +35,7 @@ import StatusFilter from "./components/StatusFilter";
 import UserFilter from "./components/UserFilter";
 import NewDocumentMenu from "menus/NewDocumentMenu";
 import { type LocationWithState } from "types";
-import { meta } from "utils/keyboard";
+import { metaDisplay } from "utils/keyboard";
 import { newDocumentUrl, searchUrl } from "utils/routeHelpers";
 
 type Props = {
@@ -270,7 +270,7 @@ class Search extends React.Component<Props> {
         )}
         <ResultsWrapper pinToTop={this.pinToTop} column auto>
           <SearchField
-            placeholder={t("Search…")}
+            placeholder={`${t("Search")}…`}
             onKeyDown={this.handleKeyDown}
             onChange={this.updateLocation}
             defaultValue={this.query}
@@ -279,8 +279,8 @@ class Search extends React.Component<Props> {
             <Fade>
               <HelpText small>
                 <Trans>
-                  Use the <strong>{{ meta }}+K</strong> shortcut to search from
-                  anywhere in your knowledge base
+                  Use the <strong>{{ meta: metaDisplay }}+K</strong> shortcut to
+                  search from anywhere in your knowledge base
                 </Trans>
               </HelpText>
             </Fade>
@@ -350,7 +350,7 @@ class Search extends React.Component<Props> {
                 if (!document) return null;
 
                 return (
-                  <DocumentPreview
+                  <DocumentListItem
                     ref={(ref) => index === 0 && this.setFirstDocumentRef(ref)}
                     key={document.id}
                     document={document}

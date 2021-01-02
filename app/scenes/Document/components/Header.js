@@ -34,7 +34,7 @@ import Tooltip from "components/Tooltip";
 import DocumentMenu from "menus/DocumentMenu";
 import NewChildDocumentMenu from "menus/NewChildDocumentMenu";
 import TemplatesMenu from "menus/TemplatesMenu";
-import { meta } from "utils/keyboard";
+import { metaDisplay } from "utils/keyboard";
 import { newDocumentUrl, editDocumentUrl } from "utils/routeHelpers";
 
 type Props = {
@@ -172,7 +172,7 @@ class Header extends React.Component<Props> {
                 tooltip={
                   ui.tocVisible ? t("Hide contents") : t("Show contents")
                 }
-                shortcut={`ctrl+${meta}+h`}
+                shortcut={`ctrl+${metaDisplay}+h`}
                 delay={250}
                 placement="bottom"
               >
@@ -203,7 +203,7 @@ class Header extends React.Component<Props> {
         <Wrapper align="center" justify="flex-end">
           {isSaving && !isPublishing && (
             <Action>
-              <Status>{t("Saving…")}</Status>
+              <Status>{t("Saving")}…</Status>
             </Action>
           )}
           &nbsp;
@@ -250,7 +250,7 @@ class Header extends React.Component<Props> {
               <Action>
                 <Tooltip
                   tooltip={t("Save")}
-                  shortcut={`${meta}+enter`}
+                  shortcut={`${metaDisplay}+enter`}
                   delay={500}
                   placement="bottom"
                 >
@@ -321,7 +321,7 @@ class Header extends React.Component<Props> {
             <Action>
               <Tooltip
                 tooltip={t("Publish")}
-                shortcut={`${meta}+shift+p`}
+                shortcut={`${metaDisplay}+shift+p`}
                 delay={500}
                 placement="bottom"
               >
@@ -331,7 +331,7 @@ class Header extends React.Component<Props> {
                   disabled={publishingIsDisabled}
                   small
                 >
-                  {isPublishing ? t("Publishing…") : t("Publish")}
+                  {isPublishing ? `${t("Publishing")}…` : t("Publish")}
                 </Button>
               </Tooltip>
             </Action>

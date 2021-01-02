@@ -9,6 +9,7 @@ import ErrorBoundary from "components/ErrorBoundary";
 import Tooltip from "components/Tooltip";
 import embeds from "../embeds";
 import isInternalUrl from "utils/isInternalUrl";
+import { isMetaKey } from "utils/keyboard";
 import { uploadFile } from "utils/uploadFile";
 
 const RichMarkdownEditor = React.lazy(() => import("rich-markdown-editor"));
@@ -49,7 +50,7 @@ function Editor(props: PropsWithRef) {
         return;
       }
 
-      if (isInternalUrl(href) && !event.metaKey && !event.shiftKey) {
+      if (isInternalUrl(href) && !isMetaKey(event) && !event.shiftKey) {
         // relative
         let navigateTo = href;
 
@@ -102,7 +103,7 @@ function Editor(props: PropsWithRef) {
       deleteTable: t("Delete table"),
       em: t("Italic"),
       embedInvalidLink: t("Sorry, that link won’t work for this embed type"),
-      findOrCreateDoc: t("Find or create a doc…"),
+      findOrCreateDoc: `${t("Find or create a doc")}…`,
       h1: t("Big heading"),
       h2: t("Medium heading"),
       h3: t("Small heading"),
@@ -115,18 +116,18 @@ function Editor(props: PropsWithRef) {
       link: t("Link"),
       linkCopied: t("Link copied to clipboard"),
       mark: t("Highlight"),
-      newLineEmpty: t("Type '/' to insert…"),
-      newLineWithSlash: t("Keep typing to filter…"),
+      newLineEmpty: `${t("Type '/' to insert")}…`,
+      newLineWithSlash: `${t("Keep typing to filter")}…`,
       noResults: t("No results"),
       openLink: t("Open link"),
       orderedList: t("Ordered list"),
-      pasteLink: t("Paste a link…"),
+      pasteLink: `${t("Paste a link")}…`,
       pasteLinkWithTitle: (service: string) =>
         t("Paste a {{service}} link…", { service }),
       placeholder: t("Placeholder"),
       quote: t("Quote"),
       removeLink: t("Remove link"),
-      searchOrPasteLink: t("Search or paste a link…"),
+      searchOrPasteLink: `${t("Search or paste a link")}…`,
       strikethrough: t("Strikethrough"),
       strong: t("Bold"),
       subheading: t("Subheading"),

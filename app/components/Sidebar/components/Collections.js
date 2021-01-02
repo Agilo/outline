@@ -157,29 +157,21 @@ class Collections extends React.Component<Props, State> {
 
     const content = (
       <>
-        <DragDropContext
-          onDragStart={this.handleDragStart}
-          onDragEnd={this.reorder}
-        >
-          <DraggingDocumentIdContext.Provider value={draggingDocumentId}>
-            {collections.orderedData.map((collection) => (
-              <CollectionLink
-                key={collection.id}
-                documents={documents}
-                collection={collection}
-                activeDocument={documents.active}
-                prefetchDocument={documents.prefetchDocument}
-                canUpdate={policies.abilities(collection.id).update}
-                ui={ui}
-              />
-            ))}
-          </DraggingDocumentIdContext.Provider>
-        </DragDropContext>
+        {collections.orderedData.map((collection) => (
+          <CollectionLink
+            key={collection.id}
+            collection={collection}
+            activeDocument={documents.active}
+            prefetchDocument={documents.prefetchDocument}
+            canUpdate={policies.abilities(collection.id).update}
+            ui={ui}
+          />
+        ))}
         <SidebarLink
           to="/collections"
           onClick={this.props.onCreateCollection}
           icon={<PlusIcon color="currentColor" />}
-          label={t("New collection…")}
+          label={`${t("New collection")}…`}
           exact
         />
       </>

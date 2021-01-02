@@ -2,6 +2,7 @@
 import { darken, lighten } from "polished";
 
 const colors = {
+  transparent: "transparent",
   almostBlack: "#111319",
   lightBlack: "#2F3336",
   almostWhite: "#E6E6E6",
@@ -47,6 +48,7 @@ const spacing = {
   vpadding: "1.5vw",
   hpadding: "1.875vw",
   sidebarWidth: "280px",
+  sidebarCollapsedWidth: "16px",
   sidebarMinWidth: "250px",
   sidebarMaxWidth: "350px",
 };
@@ -184,7 +186,7 @@ export const dark = {
   placeholder: colors.slateDark,
 
   sidebarBackground: colors.veryDarkBlue,
-  sidebarItemBackground: colors.veryDarkBlue,
+  sidebarItemBackground: colors.transparent,
   sidebarText: colors.slate,
   sidebarDroppableBackground: "rgba(255, 255, 255, .05)",
   shadow: "rgba(0, 0, 0, 0.6)",

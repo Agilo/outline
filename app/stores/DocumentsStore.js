@@ -24,6 +24,7 @@ export default class DocumentsStore extends BaseStore<Document> {
   @observable searchCache: Map<string, SearchResult[]> = new Map();
   @observable starredIds: Map<string, boolean> = new Map();
   @observable backlinks: Map<string, string[]> = new Map();
+  @observable movingDocumentId: ?string;
 
   importFileTypes: string[] = [
     "text/markdown",
@@ -455,54 +456,28 @@ export default class DocumentsStore extends BaseStore<Document> {
 
   @action
   move = async (
-    document: Document,
+    documentId: string,
     collectionId: string,
     parentDocumentId: ?string,
     index: ?number
   ) => {
-    const oldCollection = this.rootStore.collections.get(document.collectionId);
-    let newCollection = oldCollection;
+    this.movingDocumentId = documentId;
 
-    if (document.collectionId !== collectionId) {
-      newCollection = this.rootStore.collections.get(collectionId);
-    }
-
-    // Update UI
-    if (oldCollection && newCollection) {
-      // Retrive all children documents
-      const childDocuments = oldCollection.getDocumentChildren(document.id);
-      // Remove document from old collection
-      oldCollection.removeDocumentInStructure(document.id);
-
-      // Recreate navigation node object
-      const navigationNode: NavigationNode = {
-        id: document.id,
-        title: document.title,
-        url: document.url,
-        children: childDocuments,
-      };
-
-      // Move document to new location
-      newCollection.addDocumentToStructure(
-        navigationNode,
+    try {
+      const res = await client.post("/documents.move", {
+        id: documentId,
+        collectionId,
         parentDocumentId,
-        index
-      );
+        index: index,
+      });
+      invariant(res && res.data, "Data not available");
+
+      res.data.documents.forEach(this.add);
+      res.data.collections.forEach(this.rootStore.collections.add);
+      this.addPolicies(res.policies);
+    } finally {
+      this.movingDocumentId = undefined;
     }
-
-    // Send data to server
-    const res = await client.post("/documents.move", {
-      id: document.id,
-      collectionId,
-      parentDocumentId,
-      index: String(index),
-    });
-    invariant(res && res.data, "Data not available");
-
-    // Apply data from the server
-    res.data.documents.forEach(this.add);
-    res.data.collections.forEach(this.rootStore.collections.add);
-    this.addPolicies(res.policies);
   };
 
   @action

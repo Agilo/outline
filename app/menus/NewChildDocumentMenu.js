@@ -2,7 +2,7 @@
 import { observable } from "mobx";
 import { observer, inject } from "mobx-react";
 import * as React from "react";
-import { withTranslation, type TFunction } from "react-i18next";
+import { Trans, withTranslation, type TFunction } from "react-i18next";
 import { Redirect } from "react-router-dom";
 
 import CollectionsStore from "stores/CollectionsStore";
@@ -43,6 +43,7 @@ class NewChildDocumentMenu extends React.Component<Props> {
 
     const { label, document, collections, t } = this.props;
     const collection = collections.get(document.collectionId);
+    const collectionName = collection ? collection.name : t("collection");
 
     return (
       <DropdownMenu label={label}>
@@ -51,10 +52,9 @@ class NewChildDocumentMenu extends React.Component<Props> {
             {
               title: (
                 <span>
-                  {t("New document in")}{" "}
-                  <strong>
-                    {collection ? collection.name : t("collection")}
-                  </strong>
+                  <Trans>
+                    New document in <strong>{{ collectionName }}</strong>
+                  </Trans>
                 </span>
               ),
               onClick: this.handleNewDocument,

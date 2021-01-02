@@ -15,7 +15,6 @@ import ErrorSuspended from "scenes/ErrorSuspended";
 import KeyboardShortcuts from "scenes/KeyboardShortcuts";
 import Analytics from "components/Analytics";
 import DocumentHistory from "components/DocumentHistory";
-import { GlobalStyles } from "components/DropToImport";
 import Flex from "components/Flex";
 
 import { LoadingIndicatorBar } from "components/LoadingIndicator";
@@ -23,6 +22,7 @@ import Modal from "components/Modal";
 import Sidebar from "components/Sidebar";
 import SettingsSidebar from "components/Sidebar/Settings";
 import { type Theme } from "types";
+import { meta } from "utils/keyboard";
 import {
   homeUrl,
   searchUrl,
@@ -66,6 +66,11 @@ class Layout extends React.Component<Props> {
     window.document.body.style.background = props.theme.background;
   }
 
+  @keydown(`${meta}+.`)
+  handleToggleSidebar() {
+    this.props.ui.toggleCollapsedSidebar();
+  }
+
   @keydown("shift+/")
   handleOpenKeyboardShortcuts() {
     if (this.props.ui.editMode) return;
@@ -76,7 +81,7 @@ class Layout extends React.Component<Props> {
     this.keyboardShortcutsOpen = false;
   };
 
-  @keydown(["t", "/", "meta+k"])
+  @keydown(["t", "/", `${meta}+k`])
   goToSearch(ev: SyntheticEvent<>) {
     if (this.props.ui.editMode) return;
     ev.preventDefault();
@@ -120,7 +125,11 @@ class Layout extends React.Component<Props> {
             </Switch>
           )}
 
-          <Content auto justify="center" editMode={ui.editMode}>
+          <Content
+            auto
+            justify="center"
+            sidebarCollapsed={ui.editMode || ui.sidebarCollapsed}
+          >
             {this.props.children}
           </Content>
 
@@ -138,7 +147,6 @@ class Layout extends React.Component<Props> {
         >
           <KeyboardShortcuts />
         </Modal>
-        <GlobalStyles />
       </Container>
     );
   }
@@ -161,7 +169,10 @@ const Content = styled(Flex)`
   }
 
   ${breakpoint("tablet")`
-    margin-left: ${(props) => (props.editMode ? 0 : props.theme.sidebarWidth)};
+    margin-left: ${(props) =>
+      props.sidebarCollapsed
+        ? props.theme.sidebarCollapsedWidth
+        : props.theme.sidebarWidth};
   `};
 `;
 
