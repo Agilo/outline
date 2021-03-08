@@ -189,7 +189,7 @@
     "eslint-plugin-react": "^7.20.0",
     "eslint-plugin-react-hooks": "^4.1.0",
     "fetch-test-server": "^1.1.0",
-    "flow-bin": "^0.104.0",
+    "flow-bin": "^0.146.0",
     "html-webpack-plugin": "3.2.0",
     "i18next-parser": "^3.3.0",
     "jest-cli": "^26.0.0",
