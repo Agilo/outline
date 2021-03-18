@@ -95,6 +95,8 @@ const Document = sequelize.define(
     },
     getterMethods: {
       url: function () {
+        if (!this.title) return `/doc/untitled-${this.urlId}`;
+
         const slugifiedTitle = slugify(this.title);
         return `/doc/${slugifiedTitle}-${this.urlId}`;
       },
@@ -490,7 +492,7 @@ Document.addHook("afterCreate", async (model) => {
     return;
   }
 
-  await collection.addDocumentToStructure(model);
+  await collection.addDocumentToStructure(model, 0);
   model.collection = collection;
 
   return model;
@@ -575,24 +577,32 @@ Document.prototype.archiveWithChildren = async function (userId, options) {
   return this.save(options);
 };
 
-Document.prototype.publish = async function (options) {
+Document.prototype.publish = async function (userId: string, options) {
   if (this.publishedAt) return this.save(options);
 
-  const collection = await Collection.findByPk(this.collectionId);
-  await collection.addDocumentToStructure(this);
+  if (!this.template) {
+    const collection = await Collection.findByPk(this.collectionId);
+    await collection.addDocumentToStructure(this, 0);
+  }
 
+  this.lastModifiedById = userId;
   this.publishedAt = new Date();
   await this.save(options);
 
   return this;
 };
 
-Document.prototype.unpublish = async function (options) {
+Document.prototype.unpublish = async function (userId: string, options) {
   if (!this.publishedAt) return this;
 
   const collection = await this.getCollection();
   await collection.removeDocumentInStructure(this);
 
+  // unpublishing a document converts the "ownership" to yourself, so that it
+  // can appear in your drafts rather than the original creators
+  this.userId = userId;
+
+  this.lastModifiedById = userId;
   this.publishedAt = null;
   await this.save(options);
 
@@ -630,8 +640,10 @@ Document.prototype.unarchive = async function (userId: string) {
     if (!parent) this.parentDocumentId = undefined;
   }
 
-  await collection.addDocumentToStructure(this);
-  this.collection = collection;
+  if (!this.template) {
+    await collection.addDocumentToStructure(this);
+    this.collection = collection;
+  }
 
   if (this.deletedAt) {
     await this.restore();

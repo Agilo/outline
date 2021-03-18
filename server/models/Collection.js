@@ -2,7 +2,7 @@
 import { find, findIndex, concat, remove, uniq } from "lodash";
 import randomstring from "randomstring";
 import slug from "slug";
-import { DataTypes, sequelize } from "../sequelize";
+import { Op, DataTypes, sequelize } from "../sequelize";
 import CollectionUser from "./CollectionUser";
 import Document from "./Document";
 
@@ -24,6 +24,11 @@ const Collection = sequelize.define(
     private: DataTypes.BOOLEAN,
     maintainerApprovalRequired: DataTypes.BOOLEAN,
     documentStructure: DataTypes.JSONB,
+    sharing: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    },
     sort: {
       type: DataTypes.JSONB,
       validate: {
@@ -103,7 +108,7 @@ Collection.associate = (models) => {
   });
   Collection.belongsTo(models.User, {
     as: "user",
-    foreignKey: "creatorId",
+    foreignKey: "createdById",
   });
   Collection.belongsTo(models.Team, {
     as: "team",
@@ -182,6 +187,9 @@ Collection.addHook("afterDestroy", async (model: Collection) => {
   await Document.destroy({
     where: {
       collectionId: model.id,
+      archivedAt: {
+        [Op.eq]: null,
+      },
     },
   });
 });
@@ -191,11 +199,11 @@ Collection.addHook("afterCreate", (model: Collection, options) => {
     return CollectionUser.findOrCreate({
       where: {
         collectionId: model.id,
-        userId: model.creatorId,
+        userId: model.createdById,
       },
       defaults: {
         permission: "read_write",
-        createdById: model.creatorId,
+        createdById: model.createdById,
       },
       transaction: options.transaction,
     });

@@ -1,14 +1,18 @@
 // @flow
 import * as React from "react";
 import styled from "styled-components";
+import Image from "components/Image";
 import Abstract from "./Abstract";
 import Airtable from "./Airtable";
+import Cawemo from "./Cawemo";
 import ClickUp from "./ClickUp";
 import Codepen from "./Codepen";
 import Figma from "./Figma";
 import Framer from "./Framer";
 import Gist from "./Gist";
 import GoogleDocs from "./GoogleDocs";
+import GoogleDrawings from "./GoogleDrawings";
+import GoogleDrive from "./GoogleDrive";
 import GoogleSheets from "./GoogleSheets";
 import GoogleSlides from "./GoogleSlides";
 import InVision from "./InVision";
@@ -37,7 +41,7 @@ function matcher(Component) {
   };
 }
 
-const Img = styled.img`
+const Img = styled(Image)`
   margin: 4px;
   width: 18px;
   height: 18px;
@@ -59,8 +63,17 @@ export default [
     matcher: matcher(Airtable),
   },
   {
+    title: "Cawemo",
+    keywords: "bpmn process",
+    defaultHidden: true,
+    icon: () => <Img src="/images/cawemo.png" />,
+    component: Cawemo,
+    matcher: matcher(Cawemo),
+  },
+  {
     title: "ClickUp",
     keywords: "project",
+    defaultHidden: true,
     icon: () => <Img src="/images/clickup.png" />,
     component: ClickUp,
     matcher: matcher(ClickUp),
@@ -94,6 +107,20 @@ export default [
     matcher: matcher(Gist),
   },
   {
+    title: "Google Drawings",
+    keywords: "drawings",
+    icon: () => <Img src="/images/google-drawings.png" />,
+    component: GoogleDrawings,
+    matcher: matcher(GoogleDrawings),
+  },
+  {
+    title: "Google Drive",
+    keywords: "drive",
+    icon: () => <Img src="/images/google-drive.png" />,
+    component: GoogleDrive,
+    matcher: matcher(GoogleDrive),
+  },
+  {
     title: "Google Docs",
     icon: () => <Img src="/images/google-docs.png" />,
     component: GoogleDocs,
@@ -116,6 +143,7 @@ export default [
   {
     title: "InVision",
     keywords: "design prototype",
+    defaultHidden: true,
     icon: () => <Img src="/images/invision.png" />,
     component: InVision,
     matcher: matcher(InVision),
@@ -158,6 +186,7 @@ export default [
   {
     title: "Mode",
     keywords: "analytics",
+    defaultHidden: true,
     icon: () => <Img src="/images/mode-analytics.png" />,
     component: ModeAnalytics,
     matcher: matcher(ModeAnalytics),

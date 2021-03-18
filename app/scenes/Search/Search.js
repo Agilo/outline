@@ -1,6 +1,6 @@
 // @flow
 import ArrowKeyNavigation from "boundless-arrow-key-navigation";
-import { debounce } from "lodash";
+import { debounce, isEqual } from "lodash";
 import { observable, action } from "mobx";
 import { observer, inject } from "mobx-react";
 import { PlusIcon } from "outline-icons";
@@ -37,6 +37,7 @@ import NewDocumentMenu from "menus/NewDocumentMenu";
 import { type LocationWithState } from "types";
 import { metaDisplay } from "utils/keyboard";
 import { newDocumentUrl, searchUrl } from "utils/routeHelpers";
+import { decodeURIComponentSafe } from "utils/urls";
 
 type Props = {
   history: RouterHistory,
@@ -52,9 +53,10 @@ type Props = {
 class Search extends React.Component<Props> {
   firstDocument: ?React.Component<any>;
   lastQuery: string = "";
+  lastParams: Object;
 
   @observable
-  query: string = decodeURIComponent(this.props.match.params.term || "");
+  query: string = decodeURIComponentSafe(this.props.match.params.term || "");
   @observable params: URLSearchParams = new URLSearchParams();
   @observable offset: number = 0;
   @observable allowLoadMore: boolean = true;
@@ -115,7 +117,7 @@ class Search extends React.Component<Props> {
   };
 
   handleTermChange = () => {
-    const query = decodeURIComponent(this.props.match.params.term || "");
+    const query = decodeURIComponentSafe(this.props.match.params.term || "");
     this.query = query ? query : "";
     this.offset = 0;
     this.allowLoadMore = true;
@@ -194,25 +196,28 @@ class Search extends React.Component<Props> {
   @action
   fetchResults = async () => {
     if (this.query) {
+      const params = {
+        offset: this.offset,
+        limit: DEFAULT_PAGINATION_LIMIT,
+        dateFilter: this.dateFilter,
+        includeArchived: this.includeArchived,
+        includeDrafts: true,
+        collectionId: this.collectionId,
+        userId: this.userId,
+      };
+
       // we just requested this thing – no need to try again
-      if (this.lastQuery === this.query) {
+      if (this.lastQuery === this.query && isEqual(params, this.lastParams)) {
         this.isLoading = false;
         return;
       }
 
       this.isLoading = true;
       this.lastQuery = this.query;
+      this.lastParams = params;
 
       try {
-        const results = await this.props.documents.search(this.query, {
-          offset: this.offset,
-          limit: DEFAULT_PAGINATION_LIMIT,
-          dateFilter: this.dateFilter,
-          includeArchived: this.includeArchived,
-          includeDrafts: true,
-          collectionId: this.collectionId,
-          userId: this.userId,
-        });
+        const results = await this.props.documents.search(this.query, params);
 
         this.pinToTop = true;
 
@@ -278,10 +283,11 @@ class Search extends React.Component<Props> {
           {showShortcutTip && (
             <Fade>
               <HelpText small>
-                <Trans>
-                  Use the <strong>{{ meta: metaDisplay }}+K</strong> shortcut to
-                  search from anywhere in your knowledge base
-                </Trans>
+                <Trans
+                  defaults="Use the <em>{{ meta }}+K</em> shortcut to search from anywhere in your knowledge base"
+                  values={{ meta: metaDisplay }}
+                  components={{ em: <strong /> }}
+                />
               </HelpText>
             </Fade>
           )}
@@ -357,6 +363,7 @@ class Search extends React.Component<Props> {
                     highlight={this.query}
                     context={result.context}
                     showCollection
+                    showTemplate
                   />
                 );
               })}

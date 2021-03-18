@@ -112,6 +112,23 @@ describe("#documents.info", () => {
     expect(res.status).toEqual(403);
   });
 
+  it("should not return document from shareId if sharing is disabled for collection", async () => {
+    const { document, collection, user } = await seed();
+    const share = await buildShare({
+      documentId: document.id,
+      teamId: document.teamId,
+      userId: user.id,
+    });
+
+    collection.sharing = false;
+    await collection.save();
+
+    const res = await server.post("/api/documents.info", {
+      body: { shareId: share.id },
+    });
+    expect(res.status).toEqual(403);
+  });
+
   it("should not return document from revoked shareId", async () => {
     const { document, user } = await seed();
     const share = await buildShare({
@@ -433,7 +450,27 @@ describe("#documents.list", () => {
     expect(body.data[0].id).toEqual(document.id);
   });
 
-  it("should not return unpublished documents", async () => {
+  it("should allow filtering documents with no parent", async () => {
+    const { user, document } = await seed();
+    await buildDocument({
+      title: "child document",
+      text: "random text",
+      parentDocumentId: document.id,
+      userId: user.id,
+      teamId: user.teamId,
+    });
+
+    const res = await server.post("/api/documents.list", {
+      body: { token: user.getJwtToken(), parentDocumentId: null },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.length).toEqual(1);
+    expect(body.data[0].id).toEqual(document.id);
+  });
+
+  it("should not return draft documents", async () => {
     const { user, document } = await seed();
     document.publishedAt = null;
     await document.save();
@@ -491,6 +528,32 @@ describe("#documents.list", () => {
     expect(res.status).toEqual(200);
     expect(body.data[0].id).toEqual(document.id);
     expect(body.data[1].id).toEqual(anotherDoc.id);
+  });
+
+  it("should allow sorting by collection index", async () => {
+    const { user, document, collection } = await seed();
+    const anotherDoc = await buildDocument({
+      title: "another document",
+      text: "random text",
+      userId: user.id,
+      teamId: user.teamId,
+      collectionId: collection.id,
+    });
+    await collection.addDocumentToStructure(anotherDoc, 0);
+
+    const res = await server.post("/api/documents.list", {
+      body: {
+        token: user.getJwtToken(),
+        collectionId: collection.id,
+        sort: "index",
+        direction: "ASC",
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data[0].id).toEqual(anotherDoc.id);
+    expect(body.data[1].id).toEqual(document.id);
   });
 
   it("should allow filtering by collection", async () => {
@@ -1334,7 +1397,22 @@ describe("#documents.restore", () => {
     expect(body.data.collectionId).toEqual(collection.id);
   });
 
-  it("should now allow restore of trashed documents to collection user cannot access", async () => {
+  it("should not allow restore of documents in deleted collection", async () => {
+    const { user, document, collection } = await seed();
+
+    await document.destroy(user.id);
+    await collection.destroy();
+
+    const res = await server.post("/api/documents.restore", {
+      body: {
+        token: user.getJwtToken(),
+        id: document.id,
+      },
+    });
+    expect(res.status).toEqual(400);
+  });
+
+  it("should not allow restore of trashed documents to collection user cannot access", async () => {
     const { user, document } = await seed();
     const collection = await buildCollection();
 
@@ -1361,6 +1439,28 @@ describe("#documents.restore", () => {
 
     expect(res.status).toEqual(200);
     expect(body.data.archivedAt).toEqual(null);
+  });
+
+  it("should not add restored templates to collection structure", async () => {
+    const user = await buildUser();
+    const collection = await buildCollection({ teamId: user.teamId });
+    const template = await buildDocument({
+      teamId: user.teamId,
+      collectionId: collection.id,
+      template: true,
+    });
+    await template.archive(user.id);
+
+    const res = await server.post("/api/documents.restore", {
+      body: { token: user.getJwtToken(), id: template.id },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.archivedAt).toEqual(null);
+
+    await collection.reload();
+    expect(collection.documentStructure).toEqual(null);
   });
 
   it("should restore archived when previous parent is archived", async () => {
@@ -1551,6 +1651,14 @@ describe("#documents.import", () => {
     });
     expect(res.status).toEqual(400);
   });
+
+  it("should require authentication", async () => {
+    const { document } = await seed();
+    const res = await server.post("/api/documents.import", {
+      body: { id: document.id },
+    });
+    expect(res.status).toEqual(401);
+  });
 });
 
 describe("#documents.create", () => {
@@ -1570,6 +1678,7 @@ describe("#documents.create", () => {
     expect(res.status).toEqual(200);
     expect(newDocument.parentDocumentId).toBe(null);
     expect(newDocument.collectionId).toBe(collection.id);
+    expect(body.policies[0].abilities.update).toEqual(true);
   });
 
   it("should not allow very long titles", async () => {
@@ -1602,6 +1711,7 @@ describe("#documents.create", () => {
 
     expect(res.status).toEqual(200);
     expect(body.data.title).toBe("new document");
+    expect(body.policies[0].abilities.update).toEqual(true);
   });
 
   it("should error with invalid parentDocument", async () => {
@@ -1636,6 +1746,7 @@ describe("#documents.create", () => {
 
     expect(res.status).toEqual(200);
     expect(body.data.title).toBe("new document");
+    expect(body.policies[0].abilities.update).toEqual(true);
   });
 });
 
@@ -1657,6 +1768,37 @@ describe("#documents.update", () => {
     expect(res.status).toEqual(200);
     expect(body.data.title).toBe("Updated title");
     expect(body.data.text).toBe("Updated text");
+  });
+
+  it("should not add template to collection structure when publishing", async () => {
+    const user = await buildUser();
+    const collection = await buildCollection({ teamId: user.teamId });
+    const template = await buildDocument({
+      teamId: user.teamId,
+      collectionId: collection.id,
+      template: true,
+      publishedAt: null,
+    });
+
+    const res = await server.post("/api/documents.update", {
+      body: {
+        token: user.getJwtToken(),
+        id: template.id,
+        title: "Updated title",
+        text: "Updated text",
+        lastRevision: template.revision,
+        publish: true,
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.title).toBe("Updated title");
+    expect(body.data.text).toBe("Updated text");
+    expect(body.data.publishedAt).toBeTruthy();
+
+    await collection.reload();
+    expect(collection.documentStructure).toBe(null);
   });
 
   it("should allow publishing document in private collection", async () => {
@@ -1947,7 +2089,7 @@ describe("#documents.delete", () => {
 
 describe("#documents.unpublish", () => {
   it("should unpublish a document", async () => {
-    const { user, document } = await seed();
+    let { user, document } = await seed();
     const res = await server.post("/api/documents.unpublish", {
       body: { token: user.getJwtToken(), id: document.id },
     });
@@ -1956,6 +2098,28 @@ describe("#documents.unpublish", () => {
     expect(res.status).toEqual(200);
     expect(body.data.id).toEqual(document.id);
     expect(body.data.publishedAt).toBeNull();
+
+    document = await Document.unscoped().findByPk(document.id);
+    expect(document.userId).toEqual(user.id);
+  });
+
+  it("should unpublish another users document", async () => {
+    const { user, collection } = await seed();
+    let document = await buildDocument({
+      teamId: user.teamId,
+      collectionId: collection.id,
+    });
+    const res = await server.post("/api/documents.unpublish", {
+      body: { token: user.getJwtToken(), id: document.id },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.id).toEqual(document.id);
+    expect(body.data.publishedAt).toBeNull();
+
+    document = await Document.unscoped().findByPk(document.id);
+    expect(document.userId).toEqual(user.id);
   });
 
   it("should fail to unpublish a draft document", async () => {
@@ -1981,7 +2145,7 @@ describe("#documents.unpublish", () => {
     expect(res.status).toEqual(403);
   });
 
-  it("should fail to unpublish a archived document", async () => {
+  it("should fail to unpublish an archived document", async () => {
     const { user, document } = await seed();
     await document.archive();
 

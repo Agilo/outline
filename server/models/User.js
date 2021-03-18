@@ -8,10 +8,9 @@ import { languages } from "../../shared/i18n";
 import { ValidationError } from "../errors";
 import { sendEmail } from "../mailer";
 import { DataTypes, sequelize, encryptedFields } from "../sequelize";
+import { DEFAULT_AVATAR_HOST } from "../utils/avatars";
 import { publicS3Endpoint, uploadToS3FromUrl } from "../utils/s3";
 import { Star, Team, Collection, NotificationSetting, ApiKey } from ".";
-
-const DEFAULT_AVATAR_HOST = "https://tiley.herokuapp.com";
 
 const User = sequelize.define(
   "user",
@@ -28,7 +27,6 @@ const User = sequelize.define(
     isAdmin: DataTypes.BOOLEAN,
     service: { type: DataTypes.STRING, allowNull: true },
     serviceId: { type: DataTypes.STRING, allowNull: true, unique: true },
-    slackData: DataTypes.JSONB,
     jwtSecret: encryptedFields().vault("jwtSecret"),
     lastActiveAt: DataTypes.DATE,
     lastActiveIp: { type: DataTypes.STRING, allowNull: true },
@@ -51,17 +49,21 @@ const User = sequelize.define(
       isSuspended() {
         return !!this.suspendedAt;
       },
+      isInvited() {
+        return !this.lastActiveAt;
+      },
       avatarUrl() {
         const original = this.getDataValue("avatarUrl");
         if (original) {
           return original;
         }
 
+        const initial = this.name ? this.name[0] : "?";
         const hash = crypto
           .createHash("md5")
           .update(this.email || "")
           .digest("hex");
-        return `${DEFAULT_AVATAR_HOST}/avatar/${hash}/${this.name[0]}.png`;
+        return `${DEFAULT_AVATAR_HOST}/avatar/${hash}/${initial}.png`;
       },
     },
   }
@@ -76,7 +78,12 @@ User.associate = (models) => {
   });
   User.hasMany(models.Document, { as: "documents" });
   User.hasMany(models.View, { as: "views" });
+  User.hasMany(models.UserAuthentication, { as: "authentications" });
   User.belongsTo(models.Team);
+
+  User.addScope("withAuthentications", {
+    include: [{ model: models.UserAuthentication, as: "authentications" }],
+  });
 };
 
 // Instance methods
@@ -148,10 +155,6 @@ User.prototype.getTransferToken = function () {
 // Returns a temporary token that is only used for logging in from an email
 // It can only be used to sign in once and has a medium length expiry
 User.prototype.getEmailSigninToken = function () {
-  if (this.service && this.service !== "email") {
-    throw new Error("Cannot generate email signin token for OAuth user");
-  }
-
   return JWT.sign(
     { id: this.id, createdAt: new Date().toISOString(), type: "email-signin" },
     this.jwtSecret
@@ -205,7 +208,6 @@ const removeIdentifyingInfo = async (model, options) => {
   model.avatarUrl = "";
   model.serviceId = null;
   model.username = null;
-  model.slackData = null;
   model.lastActiveIp = null;
   model.lastSignedInIp = null;
 
@@ -266,5 +268,34 @@ User.afterCreate(async (user, options) => {
     }),
   ]);
 });
+
+User.getCounts = async function (teamId: string) {
+  const countSql = `
+    SELECT 
+      COUNT(CASE WHEN "suspendedAt" IS NOT NULL THEN 1 END) as "suspendedCount",
+      COUNT(CASE WHEN "isAdmin" = true THEN 1 END) as "adminCount",
+      COUNT(CASE WHEN "lastActiveAt" IS NULL THEN 1 END) as "invitedCount",
+      COUNT(CASE WHEN "suspendedAt" IS NULL AND "lastActiveAt" IS NOT NULL THEN 1 END) as "activeCount",
+      COUNT(*) as count
+    FROM users
+    WHERE "deletedAt" IS NULL
+    AND "teamId" = :teamId
+  `;
+  const results = await sequelize.query(countSql, {
+    type: sequelize.QueryTypes.SELECT,
+    replacements: {
+      teamId,
+    },
+  });
+  const counts = results[0];
+
+  return {
+    active: parseInt(counts.activeCount),
+    admins: parseInt(counts.adminCount),
+    all: parseInt(counts.count),
+    invited: parseInt(counts.invitedCount),
+    suspended: parseInt(counts.suspendedCount),
+  };
+};
 
 export default User;

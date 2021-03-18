@@ -40,15 +40,13 @@ class Collections extends React.Component<Props, State> {
   componentDidMount() {
     const { collections } = this.props;
 
-    if (!collections.isFetching && !collections.isLoaded) {
+    if (!collections.isLoaded) {
       collections.fetchPage({ limit: 100 });
     }
   }
 
   @keydown("n")
   goToNewDocument() {
-    if (this.props.ui.editMode) return;
-
     const { activeCollectionId } = this.props.ui;
     if (!activeCollectionId) return;
 

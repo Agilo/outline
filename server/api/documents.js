@@ -2,6 +2,7 @@
 import Router from "koa-router";
 import Sequelize from "sequelize";
 import { subtractDate } from "../../shared/utils/date";
+import documentCreator from "../commands/documentCreator";
 import documentImporter from "../commands/documentImporter";
 import documentMover from "../commands/documentMover";
 import {
@@ -37,7 +38,7 @@ const { authorize, cannot } = policy;
 const router = new Router();
 
 router.post("documents.list", auth(), pagination(), async (ctx) => {
-  const {
+  let {
     sort = "updatedAt",
     template,
     backlinkDocumentId,
@@ -70,6 +71,7 @@ router.post("documents.list", auth(), pagination(), async (ctx) => {
     where = { ...where, createdById };
   }
 
+  let documentIds = [];
   // if a specific collection is passed then we need to check auth to view it
   if (collectionId) {
     ctx.assertUuid(collectionId, "collection must be a UUID");
@@ -80,6 +82,15 @@ router.post("documents.list", auth(), pagination(), async (ctx) => {
     }).findByPk(collectionId);
     authorize(user, "read", collection);
 
+    // index sort is special because it uses the order of the documents in the
+    // collection.documentStructure rather than a database column
+    if (sort === "index") {
+      documentIds = collection.documentStructure
+        .map((node) => node.id)
+        .slice(ctx.state.pagination.offset, ctx.state.pagination.limit);
+      where = { ...where, id: documentIds };
+    }
+
     // otherwise, filter by all collections the user has access to
   } else {
     const collectionIds = await user.collectionIds();
@@ -89,6 +100,12 @@ router.post("documents.list", auth(), pagination(), async (ctx) => {
   if (parentDocumentId) {
     ctx.assertUuid(parentDocumentId, "parentDocumentId must be a UUID");
     where = { ...where, parentDocumentId };
+  }
+
+  // Explicitly passing 'null' as the parentDocumentId allows listing documents
+  // that have no parent document (aka they are at the root of the collection)
+  if (parentDocumentId === null) {
+    where = { ...where, parentDocumentId: { [Op.eq]: null } };
   }
 
   if (backlinkDocumentId) {
@@ -107,6 +124,10 @@ router.post("documents.list", auth(), pagination(), async (ctx) => {
     };
   }
 
+  if (sort === "index") {
+    sort = "updatedAt";
+  }
+
   // add the users starred state to the response by default
   const starredScope = { method: ["withStarred", user.id] };
   const collectionScope = { method: ["withCollection", user.id] };
@@ -122,6 +143,14 @@ router.post("documents.list", auth(), pagination(), async (ctx) => {
     offset: ctx.state.pagination.offset,
     limit: ctx.state.pagination.limit,
   });
+
+  // index sort is special because it uses the order of the documents in the
+  // collection.documentStructure rather than a database column
+  if (documentIds.length) {
+    documents.sort(
+      (a, b) => documentIds.indexOf(a.id) - documentIds.indexOf(b.id)
+    );
+  }
 
   const data = await Promise.all(
     documents.map((document) => presentDocument(document))
@@ -460,6 +489,11 @@ async function loadDocument({ id, shareId, user }) {
       authorize(user, "read", document);
     }
 
+    const collection = await Collection.findByPk(document.collectionId);
+    if (!collection.sharing) {
+      throw new AuthorizationError();
+    }
+
     const team = await Team.findByPk(document.teamId);
     if (!team.sharing) {
       throw new AuthorizationError();
@@ -522,17 +556,26 @@ router.post("documents.restore", auth(), async (ctx) => {
     throw new NotFoundError();
   }
 
+  // Passing collectionId allows restoring to a different collection than the
+  // document was originally within
   if (collectionId) {
     ctx.assertUuid(collectionId, "collectionId must be a uuid");
-    authorize(user, "restore", document);
-
-    const collection = await Collection.scope({
-      method: ["withMembership", user.id],
-    }).findByPk(collectionId);
-    authorize(user, "update", collection);
-
     document.collectionId = collectionId;
   }
+
+  const collection = await Collection.scope({
+    method: ["withMembership", user.id],
+  }).findByPk(document.collectionId);
+
+  // if the collectionId was provided in the request and isn't valid then it will
+  // be caught as a 403 on the authorize call below. Otherwise we're checking here
+  // that the original collection still exists and advising to pass collectionId
+  // if not.
+  if (!collectionId) {
+    ctx.assertPresent(collection, "collectionId is required");
+  }
+
+  authorize(user, "update", collection);
 
   if (document.deletedAt) {
     authorize(user, "restore", document);
@@ -823,30 +866,6 @@ router.post("documents.unstar", auth(), async (ctx) => {
   };
 });
 
-router.post("documents.create", auth(), createDocumentFromContext);
-router.post("documents.import", auth(), async (ctx) => {
-  if (!ctx.is("multipart/form-data")) {
-    throw new InvalidRequestError("Request type must be multipart/form-data");
-  }
-
-  const file: any = Object.values(ctx.request.files)[0];
-  ctx.assertPresent(file, "file is required");
-
-  const user = ctx.state.user;
-  authorize(user, "create", Document);
-
-  const { text, title } = await documentImporter({
-    user,
-    file,
-    ip: ctx.request.ip,
-  });
-
-  ctx.body.text = text;
-  ctx.body.title = title;
-
-  await createDocumentFromContext(ctx);
-});
-
 router.post("documents.templatize", auth(), async (ctx) => {
   const { id } = ctx.body;
   ctx.assertPresent(id, "id is required");
@@ -933,7 +952,7 @@ router.post("documents.update", auth(), async (ctx) => {
     transaction = await sequelize.transaction();
 
     if (publish) {
-      await document.publish({ transaction });
+      await document.publish(user.id, { transaction });
     } else {
       await document.save({ autosave, transaction });
     }
@@ -1110,7 +1129,7 @@ router.post("documents.unpublish", auth(), async (ctx) => {
 
   authorize(user, "unpublish", document);
 
-  await document.unpublish();
+  await document.unpublish(user.id);
 
   await Event.create({
     name: "documents.unpublish",
@@ -1128,8 +1147,73 @@ router.post("documents.unpublish", auth(), async (ctx) => {
   };
 });
 
-// TODO: update to actual `ctx` type
-export async function createDocumentFromContext(ctx: any) {
+router.post("documents.import", auth(), async (ctx) => {
+  const { publish, collectionId, parentDocumentId, index } = ctx.body;
+
+  if (!ctx.is("multipart/form-data")) {
+    throw new InvalidRequestError("Request type must be multipart/form-data");
+  }
+
+  const file: any = Object.values(ctx.request.files)[0];
+  ctx.assertPresent(file, "file is required");
+
+  ctx.assertUuid(collectionId, "collectionId must be an uuid");
+  if (parentDocumentId) {
+    ctx.assertUuid(parentDocumentId, "parentDocumentId must be an uuid");
+  }
+
+  if (index) ctx.assertPositiveInteger(index, "index must be an integer (>=0)");
+
+  const user = ctx.state.user;
+  authorize(user, "create", Document);
+
+  const collection = await Collection.scope({
+    method: ["withMembership", user.id],
+  }).findOne({
+    where: {
+      id: collectionId,
+      teamId: user.teamId,
+    },
+  });
+  authorize(user, "publish", collection);
+
+  let parentDocument;
+  if (parentDocumentId) {
+    parentDocument = await Document.findOne({
+      where: {
+        id: parentDocumentId,
+        collectionId: collection.id,
+      },
+    });
+    authorize(user, "read", parentDocument, { collection });
+  }
+
+  const { text, title } = await documentImporter({
+    user,
+    file,
+    ip: ctx.request.ip,
+  });
+
+  const document = await documentCreator({
+    source: "import",
+    title,
+    text,
+    publish,
+    collectionId,
+    parentDocumentId,
+    index,
+    user,
+    ip: ctx.request.ip,
+  });
+  document.collection = collection;
+
+  return (ctx.body = {
+    data: await presentDocument(document),
+    policies: presentPolicies(user, [document]),
+  });
+});
+
+router.post("documents.create", auth(), async (ctx) => {
   const {
     title = "",
     text = "",
@@ -1179,49 +1263,18 @@ export async function createDocumentFromContext(ctx: any) {
     authorize(user, "read", templateDocument);
   }
 
-  let document = await Document.create({
+  const document = await documentCreator({
+    title,
+    text,
+    publish,
+    collectionId,
     parentDocumentId,
-    editorVersion,
-    collectionId: collection.id,
-    teamId: user.teamId,
-    userId: user.id,
-    lastModifiedById: user.id,
-    createdById: user.id,
+    templateDocument,
     template,
-    templateId: templateDocument ? templateDocument.id : undefined,
-    title: templateDocument ? templateDocument.title : title,
-    text: templateDocument ? templateDocument.text : text,
-  });
-
-  await Event.create({
-    name: "documents.create",
-    documentId: document.id,
-    collectionId: document.collectionId,
-    teamId: document.teamId,
-    actorId: user.id,
-    data: { title: document.title, templateId },
+    index,
+    user,
+    editorVersion,
     ip: ctx.request.ip,
-  });
-
-  if (publish) {
-    await document.publish();
-
-    await Event.create({
-      name: "documents.publish",
-      documentId: document.id,
-      collectionId: document.collectionId,
-      teamId: document.teamId,
-      actorId: user.id,
-      data: { title: document.title },
-      ip: ctx.request.ip,
-    });
-  }
-
-  // reload to get all of the data needed to present (user, collection etc)
-  // we need to specify publishedAt to bypass default scope that only returns
-  // published documents
-  document = await Document.findOne({
-    where: { id: document.id, publishedAt: document.publishedAt },
   });
   document.collection = collection;
 
@@ -1229,6 +1282,6 @@ export async function createDocumentFromContext(ctx: any) {
     data: await presentDocument(document),
     policies: presentPolicies(user, [document]),
   });
-}
+});
 
 export default router;

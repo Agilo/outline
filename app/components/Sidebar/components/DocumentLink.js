@@ -21,7 +21,6 @@ type Props = {
   canUpdate: boolean,
   collection?: Collection,
   activeDocument: ?Document,
-  activeDocumentRef?: (?HTMLElement) => void,
   prefetchDocument: (documentId: string) => Promise<void>,
   depth: number,
   index: number,
@@ -33,7 +32,6 @@ function DocumentLink({
   canUpdate,
   collection,
   activeDocument,
-  activeDocumentRef,
   prefetchDocument,
   depth,
   index,
@@ -125,7 +123,8 @@ function DocumentLink({
 
   // Draggable
   const [{ isDragging }, drag] = useDrag({
-    item: { type: "document", ...node, depth, active: isActiveDocument },
+    type: "document",
+    item: () => ({ ...node, depth, active: isActiveDocument }),
     collect: (monitor) => ({
       isDragging: !!monitor.isDragging(),
     }),
@@ -134,16 +133,48 @@ function DocumentLink({
     },
   });
 
+  const hoverExpanding = React.useRef(null);
+
+  // We set a timeout when the user first starts hovering over the document link,
+  // to trigger expansion of children. Clear this timeout when they stop hovering.
+  const resetHoverExpanding = React.useCallback(() => {
+    if (hoverExpanding.current) {
+      clearTimeout(hoverExpanding.current);
+      hoverExpanding.current = null;
+    }
+  }, []);
+
   // Drop to re-parent
   const [{ isOverReparent, canDropToReparent }, dropToReparent] = useDrop({
     accept: "document",
-    drop: async (item, monitor) => {
+    drop: (item, monitor) => {
       if (monitor.didDrop()) return;
       if (!collection) return;
       documents.move(item.id, collection.id, node.id);
     },
+
     canDrop: (item, monitor) =>
       pathToNode && !pathToNode.includes(monitor.getItem().id),
+
+    hover: (item, monitor) => {
+      // Enables expansion of document children when hovering over the document
+      // for more than half a second.
+      if (
+        hasChildDocuments &&
+        monitor.canDrop() &&
+        monitor.isOver({ shallow: true })
+      ) {
+        if (!hoverExpanding.current) {
+          hoverExpanding.current = setTimeout(() => {
+            hoverExpanding.current = null;
+            if (monitor.isOver({ shallow: true })) {
+              setExpanded(true);
+            }
+          }, 500);
+        }
+      }
+    },
+
     collect: (monitor) => ({
       isOverReparent: !!monitor.isOver({ shallow: true }),
       canDropToReparent: monitor.canDrop(),
@@ -153,7 +184,7 @@ function DocumentLink({
   // Drop to reorder
   const [{ isOverReorder }, dropToReorder] = useDrop({
     accept: "document",
-    drop: async (item, monitor) => {
+    drop: (item, monitor) => {
       if (!collection) return;
       if (item.id === node.id) return;
 
@@ -171,7 +202,7 @@ function DocumentLink({
 
   return (
     <>
-      <div style={{ position: "relative" }}>
+      <div style={{ position: "relative" }} onDragLeave={resetHoverExpanding}>
         <Draggable
           key={node.id}
           ref={drag}
@@ -181,7 +212,6 @@ function DocumentLink({
           <div ref={dropToReparent}>
             <DropToImport documentId={node.id} activeClassName="activeDropZone">
               <SidebarLink
-                innerRef={isActiveDocument ? activeDocumentRef : undefined}
                 onMouseEnter={handleMouseEnter}
                 to={{
                   pathname: node.url,
@@ -205,12 +235,11 @@ function DocumentLink({
                 isActiveDrop={isOverReparent && canDropToReparent}
                 depth={depth}
                 exact={false}
-                menuOpen={menuOpen}
+                showActions={menuOpen}
                 menu={
                   document && !isMoving ? (
                     <Fade>
                       <DocumentMenu
-                        position="right"
                         document={document}
                         onOpen={() => setMenuOpen(true)}
                         onClose={() => setMenuOpen(false)}

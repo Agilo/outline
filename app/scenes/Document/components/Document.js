@@ -61,7 +61,7 @@ type Props = {
   document: Document,
   revision: Revision,
   readOnly: boolean,
-  onCreateLink: (title: string) => string,
+  onCreateLink: (title: string) => Promise<string>,
   onSearchLink: (term: string) => any,
   theme: Theme,
   auth: AuthStore,
@@ -81,12 +81,12 @@ class DocumentScene extends React.Component<Props> {
   @observable title: string = this.props.document.title;
   getEditorText: () => string = () => this.props.document.text;
 
-  componentDidMount() {
-    this.updateIsDirty();
-  }
-
   componentDidUpdate(prevProps) {
     const { auth, document } = this.props;
+
+    if (prevProps.readOnly && !this.props.readOnly) {
+      this.updateIsDirty();
+    }
 
     if (this.props.readOnly) {
       this.lastRevision = document.revision;
@@ -100,6 +100,7 @@ class DocumentScene extends React.Component<Props> {
           `Document updated by ${document.updatedBy.name}`,
           {
             timeout: 30 * 1000,
+            type: "warning",
             action: {
               text: "Reload",
               onClick: () => {
@@ -239,7 +240,7 @@ class DocumentScene extends React.Component<Props> {
         this.props.ui.setActiveDocument(savedDocument);
       }
     } catch (err) {
-      this.props.ui.showToast(err.message);
+      this.props.ui.showToast(err.message, { type: "error" });
     } finally {
       this.isSaving = false;
       this.isPublishing = false;
@@ -439,7 +440,7 @@ class DocumentScene extends React.Component<Props> {
                     ui={this.props.ui}
                   />
                 </Flex>
-                {readOnly && !isShare && !revision && (
+                {!isShare && !revision && (
                   <>
                     <MarkAsViewed document={document} />
                     <ReferencesWrapper isOnlyTitle={document.isOnlyTitle}>
@@ -451,7 +452,9 @@ class DocumentScene extends React.Component<Props> {
             </MaxWidth>
           </Container>
         </Background>
-        {isShare && !isCustomDomain() && <Branding />}
+        {isShare && !isCustomDomain() && (
+          <Branding href="//www.getoutline.com" />
+        )}
         {!isShare && <KeyboardShortcutsButton />}
       </ErrorBoundary>
     );
@@ -479,7 +482,7 @@ const ReferencesWrapper = styled("div")`
 const MaxWidth = styled(Flex)`
   ${(props) =>
     props.archived && `* { color: ${props.theme.textSecondary} !important; } `};
-  padding: 0 16px;
+  padding: 0 12px;
   max-width: 100vw;
   width: 100%;
 

@@ -1,10 +1,11 @@
 // @flow
 import { observer } from "mobx-react";
-import { StarredIcon, PlusIcon } from "outline-icons";
+import { PlusIcon } from "outline-icons";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useHistory } from "react-router-dom";
-import styled, { withTheme } from "styled-components";
+import { Link } from "react-router-dom";
+import styled, { css } from "styled-components";
+import breakpoint from "styled-components-breakpoint";
 import Document from "models/Document";
 import Badge from "components/Badge";
 import Button from "components/Button";
@@ -12,21 +13,23 @@ import DocumentMeta from "components/DocumentMeta";
 import EventBoundary from "components/EventBoundary";
 import Flex from "components/Flex";
 import Highlight from "components/Highlight";
+import StarButton, { AnimatedStar } from "components/Star";
 import Tooltip from "components/Tooltip";
 import useCurrentUser from "hooks/useCurrentUser";
 import DocumentMenu from "menus/DocumentMenu";
 import { newDocumentUrl } from "utils/routeHelpers";
 
-type Props = {
+type Props = {|
   document: Document,
   highlight?: ?string,
   context?: ?string,
+  showNestedDocuments?: boolean,
   showCollection?: boolean,
   showPublished?: boolean,
   showPin?: boolean,
   showDraft?: boolean,
   showTemplate?: boolean,
-};
+|};
 
 const SEARCH_RESULT_REGEX = /<b\b[^>]*>(.*?)<\/b>/gi;
 
@@ -39,9 +42,10 @@ function replaceResultMarks(tag: string) {
 function DocumentListItem(props: Props) {
   const { t } = useTranslation();
   const currentUser = useCurrentUser();
-  const history = useHistory();
+  const [menuOpen, setMenuOpen] = React.useState(false);
   const {
     document,
+    showNestedDocuments,
     showCollection,
     showPublished,
     showPin,
@@ -51,153 +55,139 @@ function DocumentListItem(props: Props) {
     context,
   } = props;
 
-  const handleStar = React.useCallback(
-    (ev: SyntheticEvent<>) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      document.star();
-    },
-    [document]
-  );
-
-  const handleUnstar = React.useCallback(
-    (ev: SyntheticEvent<>) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      document.unstar();
-    },
-    [document]
-  );
-
-  const handleNewFromTemplate = React.useCallback(
-    (ev: SyntheticEvent<>) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-
-      history.push(
-        newDocumentUrl(document.collectionId, {
-          templateId: document.id,
-        })
-      );
-    },
-    [history, document]
-  );
-
   const queryIsInTitle =
     !!highlight &&
     !!document.title.toLowerCase().includes(highlight.toLowerCase());
+  const canStar =
+    !document.isDraft && !document.isArchived && !document.isTemplate;
 
   return (
     <DocumentLink
+      $isStarred={document.isStarred}
+      $menuOpen={menuOpen}
       to={{
         pathname: document.url,
         state: { title: document.titleWithDefault },
       }}
     >
-      <Heading>
-        <Title text={document.titleWithDefault} highlight={highlight} />
-        {document.isNew && document.createdBy.id !== currentUser.id && (
-          <Badge yellow>{t("New")}</Badge>
+      <Content>
+        <Heading>
+          <Title text={document.titleWithDefault} highlight={highlight} />
+          {document.isNew && document.createdBy.id !== currentUser.id && (
+            <Badge yellow>{t("New")}</Badge>
+          )}
+          {canStar && (
+            <StarPositioner>
+              <StarButton document={document} />
+            </StarPositioner>
+          )}
+          {document.isDraft && showDraft && (
+            <Tooltip
+              tooltip={t("Only visible to you")}
+              delay={500}
+              placement="top"
+            >
+              <Badge>{t("Draft")}</Badge>
+            </Tooltip>
+          )}
+          {document.isTemplate && showTemplate && (
+            <Badge primary>{t("Template")}</Badge>
+          )}
+        </Heading>
+
+        {!queryIsInTitle && (
+          <ResultContext
+            text={context}
+            highlight={highlight ? SEARCH_RESULT_REGEX : undefined}
+            processResult={replaceResultMarks}
+          />
         )}
-        {!document.isDraft && !document.isArchived && !document.isTemplate && (
-          <Actions>
-            {document.isStarred ? (
-              <StyledStar onClick={handleUnstar} solid />
-            ) : (
-              <StyledStar onClick={handleStar} />
-            )}
-          </Actions>
-        )}
-        {document.isDraft && showDraft && (
-          <Tooltip
-            tooltip={t("Only visible to you")}
-            delay={500}
-            placement="top"
-          >
-            <Badge>{t("Draft")}</Badge>
-          </Tooltip>
-        )}
-        {document.isTemplate && showTemplate && (
-          <Badge primary>{t("Template")}</Badge>
-        )}
-        <SecondaryActions>
-          {document.isTemplate && !document.isArchived && !document.isDeleted && (
-            <Button onClick={handleNewFromTemplate} icon={<PlusIcon />} neutral>
+        <DocumentMeta
+          document={document}
+          showCollection={showCollection}
+          showPublished={showPublished}
+          showNestedDocuments={showNestedDocuments}
+          showLastViewed
+        />
+      </Content>
+      <Actions>
+        {document.isTemplate && !document.isArchived && !document.isDeleted && (
+          <>
+            <Button
+              as={Link}
+              to={newDocumentUrl(document.collectionId, {
+                templateId: document.id,
+              })}
+              icon={<PlusIcon />}
+              neutral
+            >
               {t("New doc")}
             </Button>
-          )}
-          &nbsp;
-          <EventBoundary>
-            <DocumentMenu document={document} showPin={showPin} />
-          </EventBoundary>
-        </SecondaryActions>
-      </Heading>
-
-      {!queryIsInTitle && (
-        <ResultContext
-          text={context}
-          highlight={highlight ? SEARCH_RESULT_REGEX : undefined}
-          processResult={replaceResultMarks}
+            &nbsp;
+          </>
+        )}
+        <DocumentMenu
+          document={document}
+          showPin={showPin}
+          onOpen={() => setMenuOpen(true)}
+          onClose={() => setMenuOpen(false)}
+          modal={false}
         />
-      )}
-      <DocumentMeta
-        document={document}
-        showCollection={showCollection}
-        showPublished={showPublished}
-        showLastViewed
-      />
+      </Actions>
     </DocumentLink>
   );
 }
 
-const StyledStar = withTheme(styled(({ solid, theme, ...props }) => (
-  <StarredIcon color={theme.text} {...props} />
-))`
-  flex-shrink: 0;
-  opacity: ${(props) => (props.solid ? "1 !important" : 0)};
-  transition: all 100ms ease-in-out;
+const Content = styled.div`
+  flex-grow: 1;
+  flex-shrink: 1;
+  min-width: 0;
+`;
 
-  &:hover {
-    transform: scale(1.1);
-  }
-  &:active {
-    transform: scale(0.95);
-  }
-`);
-
-const SecondaryActions = styled(Flex)`
+const Actions = styled(EventBoundary)`
+  display: none;
   align-items: center;
-  position: absolute;
-  right: 16px;
-  top: 50%;
-  transform: translateY(-50%);
+  margin: 8px;
+  flex-shrink: 0;
+  flex-grow: 0;
+
+  ${breakpoint("tablet")`
+    display: flex;
+  `};
 `;
 
 const DocumentLink = styled(Link)`
-  display: block;
+  display: flex;
+  align-items: center;
   margin: 10px -8px;
   padding: 6px 8px;
   border-radius: 8px;
   max-height: 50vh;
-  min-width: 100%;
-  max-width: calc(100vw - 40px);
-  overflow: hidden;
-  position: relative;
+  width: calc(100vw - 8px);
 
-  ${SecondaryActions} {
+  ${breakpoint("tablet")`
+    width: auto;
+  `};
+
+  ${Actions} {
     opacity: 0;
+  }
+
+  ${AnimatedStar} {
+    opacity: ${(props) => (props.$isStarred ? "1 !important" : 0)};
   }
 
   &:hover,
   &:active,
-  &:focus {
+  &:focus,
+  &:focus-within {
     background: ${(props) => props.theme.listItemHoverBackground};
 
-    ${SecondaryActions} {
+    ${Actions} {
       opacity: 1;
     }
 
-    ${StyledStar} {
+    ${AnimatedStar} {
       opacity: 0.5;
 
       &:hover {
@@ -205,6 +195,20 @@ const DocumentLink = styled(Link)`
       }
     }
   }
+
+  ${(props) =>
+    props.$menuOpen &&
+    css`
+      background: ${(props) => props.theme.listItemHoverBackground};
+
+      ${Actions} {
+        opacity: 1;
+      }
+
+      ${AnimatedStar} {
+        opacity: 0.5;
+      }
+    `}
 `;
 
 const Heading = styled.h3`
@@ -220,7 +224,7 @@ const Heading = styled.h3`
     Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
 `;
 
-const Actions = styled(Flex)`
+const StarPositioner = styled(Flex)`
   margin-left: 4px;
   align-items: center;
 `;

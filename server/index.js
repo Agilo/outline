@@ -1,6 +1,16 @@
 // @flow
 require("dotenv").config({ silent: true });
 
+// If the DataDog agent is installed and the DD_API_KEY environment variable is
+// in the environment then we can safely attempt to start the DD tracer
+if (process.env.DD_API_KEY) {
+  require("dd-trace").init({
+    // SOURCE_COMMIT is used by Docker Hub
+    // SOURCE_VERSION is used by Heroku
+    version: process.env.SOURCE_COMMIT || process.env.SOURCE_VERSION,
+  });
+}
+
 if (
   !process.env.SECRET_KEY ||
   process.env.SECRET_KEY === "generate_a_new_key"
@@ -8,7 +18,6 @@ if (
   console.error(
     "The SECRET_KEY env variable must be set with the output of `openssl rand -hex 32`"
   );
-  // $FlowFixMe
   process.exit(1);
 }
 
@@ -21,7 +30,6 @@ if (process.env.AWS_ACCESS_KEY_ID) {
   ].forEach((key) => {
     if (!process.env[key]) {
       console.error(`The ${key} env variable must be set when using AWS`);
-      // $FlowFixMe
       process.exit(1);
     }
   });
@@ -32,7 +40,6 @@ if (process.env.SLACK_KEY) {
     console.error(
       `The SLACK_SECRET env variable must be set when using Slack Sign In`
     );
-    // $FlowFixMe
     process.exit(1);
   }
 }
@@ -41,7 +48,6 @@ if (!process.env.URL) {
   console.error(
     "The URL env variable must be set to the externally accessible URL, e.g (https://www.getoutline.com)"
   );
-  // $FlowFixMe
   process.exit(1);
 }
 
@@ -49,7 +55,6 @@ if (!process.env.DATABASE_URL) {
   console.error(
     "The DATABASE_URL env variable must be set to the location of your postgres server, including authentication and port"
   );
-  // $FlowFixMe
   process.exit(1);
 }
 
@@ -57,7 +62,6 @@ if (!process.env.REDIS_URL) {
   console.error(
     "The REDIS_URL env variable must be set to the location of your redis server, including authentication and port"
   );
-  // $FlowFixMe
   process.exit(1);
 }
 
