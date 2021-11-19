@@ -29,10 +29,18 @@ const RealInput = styled.input`
   background: none;
   color: ${(props) => props.theme.text};
   height: 30px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 
   &:disabled,
   &::placeholder {
     color: ${(props) => props.theme.placeholder};
+  }
+
+  &::-webkit-search-cancel-button {
+    -webkit-appearance: none;
   }
 
   ${breakpoint("mobile", "tablet")`
@@ -102,8 +110,9 @@ export type Props = {|
   onChange?: (
     ev: SyntheticInputEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => mixed,
-  onFocus?: (ev: SyntheticEvent<>) => void,
-  onBlur?: (ev: SyntheticEvent<>) => void,
+  onKeyDown?: (ev: SyntheticKeyboardEvent<HTMLInputElement>) => mixed,
+  onFocus?: (ev: SyntheticEvent<>) => mixed,
+  onBlur?: (ev: SyntheticEvent<>) => mixed,
 |};
 
 @observer

@@ -1,128 +1,97 @@
 // @flow
 import { observer } from "mobx-react";
-import { SunIcon, MoonIcon } from "outline-icons";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
-import { useMenuState, MenuButton } from "reakit/Menu";
+import { MenuButton, useMenuState } from "reakit/Menu";
 import styled from "styled-components";
-import {
-  developers,
-  changelog,
-  githubIssuesUrl,
-  mailToUrl,
-  settings,
-} from "shared/utils/routeHelpers";
-import KeyboardShortcuts from "scenes/KeyboardShortcuts";
 import ContextMenu from "components/ContextMenu";
-import MenuItem, { MenuAnchor } from "components/ContextMenu/MenuItem";
-import Separator from "components/ContextMenu/Separator";
-import Flex from "components/Flex";
-import Modal from "components/Modal";
+import Template from "components/ContextMenu/Template";
+import { development } from "actions/definitions/debug";
+import {
+  navigateToSettings,
+  openKeyboardShortcuts,
+  openChangelog,
+  openAPIDocumentation,
+  openBugReportUrl,
+  openFeedbackUrl,
+  logout,
+} from "actions/definitions/navigation";
+import { changeTheme } from "actions/definitions/settings";
+import useCurrentTeam from "hooks/useCurrentTeam";
+import usePrevious from "hooks/usePrevious";
+import useSessions from "hooks/useSessions";
 import useStores from "hooks/useStores";
+import separator from "menus/separator";
 
 type Props = {|
   children: (props: any) => React.Node,
 |};
 
-const AppearanceMenu = React.forwardRef((props, ref) => {
-  const { ui } = useStores();
-  const { t } = useTranslation();
-  const menu = useMenuState();
-
-  return (
-    <>
-      <MenuButton ref={ref} {...menu} {...props}>
-        {(props) => (
-          <MenuAnchor {...props}>
-            <ChangeTheme justify="space-between">
-              {t("Appearance")}
-              {ui.resolvedTheme === "light" ? <SunIcon /> : <MoonIcon />}
-            </ChangeTheme>
-          </MenuAnchor>
-        )}
-      </MenuButton>
-      <ContextMenu {...menu} aria-label={t("Appearance")}>
-        <MenuItem
-          {...menu}
-          onClick={() => ui.setTheme("system")}
-          selected={ui.theme === "system"}
-        >
-          {t("System")}
-        </MenuItem>
-        <MenuItem
-          {...menu}
-          onClick={() => ui.setTheme("light")}
-          selected={ui.theme === "light"}
-        >
-          {t("Light")}
-        </MenuItem>
-        <MenuItem
-          {...menu}
-          onClick={() => ui.setTheme("dark")}
-          selected={ui.theme === "dark"}
-        >
-          {t("Dark")}
-        </MenuItem>
-      </ContextMenu>
-    </>
-  );
-});
-
 function AccountMenu(props: Props) {
+  const [sessions] = useSessions();
   const menu = useMenuState({
+    unstable_offset: [8, 0],
     placement: "bottom-start",
     modal: true,
   });
-  const { auth } = useStores();
+  const { ui } = useStores();
+  const { theme } = ui;
+  const team = useCurrentTeam();
+  const previousTheme = usePrevious(theme);
   const { t } = useTranslation();
-  const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = React.useState(
-    false
-  );
+
+  React.useEffect(() => {
+    if (theme !== previousTheme) {
+      menu.hide();
+    }
+  }, [menu, theme, previousTheme]);
+
+  const actions = React.useMemo(() => {
+    const otherSessions = sessions.filter(
+      (session) => session.teamId !== team.id && session.url !== team.url
+    );
+
+    return [
+      navigateToSettings,
+      openKeyboardShortcuts,
+      openAPIDocumentation,
+      separator(),
+      openChangelog,
+      openFeedbackUrl,
+      openBugReportUrl,
+      development,
+      changeTheme,
+      separator(),
+      ...(otherSessions.length
+        ? [
+            {
+              name: t("Switch team"),
+              children: otherSessions.map((session) => ({
+                name: session.name,
+                icon: <Logo alt={session.name} src={session.logoUrl} />,
+                perform: () => (window.location.href = session.url),
+              })),
+            },
+          ]
+        : []),
+      logout,
+    ];
+  }, [team.id, team.url, sessions, t]);
 
   return (
     <>
-      <Modal
-        isOpen={keyboardShortcutsOpen}
-        onRequestClose={() => setKeyboardShortcutsOpen(false)}
-        title={t("Keyboard shortcuts")}
-      >
-        <KeyboardShortcuts />
-      </Modal>
       <MenuButton {...menu}>{props.children}</MenuButton>
       <ContextMenu {...menu} aria-label={t("Account")}>
-        <MenuItem {...menu} as={Link} to={settings()}>
-          {t("Settings")}
-        </MenuItem>
-        <MenuItem {...menu} onClick={() => setKeyboardShortcutsOpen(true)}>
-          {t("Keyboard shortcuts")}
-        </MenuItem>
-        <MenuItem {...menu} href={developers()} target="_blank">
-          {t("API documentation")}
-        </MenuItem>
-        <Separator {...menu} />
-        <MenuItem {...menu} href={changelog()} target="_blank">
-          {t("Changelog")}
-        </MenuItem>
-        <MenuItem {...menu} href={mailToUrl()} target="_blank">
-          {t("Send us feedback")}
-        </MenuItem>
-        <MenuItem {...menu} href={githubIssuesUrl()} target="_blank">
-          {t("Report a bug")}
-        </MenuItem>
-        <Separator {...menu} />
-        <MenuItem {...menu} as={AppearanceMenu} />
-        <Separator {...menu} />
-        <MenuItem {...menu} onClick={auth.logout}>
-          {t("Log out")}
-        </MenuItem>
+        <Template {...menu} actions={actions} />
       </ContextMenu>
     </>
   );
 }
 
-const ChangeTheme = styled(Flex)`
-  width: 100%;
+const Logo = styled("img")`
+  border-radius: 2px;
+  width: 24px;
+  height: 24px;
 `;
 
 export default observer(AccountMenu);

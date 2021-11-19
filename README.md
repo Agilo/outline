@@ -1,5 +1,3 @@
-
-
 <p align="center">
   <img src="https://user-images.githubusercontent.com/31465/34380645-bd67f474-eb0b-11e7-8d03-0151c1730654.png" height="29" />
 </p>
@@ -28,8 +26,7 @@ Outline requires the following dependencies:
 - [Postgres](https://www.postgresql.org/download/) >=9.5
 - [Redis](https://redis.io/) >= 4
 - AWS S3 bucket or compatible API for file storage
-- Slack or Google developer application for authentication
-
+- Slack, Google, Azure, or OIDC application for authentication
 
 ## Self-Hosted Production
 
@@ -41,16 +38,20 @@ For a manual self-hosted production installation these are the recommended steps
 1. Download the latest official Docker image, new releases are available around the middle of every month:
 
    `docker pull outlinewiki/outline`
+
 1. Using the [.env.sample](.env.sample) as a reference, set the required variables in your production environment. You can export the environment variables directly, or create a `.env` file and pass it to the docker image like so:
 
    `docker run --env-file=.env outlinewiki/outline`
-1. Setup the database with `yarn sequelize:migrate`. Production assumes an SSL connection to the database by default, if
-Postgres is on the same machine and is not SSL you can migrate with `yarn sequelize:migrate --env=production-ssl-disabled`, for example:
 
-   `docker run --rm outlinewiki/outline yarn sequelize:migrate`
+1. Setup the database with `yarn db:migrate`. Production assumes an SSL connection to the database by default, if
+   Postgres is on the same machine and is not SSL you can migrate with `yarn db:migrate --env=production-ssl-disabled`, for example:
+
+   `docker run --rm outlinewiki/outline yarn db:migrate`
+
 1. Start the container:
 
    `docker run outlinewiki/outline`
+
 1. Visit http://you_server_ip:3000 and you should be able to see Outline page
 
    > Port number can be changed using the `PORT` environment variable
@@ -68,7 +69,7 @@ Alternatively a community member maintains a script to deploy Outline on Google 
 If you're running Outline with Docker you'll need to run migrations within the docker container after updating the image. The command will be something like:
 
 ```shell
-docker run --rm outlinewiki/outline:latest yarn sequelize:migrate
+docker run --rm outlinewiki/outline:latest yarn db:migrate
 ```
 
 #### Git
@@ -79,27 +80,33 @@ If you're running Outline by cloning this repository, run the following command 
 yarn run upgrade
 ```
 
-
 ## Local Development
 
 For contributing features and fixes you can quickly get an environment running using Docker by following these steps:
 
 1. Install these dependencies if you don't already have them
-  1. [Docker for Desktop](https://www.docker.com)
-  1. [Node.js](https://nodejs.org/) (v12 LTS preferred)
-  1. [Yarn](https://yarnpkg.com)
+   1. [Docker for Desktop](https://www.docker.com)
+   1. [Node.js](https://nodejs.org/) (v12 LTS preferred)
+   1. [Yarn](https://yarnpkg.com)
 1. Clone this repo
 1. Register a Slack app at https://api.slack.com/apps
 1. Copy the file `.env.sample` to `.env`
 1. Fill out the following fields:
-    1. `SECRET_KEY` (follow instructions in the comments at the top of `.env`)
-    1. `SLACK_KEY` (this is called "Client ID" in Slack admin)
-    1. `SLACK_SECRET` (this is called "Client Secret" in Slack admin)
-1. Configure your Slack app's Oauth & Permissions settings 
-    1. Add `http://localhost:3000/auth/slack.callback` as an Oauth redirect URL
-    1. Ensure that the bot token scope contains at least `users:read`
+   1. `SECRET_KEY` (follow instructions in the comments at the top of `.env`)
+   1. `SLACK_KEY` (this is called "Client ID" in Slack admin)
+   1. `SLACK_SECRET` (this is called "Client Secret" in Slack admin)
+1. Configure your Slack app's Oauth & Permissions settings
+   1. Slack recently prevented the use of `http` protocol for localhost. For local development, you can use a tool like [ngrok](https://ngrok.com) or a package like `mkcert`. ([How to use HTTPS for local development](https://web.dev/how-to-use-local-https/))
+   1. Add `https://my_ngrok_address/auth/slack.callback` as an Oauth redirect URL and update the `URL` env var to match
+   1. Ensure that the bot token scope contains at least `users:read`
 1. Run `make up`. This will download dependencies, build and launch a development version of Outline
 
+### Testing
+
+The `Makefile` has other useful scripts, including some test automation.
+
+1. To run the entire test suite, run `make test`
+1. During development, it's often useful, to re-run some tests every time a file is changed. Use `make watch` to start the test daemon and follow the instructions in the console
 
 # Contributing
 
@@ -109,26 +116,22 @@ Before submitting a pull request please let the core team know by creating or co
 
 If you’re looking for ways to get started, here's a list of ways to help us improve Outline:
 
-* [Translation](TRANSLATION.md) into other languages
-* Issues with [`good first issue`](https://github.com/outline/outline/labels/good%20first%20issue) label
-* Performance improvements, both on server and frontend
-* Developer happiness and documentation
-* Bugs and other issues listed on GitHub
-
+- [Translation](docs/TRANSLATION.md) into other languages
+- Issues with [`good first issue`](https://github.com/outline/outline/labels/good%20first%20issue) label
+- Performance improvements, both on server and frontend
+- Developer happiness and documentation
+- Bugs and other issues listed on GitHub
 
 ## Architecture
 
 If you're interested in contributing or learning more about the Outline codebase
-please refer to the [architecture document](ARCHITECTURE.md) first for a high level overview of how the application is put together.
-
+please refer to the [architecture document](docs/ARCHITECTURE.md) first for a high level overview of how the application is put together.
 
 ## Debugging
 
-Outline uses [debug](https://www.npmjs.com/package/debug). To enable debugging output, the following categories are available:
+In development Outline outputs simple logging to the console, prefixed by categories. In production it outputs JSON logs, these can be easily parsed by your preferred log ingestion pipeline.
 
-```
-DEBUG=sql,cache,presenters,events,importer,exporter,emails,mailer
-```
+HTTP logging is disabled by default, but can be enabled by setting the `DEBUG=http` environment variable.
 
 ## Tests
 
@@ -144,7 +147,7 @@ make test
 make watch
 ```
 
-Once the test database is created with  `make test` you may individually run
+Once the test database is created with `make test` you may individually run
 frontend and backend tests directly.
 
 ```shell

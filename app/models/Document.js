@@ -1,7 +1,7 @@
 // @flow
-import addDays from "date-fns/add_days";
-import differenceInDays from "date-fns/difference_in_days";
+import { addDays, differenceInDays } from "date-fns";
 import invariant from "invariant";
+import { floor } from "lodash";
 import { action, computed, observable, set } from "mobx";
 import parseTitle from "shared/utils/parseTitle";
 import unescape from "shared/utils/unescape";
@@ -10,21 +10,20 @@ import BaseModel from "models/BaseModel";
 import User from "models/User";
 import View from "./View";
 
-type SaveOptions = {
+type SaveOptions = {|
   publish?: boolean,
   done?: boolean,
   autosave?: boolean,
   lastRevision?: number,
-};
+|};
 
 export default class Document extends BaseModel {
   @observable isSaving: boolean = false;
   @observable embedsDisabled: boolean = false;
-  @observable injectTemplate: boolean = false;
   @observable lastViewedAt: ?string;
   store: DocumentsStore;
 
-  collaborators: User[];
+  collaboratorIds: string[];
   collectionId: string;
   createdAt: string;
   createdBy: User;
@@ -44,6 +43,7 @@ export default class Document extends BaseModel {
   deletedAt: ?string;
   url: string;
   urlId: string;
+  tasks: { completed: number, total: number };
   revision: number;
 
   constructor(fields: Object, store: DocumentsStore) {
@@ -57,6 +57,26 @@ export default class Document extends BaseModel {
   get emoji() {
     const { emoji } = parseTitle(this.title);
     return emoji;
+  }
+
+  /**
+   * Best-guess the text direction of the document based on the language the
+   * title is written in. Note: wrapping as a computed getter means that it will
+   * only be called directly when the title changes.
+   */
+  @computed
+  get dir(): "rtl" | "ltr" {
+    const element = document.createElement("p");
+    element.innerHTML = this.title;
+    element.style.visibility = "hidden";
+    element.dir = "auto";
+
+    // element must appear in body for direction to be computed
+    document.body?.appendChild(element);
+
+    const direction = window.getComputedStyle(element).direction;
+    document.body?.removeChild(element);
+    return direction;
   }
 
   @computed
@@ -132,8 +152,16 @@ export default class Document extends BaseModel {
   }
 
   @computed
-  get placeholder(): ?string {
-    return this.isTemplate ? "Start your template…" : "Start with a title…";
+  get isTasks(): boolean {
+    return !!this.tasks.total;
+  }
+
+  @computed
+  get tasksPercentage(): number {
+    if (!this.isTasks) {
+      return 0;
+    }
+    return floor((this.tasks.completed / this.tasks.total) * 100);
   }
 
   @action
@@ -225,15 +253,28 @@ export default class Document extends BaseModel {
   };
 
   @action
-  updateFromTemplate = async (template: Document) => {
-    this.templateId = template.id;
-    this.title = template.title;
-    this.text = template.text;
-    this.injectTemplate = true;
+  update = async (options: {| ...SaveOptions, title: string |}) => {
+    if (this.isSaving) return this;
+    this.isSaving = true;
+
+    try {
+      if (options.lastRevision) {
+        return await this.store.update({
+          id: this.id,
+          title: this.title,
+          lastRevision: options.lastRevision,
+          ...options,
+        });
+      }
+
+      throw new Error("Attempting to update without a lastRevision");
+    } finally {
+      this.isSaving = false;
+    }
   };
 
   @action
-  save = async (options: SaveOptions = {}) => {
+  save = async (options: ?SaveOptions) => {
     if (this.isSaving) return this;
 
     const isCreating = !this.id;
@@ -246,22 +287,22 @@ export default class Document extends BaseModel {
           collectionId: this.collectionId,
           title: this.title,
           text: this.text,
-          publish: options.publish,
-          done: options.done,
-          autosave: options.autosave,
+          publish: options?.publish,
+          done: options?.done,
+          autosave: options?.autosave,
         });
       }
 
-      if (options.lastRevision) {
+      if (options?.lastRevision) {
         return await this.store.update({
           id: this.id,
           title: this.title,
           text: this.text,
           templateId: this.templateId,
-          lastRevision: options.lastRevision,
-          publish: options.publish,
-          done: options.done,
-          autosave: options.autosave,
+          lastRevision: options?.lastRevision,
+          publish: options?.publish,
+          done: options?.done,
+          autosave: options?.autosave,
         });
       }
 

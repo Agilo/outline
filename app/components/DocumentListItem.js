@@ -15,9 +15,12 @@ import Flex from "components/Flex";
 import Highlight from "components/Highlight";
 import StarButton, { AnimatedStar } from "components/Star";
 import Tooltip from "components/Tooltip";
+import useBoolean from "hooks/useBoolean";
+import useCurrentTeam from "hooks/useCurrentTeam";
 import useCurrentUser from "hooks/useCurrentUser";
+import useStores from "hooks/useStores";
 import DocumentMenu from "menus/DocumentMenu";
-import { newDocumentUrl } from "utils/routeHelpers";
+import { newDocumentPath } from "utils/routeHelpers";
 
 type Props = {|
   document: Document,
@@ -39,10 +42,12 @@ function replaceResultMarks(tag: string) {
   return tag.replace(/<b\b[^>]*>(.*?)<\/b>/gi, "$1");
 }
 
-function DocumentListItem(props: Props) {
+function DocumentListItem(props: Props, ref) {
   const { t } = useTranslation();
+  const { policies } = useStores();
   const currentUser = useCurrentUser();
-  const [menuOpen, setMenuOpen] = React.useState(false);
+  const currentTeam = useCurrentTeam();
+  const [menuOpen, handleMenuOpen, handleMenuClose] = useBoolean();
   const {
     document,
     showNestedDocuments,
@@ -60,9 +65,13 @@ function DocumentListItem(props: Props) {
     !!document.title.toLowerCase().includes(highlight.toLowerCase());
   const canStar =
     !document.isDraft && !document.isArchived && !document.isTemplate;
+  const can = policies.abilities(currentTeam.id);
+  const canCollection = policies.abilities(document.collectionId);
 
   return (
     <DocumentLink
+      ref={ref}
+      dir={document.dir}
       $isStarred={document.isStarred}
       $menuOpen={menuOpen}
       to={{
@@ -71,8 +80,12 @@ function DocumentListItem(props: Props) {
       }}
     >
       <Content>
-        <Heading>
-          <Title text={document.titleWithDefault} highlight={highlight} />
+        <Heading dir={document.dir}>
+          <Title
+            text={document.titleWithDefault}
+            highlight={highlight}
+            dir={document.dir}
+          />
           {document.isNew && document.createdBy.id !== currentUser.id && (
             <Badge yellow>{t("New")}</Badge>
           )}
@@ -111,26 +124,30 @@ function DocumentListItem(props: Props) {
         />
       </Content>
       <Actions>
-        {document.isTemplate && !document.isArchived && !document.isDeleted && (
-          <>
-            <Button
-              as={Link}
-              to={newDocumentUrl(document.collectionId, {
-                templateId: document.id,
-              })}
-              icon={<PlusIcon />}
-              neutral
-            >
-              {t("New doc")}
-            </Button>
-            &nbsp;
-          </>
-        )}
+        {document.isTemplate &&
+          !document.isArchived &&
+          !document.isDeleted &&
+          can.createDocument &&
+          canCollection.update && (
+            <>
+              <Button
+                as={Link}
+                to={newDocumentPath(document.collectionId, {
+                  templateId: document.id,
+                })}
+                icon={<PlusIcon />}
+                neutral
+              >
+                {t("New doc")}
+              </Button>
+              &nbsp;
+            </>
+          )}
         <DocumentMenu
           document={document}
           showPin={showPin}
-          onOpen={() => setMenuOpen(true)}
-          onClose={() => setMenuOpen(false)}
+          onOpen={handleMenuOpen}
+          onClose={handleMenuClose}
           modal={false}
         />
       </Actions>
@@ -213,6 +230,7 @@ const DocumentLink = styled(Link)`
 
 const Heading = styled.h3`
   display: flex;
+  justify-content: ${(props) => (props.rtl ? "flex-end" : "flex-start")};
   align-items: center;
   height: 24px;
   margin-top: 0;
@@ -243,4 +261,4 @@ const ResultContext = styled(Highlight)`
   margin-bottom: 0.25em;
 `;
 
-export default observer(DocumentListItem);
+export default observer(React.forwardRef(DocumentListItem));

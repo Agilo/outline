@@ -1,6 +1,6 @@
 // @flow
 import Sequelize from "sequelize";
-import { Event, User, UserAuthentication } from "../models";
+import { Event, Team, User, UserAuthentication } from "../models";
 import { sequelize } from "../sequelize";
 
 const Op = Sequelize.Op;
@@ -14,6 +14,7 @@ type UserCreatorResult = {|
 export default async function userCreator({
   name,
   email,
+  username,
   isAdmin,
   avatarUrl,
   teamId,
@@ -22,6 +23,7 @@ export default async function userCreator({
 }: {|
   name: string,
   email: string,
+  username?: string,
   isAdmin?: boolean,
   avatarUrl?: string,
   teamId: string,
@@ -37,7 +39,6 @@ export default async function userCreator({
   const { authenticationProviderId, providerId, ...rest } = authentication;
   const auth = await UserAuthentication.findOne({
     where: {
-      authenticationProviderId,
       providerId,
     },
     include: [
@@ -53,10 +54,27 @@ export default async function userCreator({
   if (auth) {
     const { user } = auth;
 
-    await user.update({ email });
-    await auth.update(rest);
+    // We found an authentication record that matches the user id, but it's
+    // associated with a different authentication provider, (eg a different
+    // hosted google domain). This is possible in Google Auth when moving domains.
+    // In the future we may auto-migrate these.
+    if (auth.authenticationProviderId !== authenticationProviderId) {
+      throw new Error(
+        `User authentication ${providerId} already exists for ${auth.authenticationProviderId}, tried to assign to ${authenticationProviderId}`
+      );
+    }
 
-    return { user, authentication: auth, isNewUser: false };
+    if (user) {
+      await user.update({ email, username });
+      await auth.update(rest);
+
+      return { user, authentication: auth, isNewUser: false };
+    }
+
+    // We found an authentication record, but the associated user was deleted or
+    // otherwise didn't exist. Cleanup the auth record and proceed with creating
+    // a new user. See: https://github.com/outline/outline/issues/2022
+    await auth.destroy();
   }
 
   // A `user` record might exist in the form of an invite even if there is no
@@ -101,18 +119,25 @@ export default async function userCreator({
       throw err;
     }
 
-    return { user: invite, authentication: auth, isNewUser: false };
+    return { user: invite, authentication: auth, isNewUser: true };
   }
 
   // No auth, no user – this is an entirely new sign in.
   let transaction = await sequelize.transaction();
 
   try {
+    const { defaultUserRole } = await Team.findByPk(teamId, {
+      attributes: ["defaultUserRole"],
+      transaction,
+    });
+
     const user = await User.create(
       {
         name,
         email,
-        isAdmin,
+        username,
+        isAdmin: typeof isAdmin === "boolean" && isAdmin,
+        isViewer: isAdmin === true ? false : defaultUserRole === "viewer",
         teamId,
         avatarUrl,
         service: null,

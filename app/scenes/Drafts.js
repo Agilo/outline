@@ -14,7 +14,7 @@ import { Action } from "components/Actions";
 import Empty from "components/Empty";
 import Flex from "components/Flex";
 import Heading from "components/Heading";
-import InputSearch from "components/InputSearch";
+import InputSearchPage from "components/InputSearchPage";
 import PaginatedDocumentList from "components/PaginatedDocumentList";
 import Scene from "components/Scene";
 import Subheading from "components/Subheading";
@@ -50,10 +50,13 @@ class Drafts extends React.Component<Props> {
   }) => {
     this.props.history.replace({
       pathname: this.props.location.pathname,
-      search: queryString.stringify({
-        ...queryString.parse(this.props.location.search),
-        ...search,
-      }),
+      search: queryString.stringify(
+        {
+          ...queryString.parse(this.props.location.search),
+          ...search,
+        },
+        { skipEmptyString: true }
+      ),
     });
   };
 
@@ -83,11 +86,7 @@ class Drafts extends React.Component<Props> {
         actions={
           <>
             <Action>
-              <InputSearch
-                source="drafts"
-                label={t("Search documents")}
-                labelHidden
-              />
+              <InputSearchPage source="drafts" label={t("Search documents")} />
             </Action>
             <Action>
               <NewDocumentMenu />

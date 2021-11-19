@@ -6,7 +6,8 @@ import {
   EmailAuthenticationRequiredError,
   AuthenticationProviderDisabledError,
 } from "../errors";
-import { Team, User } from "../models";
+import mailer from "../mailer";
+import { Collection, Team, User } from "../models";
 import teamCreator from "./teamCreator";
 import userCreator from "./userCreator";
 
@@ -16,6 +17,7 @@ type Props = {|
     name: string,
     email: string,
     avatarUrl?: string,
+    username?: string,
   |},
   team: {|
     name: string,
@@ -73,7 +75,8 @@ export default async function accountProvisioner({
     const result = await userCreator({
       name: userParams.name,
       email: userParams.email,
-      isAdmin: isNewTeam,
+      username: userParams.username,
+      isAdmin: isNewTeam || undefined,
       avatarUrl: userParams.avatarUrl,
       teamId: team.id,
       ip,
@@ -85,8 +88,27 @@ export default async function accountProvisioner({
 
     const { isNewUser, user } = result;
 
-    if (isNewTeam) {
-      await team.provisionFirstCollection(user.id);
+    if (isNewUser) {
+      await mailer.sendTemplate("welcome", {
+        to: user.email,
+        teamUrl: team.url,
+      });
+    }
+
+    if (isNewUser || isNewTeam) {
+      let provision = isNewTeam;
+
+      // accounts for the case where a team is provisioned, but the user creation
+      // failed. In this case we have a valid previously created team but no
+      // onboarding collection.
+      if (!isNewTeam) {
+        const count = await Collection.count({ where: { teamId: team.id } });
+        provision = count === 0;
+      }
+
+      if (provision) {
+        await team.provisionFirstCollection(user.id);
+      }
     }
 
     return {

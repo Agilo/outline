@@ -1,5 +1,5 @@
 // @flow
-import subMinutes from "date-fns/sub_minutes";
+import { subMinutes } from "date-fns";
 import JWT from "jsonwebtoken";
 import { AuthenticationError } from "../errors";
 import { Team, User } from "../models";
@@ -20,6 +20,10 @@ function getJWTPayload(token) {
 
 export async function getUserForJWT(token: string): Promise<User> {
   const payload = getJWTPayload(token);
+
+  if (payload.type === "email-signin") {
+    throw new AuthenticationError("Invalid token");
+  }
 
   // check the token is within it's expiration time
   if (payload.expiresAt) {

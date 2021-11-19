@@ -82,6 +82,12 @@ export function EmailAuthenticationRequiredError(
   return httpErrors(400, message, { redirectUrl, id: "email_auth_required" });
 }
 
+export function MicrosoftGraphError(
+  message: string = "Microsoft Graph API did not return required fields"
+) {
+  return httpErrors(400, message, { id: "graph_error" });
+}
+
 export function GoogleWorkspaceRequiredError(
   message: string = "Google Workspace is required to authenticate"
 ) {
@@ -92,6 +98,12 @@ export function GoogleWorkspaceInvalidError(
   message: string = "Google Workspace is invalid"
 ) {
   return httpErrors(400, message, { id: "hd_not_allowed" });
+}
+
+export function OIDCMalformedUserInfoError(
+  message: string = "User profile information malformed"
+) {
+  return httpErrors(400, message, { id: "malformed_user_info" });
 }
 
 export function AuthenticationProviderDisabledError(

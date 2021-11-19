@@ -1,4 +1,5 @@
 // @flow
+import { observer } from "mobx-react";
 import { ExpandedIcon } from "outline-icons";
 import * as React from "react";
 import styled from "styled-components";
@@ -68,19 +69,20 @@ const Wrapper = styled.div`
 const Header = styled.button`
   display: flex;
   align-items: center;
-  padding: 20px 24px;
   background: none;
   line-height: inherit;
   border: 0;
-  margin: 0;
+  padding: 8px;
+  margin: 8px;
+  border-radius: 4px;
   cursor: pointer;
-  width: 100%;
+  width: calc(100% - 16px);
 
   &:active,
   &:hover {
     transition: background 100ms ease-in-out;
-    background: rgba(0, 0, 0, 0.05);
+    background: ${(props) => props.theme.sidebarItemBackground};
   }
 `;
 
-export default TeamButton;
+export default observer(TeamButton);

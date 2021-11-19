@@ -3,15 +3,20 @@ import fractionalIndex from "fractional-index";
 import { observer } from "mobx-react";
 import * as React from "react";
 import { useDrop, useDrag } from "react-dnd";
+import { useTranslation } from "react-i18next";
+import { useLocation, useHistory } from "react-router-dom";
 import styled from "styled-components";
 import Collection from "models/Collection";
 import Document from "models/Document";
+import DocumentReparent from "scenes/DocumentReparent";
 import CollectionIcon from "components/CollectionIcon";
-import DropToImport from "components/DropToImport";
+import Modal from "components/Modal";
 import DocumentLink from "./DocumentLink";
 import DropCursor from "./DropCursor";
+import DropToImport from "./DropToImport";
 import EditableTitle from "./EditableTitle";
 import SidebarLink from "./SidebarLink";
+import useBoolean from "hooks/useBoolean";
 import useStores from "hooks/useStores";
 import CollectionMenu from "menus/CollectionMenu";
 import CollectionSortMenu from "menus/CollectionSortMenu";
@@ -35,13 +40,23 @@ function CollectionLink({
   isDraggingAnyCollection,
   onChangeDragging,
 }: Props) {
-  const [menuOpen, setMenuOpen] = React.useState(false);
+  const history = useHistory();
+  const { t } = useTranslation();
+  const { search } = useLocation();
+  const [menuOpen, handleMenuOpen, handleMenuClose] = useBoolean();
+  const [
+    permissionOpen,
+    handlePermissionOpen,
+    handlePermissionClose,
+  ] = useBoolean();
+  const itemRef = React.useRef();
 
   const handleTitleChange = React.useCallback(
     async (name: string) => {
       await collection.save({ name });
+      history.push(collection.url);
     },
-    [collection]
+    [collection, history]
   );
 
   const { ui, documents, policies, collections } = useStores();
@@ -51,12 +66,17 @@ function CollectionLink({
   );
 
   React.useEffect(() => {
+    // If we're viewing a starred document through the starred menu then don't
+    // touch the expanded / collapsed state of the collections
+    if (search === "?starred") {
+      return;
+    }
     if (isDraggingAnyCollection) {
       setExpanded(false);
     } else {
       setExpanded(collection.id === ui.activeCollectionId);
     }
-  }, [isDraggingAnyCollection, collection.id, ui.activeCollectionId]);
+  }, [isDraggingAnyCollection, collection.id, ui.activeCollectionId, search]);
 
   const manualSort = collection.sort.field === "index";
   const can = policies.abilities(collection.id);
@@ -66,9 +86,22 @@ function CollectionLink({
   const [{ isOver, canDrop }, drop] = useDrop({
     accept: "document",
     drop: (item, monitor) => {
+      const { id, collectionId } = item;
       if (monitor.didDrop()) return;
       if (!collection) return;
-      documents.move(item.id, collection.id);
+      if (collection.id === collectionId) return;
+      const prevCollection = collections.get(collectionId);
+
+      if (
+        prevCollection &&
+        prevCollection.permission === null &&
+        prevCollection.permission !== collection.permission
+      ) {
+        itemRef.current = item;
+        handlePermissionOpen();
+      } else {
+        documents.move(id, collection.id);
+      }
     },
     canDrop: (item, monitor) => {
       return policies.abilities(collection.id).update;
@@ -146,8 +179,6 @@ function CollectionLink({
               icon={
                 <CollectionIcon collection={collection} expanded={expanded} />
               }
-              iconColor={collection.color}
-              expanded={expanded}
               showActions={menuOpen || expanded}
               isActiveDrop={isOver && canDrop}
               label={
@@ -158,19 +189,20 @@ function CollectionLink({
                 />
               }
               exact={false}
+              depth={0.5}
               menu={
                 <>
                   {can.update && (
                     <CollectionSortMenuWithMargin
                       collection={collection}
-                      onOpen={() => setMenuOpen(true)}
-                      onClose={() => setMenuOpen(false)}
+                      onOpen={handleMenuOpen}
+                      onClose={handleMenuClose}
                     />
                   )}
                   <CollectionMenu
                     collection={collection}
-                    onOpen={() => setMenuOpen(true)}
-                    onClose={() => setMenuOpen(false)}
+                    onOpen={handleMenuOpen}
+                    onClose={handleMenuClose}
                   />
                 </>
               }
@@ -197,10 +229,22 @@ function CollectionLink({
             activeDocument={activeDocument}
             prefetchDocument={prefetchDocument}
             canUpdate={canUpdate}
-            depth={1.5}
+            depth={2}
             index={index}
           />
         ))}
+      <Modal
+        title={t("Move document")}
+        onRequestClose={handlePermissionClose}
+        isOpen={permissionOpen}
+      >
+        <DocumentReparent
+          item={itemRef.current}
+          collection={collection}
+          onSubmit={handlePermissionClose}
+          onCancel={handlePermissionClose}
+        />
+      </Modal>
     </>
   );
 }

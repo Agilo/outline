@@ -35,7 +35,7 @@ const RealButton = styled.button`
     border: 0;
   }
 
-  &:hover {
+  &:hover:not(:disabled) {
     background: ${(props) => darken(0.05, props.theme.buttonBackground)};
   }
 
@@ -43,6 +43,10 @@ const RealButton = styled.button`
     cursor: default;
     pointer-events: none;
     color: ${(props) => props.theme.white50};
+
+    svg {
+      fill: ${(props) => props.theme.white50};
+    }
   }
 
   ${(props) =>
@@ -65,8 +69,12 @@ const RealButton = styled.button`
     }
     
 
-    &:hover {
-      background: ${darken(0.05, props.theme.buttonNeutralBackground)};
+    &:hover:not(:disabled) {
+      background: ${
+        props.borderOnHover
+          ? props.theme.buttonNeutralBackground
+          : darken(0.05, props.theme.buttonNeutralBackground)
+      };
       box-shadow: rgba(0, 0, 0, 0.07) 0px 1px 2px, ${
         props.theme.buttonNeutralBorder
       } 0 0 0 1px inset;
@@ -74,6 +82,10 @@ const RealButton = styled.button`
 
     &:disabled {
       color: ${props.theme.textTertiary};
+
+      svg {
+        fill: ${props.theme.textTertiary};
+      }
     }
   `} ${(props) =>
     props.danger &&
@@ -124,40 +136,42 @@ export type Props = {|
   fullwidth?: boolean,
   autoFocus?: boolean,
   style?: Object,
-  as?: React.ComponentType<any>,
+  as?: React.ComponentType<any> | string,
   to?: string,
   onClick?: (event: SyntheticEvent<>) => mixed,
   borderOnHover?: boolean,
-
+  href?: string,
   "data-on"?: string,
   "data-event-category"?: string,
   "data-event-action"?: string,
 |};
 
-function Button({
-  type = "text",
-  icon,
-  children,
-  value,
-  disclosure,
-  innerRef,
-  neutral,
-  ...rest
-}: Props) {
-  const hasText = children !== undefined || value !== undefined;
-  const hasIcon = icon !== undefined;
+const Button = React.forwardRef<Props, HTMLButtonElement>(
+  (
+    {
+      type = "text",
+      icon,
+      children,
+      value,
+      disclosure,
+      neutral,
+      ...rest
+    }: Props,
+    innerRef
+  ) => {
+    const hasText = children !== undefined || value !== undefined;
+    const hasIcon = icon !== undefined;
 
-  return (
-    <RealButton type={type} ref={innerRef} $neutral={neutral} {...rest}>
-      <Inner hasIcon={hasIcon} hasText={hasText} disclosure={disclosure}>
-        {hasIcon && icon}
-        {hasText && <Label hasIcon={hasIcon}>{children || value}</Label>}
-        {disclosure && <ExpandedIcon />}
-      </Inner>
-    </RealButton>
-  );
-}
+    return (
+      <RealButton type={type} ref={innerRef} $neutral={neutral} {...rest}>
+        <Inner hasIcon={hasIcon} hasText={hasText} disclosure={disclosure}>
+          {hasIcon && icon}
+          {hasText && <Label hasIcon={hasIcon}>{children || value}</Label>}
+          {disclosure && <ExpandedIcon />}
+        </Inner>
+      </RealButton>
+    );
+  }
+);
 
-export default React.forwardRef<Props, typeof Button>((props, ref) => (
-  <Button {...props} innerRef={ref} />
-));
+export default Button;

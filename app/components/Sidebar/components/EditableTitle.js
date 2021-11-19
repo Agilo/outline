@@ -1,19 +1,20 @@
 // @flow
 import * as React from "react";
 import styled from "styled-components";
-import useStores from "hooks/useStores";
+import useToasts from "hooks/useToasts";
 
 type Props = {|
   onSubmit: (title: string) => Promise<void>,
   title: string,
   canUpdate: boolean,
+  maxLength?: number,
 |};
 
-function EditableTitle({ title, onSubmit, canUpdate }: Props) {
+function EditableTitle({ title, onSubmit, canUpdate, ...rest }: Props) {
   const [isEditing, setIsEditing] = React.useState(false);
   const [originalValue, setOriginalValue] = React.useState(title);
   const [value, setValue] = React.useState(title);
-  const { ui } = useStores();
+  const { showToast } = useToasts();
 
   React.useEffect(() => {
     setValue(title);
@@ -39,38 +40,47 @@ function EditableTitle({ title, onSubmit, canUpdate }: Props) {
     [originalValue]
   );
 
-  const handleSave = React.useCallback(async () => {
-    setIsEditing(false);
+  const handleSave = React.useCallback(
+    async (ev) => {
+      ev.preventDefault();
 
-    if (value === originalValue) {
-      return;
-    }
+      setIsEditing(false);
 
-    if (document) {
-      try {
-        await onSubmit(value);
-        setOriginalValue(value);
-      } catch (error) {
+      const trimmedValue = value.trim();
+      if (trimmedValue === originalValue || trimmedValue.length === 0) {
         setValue(originalValue);
-        ui.showToast(error.message, {
-          type: "error",
-        });
-        throw error;
+        return;
       }
-    }
-  }, [ui, originalValue, value, onSubmit]);
+
+      if (document) {
+        try {
+          await onSubmit(trimmedValue);
+          setOriginalValue(trimmedValue);
+        } catch (error) {
+          setValue(originalValue);
+          showToast(error.message, {
+            type: "error",
+          });
+          throw error;
+        }
+      }
+    },
+    [originalValue, showToast, value, onSubmit]
+  );
 
   return (
     <>
       {isEditing ? (
         <form onSubmit={handleSave}>
           <Input
+            dir="auto"
             type="text"
             value={value}
             onKeyDown={handleKeyDown}
             onChange={handleChange}
             onBlur={handleSave}
             autoFocus
+            {...rest}
           />
         </form>
       ) : (

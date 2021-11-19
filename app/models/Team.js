@@ -7,11 +7,13 @@ class Team extends BaseModel {
   name: string;
   avatarUrl: string;
   sharing: boolean;
+  collaborativeEditing: boolean;
   documentEmbeds: boolean;
   guestSignin: boolean;
   subdomain: ?string;
   domain: ?string;
   url: string;
+  defaultUserRole: string;
 
   @computed
   get signinMethods(): string {

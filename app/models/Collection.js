@@ -15,7 +15,7 @@ export default class Collection extends BaseModel {
   description: string;
   icon: string;
   color: string;
-  private: boolean;
+  permission: "read" | "read_write" | void;
   sharing: boolean;
   index: string;
   documents: NavigationNode[];
@@ -24,11 +24,7 @@ export default class Collection extends BaseModel {
   deletedAt: ?string;
   sort: { field: string, direction: "asc" | "desc" };
   url: string;
-
-  @computed
-  get isPrivate(): boolean {
-    return this.private;
-  }
+  urlId: string;
 
   @computed
   get isEmpty(): boolean {
@@ -175,17 +171,13 @@ export default class Collection extends BaseModel {
       "description",
       "sharing",
       "icon",
-      "private",
+      "permission",
       "sort",
       "index",
     ]);
   };
 
   export = () => {
-    return client.get(
-      "/collections.export",
-      { id: this.id },
-      { download: true }
-    );
+    return client.get("/collections.export", { id: this.id });
   };
 }

@@ -1,7 +1,9 @@
 // @flow
 import { type Context } from "koa";
+import { isArrayLike } from "lodash";
 import validator from "validator";
 import { validateColorHex } from "../../shared/utils/color";
+import { validateIndexCharacters } from "../../shared/utils/indexCharacters";
 import { ParamRequiredError, ValidationError } from "../errors";
 
 export default function validation() {
@@ -12,8 +14,20 @@ export default function validation() {
       }
     };
 
+    ctx.assertArray = (value, message) => {
+      if (!isArrayLike(value)) {
+        throw new ValidationError(message);
+      }
+    };
+
     ctx.assertIn = (value, options, message) => {
       if (!options.includes(value)) {
+        throw new ValidationError(message);
+      }
+    };
+
+    ctx.assertSort = (value, model, message = "Invalid sort parameter") => {
+      if (!Object.keys(model.rawAttributes).includes(value)) {
         throw new ValidationError(message);
       }
     };
@@ -54,6 +68,11 @@ export default function validation() {
       }
     };
 
+    ctx.assertIndexCharacters = (value, message) => {
+      if (!validateIndexCharacters(value)) {
+        throw new ValidationError(message);
+      }
+    };
     return next();
   };
 }

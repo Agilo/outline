@@ -1,5 +1,5 @@
 // @flow
-import uuid from "uuid";
+import { v4 as uuidv4 } from "uuid";
 import {
   Share,
   Team,
@@ -10,9 +10,10 @@ import {
   Group,
   GroupUser,
   Attachment,
-  Authentication,
+  IntegrationAuthentication,
   Integration,
   AuthenticationProvider,
+  FileOperation,
 } from "../models";
 
 let count = 1;
@@ -25,6 +26,13 @@ export async function buildShare(overrides: Object = {}) {
   if (!overrides.userId) {
     const user = await buildUser({ teamId: overrides.teamId });
     overrides.userId = user.id;
+  }
+  if (!overrides.documentId) {
+    const document = await buildDocument({
+      createdById: overrides.userId,
+      teamId: overrides.teamId,
+    });
+    overrides.documentId = document.id;
   }
 
   return Share.create({
@@ -39,10 +47,11 @@ export function buildTeam(overrides: Object = {}) {
   return Team.create(
     {
       name: `Team ${count}`,
+      collaborativeEditing: false,
       authenticationProviders: [
         {
           name: "slack",
-          providerId: uuid.v4(),
+          providerId: uuidv4(),
         },
       ],
       ...overrides,
@@ -57,6 +66,23 @@ export function buildEvent(overrides: Object = {}) {
   return Event.create({
     name: "documents.publish",
     ip: "127.0.0.1",
+    ...overrides,
+  });
+}
+
+export async function buildGuestUser(overrides: Object = {}) {
+  if (!overrides.teamId) {
+    const team = await buildTeam();
+    overrides.teamId = team.id;
+  }
+
+  count++;
+
+  return User.create({
+    email: `user${count}@example.com`,
+    name: `User ${count}`,
+    createdAt: new Date("2018-01-01T00:00:00.000Z"),
+    lastActiveAt: new Date("2018-01-01T00:00:00.000Z"),
     ...overrides,
   });
 }
@@ -79,12 +105,13 @@ export async function buildUser(overrides: Object = {}) {
     {
       email: `user${count}@example.com`,
       name: `User ${count}`,
+      username: `user${count}`,
       createdAt: new Date("2018-01-01T00:00:00.000Z"),
       lastActiveAt: new Date("2018-01-01T00:00:00.000Z"),
       authentications: [
         {
           authenticationProviderId: authenticationProvider.id,
-          providerId: uuid.v4(),
+          providerId: uuidv4(),
         },
       ],
       ...overrides,
@@ -93,6 +120,10 @@ export async function buildUser(overrides: Object = {}) {
       include: "authentications",
     }
   );
+}
+
+export async function buildAdmin(overrides: Object = {}) {
+  return buildUser({ ...overrides, isAdmin: true });
 }
 
 export async function buildInvite(overrides: Object = {}) {
@@ -119,7 +150,7 @@ export async function buildIntegration(overrides: Object = {}) {
 
   const user = await buildUser({ teamId: overrides.teamId });
 
-  const authentication = await Authentication.create({
+  const authentication = await IntegrationAuthentication.create({
     service: "slack",
     userId: user.id,
     teamId: user.teamId,
@@ -155,6 +186,7 @@ export async function buildCollection(overrides: Object = {}) {
     name: `Test Collection ${count}`,
     description: "Test collection description",
     createdById: overrides.userId,
+    permission: "read_write",
     ...overrides,
   });
 }
@@ -226,6 +258,28 @@ export async function buildDocument(overrides: Object = {}) {
   });
 }
 
+export async function buildFileOperation(overrides: Object = {}) {
+  if (!overrides.teamId) {
+    const team = await buildTeam();
+    overrides.teamId = team.id;
+  }
+
+  if (!overrides.userId) {
+    const user = await buildAdmin({ teamId: overrides.teamId });
+    overrides.userId = user.id;
+  }
+
+  return FileOperation.create({
+    state: "creating",
+    size: 0,
+    key: "uploads/key/to/file.zip",
+    collectionId: null,
+    type: "export",
+    url: "https://www.urltos3file.com/file.zip",
+    ...overrides,
+  });
+}
+
 export async function buildAttachment(overrides: Object = {}) {
   if (!overrides.teamId) {
     const team = await buildTeam();
@@ -235,11 +289,6 @@ export async function buildAttachment(overrides: Object = {}) {
   if (!overrides.userId) {
     const user = await buildUser({ teamId: overrides.teamId });
     overrides.userId = user.id;
-  }
-
-  if (!overrides.collectionId) {
-    const collection = await buildCollection(overrides);
-    overrides.collectionId = collection.id;
   }
 
   if (!overrides.documentId) {

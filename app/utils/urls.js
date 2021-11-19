@@ -1,6 +1,5 @@
 // @flow
 import { parseDomain } from "../../shared/utils/domains";
-import env from "env";
 
 export function isInternalUrl(href: string) {
   if (href[0] === "/") return true;
@@ -21,12 +20,25 @@ export function isInternalUrl(href: string) {
   return false;
 }
 
-export function cdnPath(path: string): string {
-  return `${env.CDN_URL}${path}`;
-}
+export function isHash(href: string) {
+  if (href[0] === "#") return true;
 
-export function imagePath(path: string): string {
-  return cdnPath(`/images/${path}`);
+  try {
+    const outline = new URL(window.location.href);
+    const parsed = new URL(href);
+
+    if (
+      outline.hostname === parsed.hostname &&
+      outline.pathname === parsed.pathname &&
+      !!parsed.hash
+    ) {
+      return true;
+    }
+  } catch (e) {
+    // failed to parse as url
+  }
+
+  return false;
 }
 
 export function decodeURIComponentSafe(text: string) {

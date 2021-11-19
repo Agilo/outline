@@ -1,63 +1,68 @@
 // @flow
-import { observable } from "mobx";
-import { inject, observer } from "mobx-react";
+import invariant from "invariant";
+import { observer } from "mobx-react";
 import * as React from "react";
-import { withRouter, type RouterHistory } from "react-router-dom";
-import UiStore from "stores/UiStore";
-import Document from "models/Document";
+import { useState } from "react";
+import { useTranslation, Trans } from "react-i18next";
+import { useHistory } from "react-router-dom";
 import Button from "components/Button";
 import Flex from "components/Flex";
 import HelpText from "components/HelpText";
+import useStores from "hooks/useStores";
+import useToasts from "hooks/useToasts";
 import { documentUrl } from "utils/routeHelpers";
 
 type Props = {
-  ui: UiStore,
-  document: Document,
-  history: RouterHistory,
+  documentId: string,
   onSubmit: () => void,
 };
 
-@observer
-class DocumentTemplatize extends React.Component<Props> {
-  @observable isSaving: boolean;
+function DocumentTemplatize({ documentId, onSubmit }: Props) {
+  const [isSaving, setIsSaving] = useState();
+  const history = useHistory();
+  const { showToast } = useToasts();
+  const { t } = useTranslation();
+  const { documents } = useStores();
+  const document = documents.get(documentId);
+  invariant(document, "Document must exist");
 
-  handleSubmit = async (ev: SyntheticEvent<>) => {
-    ev.preventDefault();
-    this.isSaving = true;
+  const handleSubmit = React.useCallback(
+    async (ev: SyntheticEvent<>) => {
+      ev.preventDefault();
+      setIsSaving(true);
 
-    try {
-      const template = await this.props.document.templatize();
-      this.props.history.push(documentUrl(template));
-      this.props.ui.showToast("Template created, go ahead and customize it", {
-        type: "info",
-      });
-      this.props.onSubmit();
-    } catch (err) {
-      this.props.ui.showToast(err.message, { type: "error" });
-    } finally {
-      this.isSaving = false;
-    }
-  };
+      try {
+        const template = await document.templatize();
+        history.push(documentUrl(template));
+        showToast(t("Template created, go ahead and customize it"), {
+          type: "info",
+        });
+        onSubmit();
+      } catch (err) {
+        showToast(err.message, { type: "error" });
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [document, showToast, history, onSubmit, t]
+  );
 
-  render() {
-    const { document } = this.props;
-
-    return (
-      <Flex column>
-        <form onSubmit={this.handleSubmit}>
-          <HelpText>
-            Creating a template from{" "}
-            <strong>{document.titleWithDefault}</strong> is a non-destructive
-            action – we'll make a copy of the document and turn it into a
-            template that can be used as a starting point for new documents.
-          </HelpText>
-          <Button type="submit">
-            {this.isSaving ? "Creating…" : "Create template"}
-          </Button>
-        </form>
-      </Flex>
-    );
-  }
+  return (
+    <Flex column>
+      <form onSubmit={handleSubmit}>
+        <HelpText>
+          <Trans
+            defaults="Creating a template from <em>{{titleWithDefault}}</em> is a non-destructive action – we'll make a copy of the document and turn it into a template that can be used as a starting point for new documents."
+            values={{ titleWithDefault: document.titleWithDefault }}
+            components={{ em: <strong /> }}
+          />
+        </HelpText>
+        <Button type="submit">
+          {isSaving ? `${t("Creating")}…` : t("Create template")}
+        </Button>
+      </form>
+    </Flex>
+  );
 }
 
-export default inject("ui")(withRouter(DocumentTemplatize));
+export default observer(DocumentTemplatize);

@@ -1,9 +1,9 @@
 // @flow
-import useWindowScrollPosition from "@rehooks/window-scroll-position";
 import * as React from "react";
 import styled from "styled-components";
 import breakpoint from "styled-components-breakpoint";
 import HelpText from "components/HelpText";
+import useWindowScrollPosition from "hooks/useWindowScrollPosition";
 
 const HEADING_OFFSET = 20;
 
@@ -70,11 +70,13 @@ const Wrapper = styled("div")`
   display: none;
   position: sticky;
   top: 80px;
+  max-height: calc(100vh - 80px);
 
   box-shadow: 1px 0 0 ${(props) => props.theme.divider};
   margin-top: 40px;
-  margin-right: 2em;
+  margin-right: 3.2em;
   min-height: 40px;
+  overflow-y: auto;
 
   ${breakpoint("desktopLarge")`
     margin-left: -16em;
@@ -108,6 +110,11 @@ const ListItem = styled("li")`
   line-height: 1.3;
   border-right: 3px solid
     ${(props) => (props.active ? props.theme.divider : "transparent")};
+
+  a {
+    color: ${(props) =>
+      props.active ? props.theme.primary : props.theme.text};
+  }
 `;
 
 const Link = styled("a")`

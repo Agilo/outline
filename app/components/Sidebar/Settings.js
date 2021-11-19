@@ -11,6 +11,7 @@ import {
   LinkIcon,
   TeamIcon,
   ExpandedIcon,
+  BeakerIcon,
 } from "outline-icons";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -19,14 +20,14 @@ import styled from "styled-components";
 import Flex from "components/Flex";
 import Scrollable from "components/Scrollable";
 
+import SlackIcon from "components/SlackIcon";
+import ZapierIcon from "components/ZapierIcon";
 import Sidebar from "./Sidebar";
 import Header from "./components/Header";
 import Section from "./components/Section";
 import SidebarLink from "./components/SidebarLink";
 import TeamButton from "./components/TeamButton";
 import Version from "./components/Version";
-import SlackIcon from "./icons/Slack";
-import ZapierIcon from "./icons/Zapier";
 import env from "env";
 import useCurrentTeam from "hooks/useCurrentTeam";
 import useStores from "hooks/useStores";
@@ -71,11 +72,13 @@ function SettingsSidebar() {
               icon={<EmailIcon color="currentColor" />}
               label={t("Notifications")}
             />
-            <SidebarLink
-              to="/settings/tokens"
-              icon={<CodeIcon color="currentColor" />}
-              label={t("API Tokens")}
-            />
+            {can.createApiKey && (
+              <SidebarLink
+                to="/settings/tokens"
+                icon={<CodeIcon color="currentColor" />}
+                label={t("API Tokens")}
+              />
+            )}
           </Section>
           <Section>
             <Header>{t("Team")}</Header>
@@ -93,11 +96,18 @@ function SettingsSidebar() {
                 label={t("Security")}
               />
             )}
+            {can.update && env.DEPLOYMENT !== "hosted" && (
+              <SidebarLink
+                to="/settings/features"
+                icon={<BeakerIcon color="currentColor" />}
+                label={t("Features")}
+              />
+            )}
             <SidebarLink
-              to="/settings/people"
+              to="/settings/members"
               icon={<UserIcon color="currentColor" />}
               exact={false}
-              label={t("People")}
+              label={t("Members")}
             />
             <SidebarLink
               to="/settings/groups"
@@ -118,14 +128,16 @@ function SettingsSidebar() {
               />
             )}
           </Section>
-          {can.update && (
+          {can.update && (env.SLACK_KEY || isHosted) && (
             <Section>
               <Header>{t("Integrations")}</Header>
-              <SidebarLink
-                to="/settings/integrations/slack"
-                icon={<SlackIcon color="currentColor" />}
-                label="Slack"
-              />
+              {env.SLACK_KEY && (
+                <SidebarLink
+                  to="/settings/integrations/slack"
+                  icon={<SlackIcon color="currentColor" />}
+                  label="Slack"
+                />
+              )}
               {isHosted && (
                 <SidebarLink
                   to="/settings/integrations/zapier"

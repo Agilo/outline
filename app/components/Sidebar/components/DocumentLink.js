@@ -1,17 +1,19 @@
 // @flow
 import { observer } from "mobx-react";
-import { CollapsedIcon } from "outline-icons";
 import * as React from "react";
 import { useDrag, useDrop } from "react-dnd";
 import { useTranslation } from "react-i18next";
 import styled from "styled-components";
+import { MAX_TITLE_LENGTH } from "shared/constants";
 import Collection from "models/Collection";
 import Document from "models/Document";
-import DropToImport from "components/DropToImport";
 import Fade from "components/Fade";
+import Disclosure from "./Disclosure";
 import DropCursor from "./DropCursor";
+import DropToImport from "./DropToImport";
 import EditableTitle from "./EditableTitle";
 import SidebarLink from "./SidebarLink";
+import useBoolean from "hooks/useBoolean";
 import useStores from "hooks/useStores";
 import DocumentMenu from "menus/DocumentMenu";
 import { type NavigationNode } from "types";
@@ -27,16 +29,19 @@ type Props = {
   parentId?: string,
 };
 
-function DocumentLink({
-  node,
-  canUpdate,
-  collection,
-  activeDocument,
-  prefetchDocument,
-  depth,
-  index,
-  parentId,
-}: Props) {
+function DocumentLink(
+  {
+    node,
+    canUpdate,
+    collection,
+    activeDocument,
+    prefetchDocument,
+    depth,
+    index,
+    parentId,
+  }: Props,
+  ref
+) {
   const { documents, policies } = useStores();
   const { t } = useTranslation();
 
@@ -117,19 +122,28 @@ function DocumentLink({
     [documents, document]
   );
 
-  const [menuOpen, setMenuOpen] = React.useState(false);
+  const [menuOpen, handleMenuOpen, handleMenuClose] = useBoolean();
   const isMoving = documents.movingDocumentId === node.id;
   const manualSort = collection?.sort.field === "index";
 
   // Draggable
   const [{ isDragging }, drag] = useDrag({
     type: "document",
-    item: () => ({ ...node, depth, active: isActiveDocument }),
+    item: () => ({
+      ...node,
+      depth,
+      active: isActiveDocument,
+      collectionId: collection?.id || "",
+    }),
     collect: (monitor) => ({
       isDragging: !!monitor.isDragging(),
     }),
     canDrag: (monitor) => {
-      return policies.abilities(node.id).move;
+      return (
+        policies.abilities(node.id).move ||
+        policies.abilities(node.id).archive ||
+        policies.abilities(node.id).delete
+      );
     },
   });
 
@@ -202,7 +216,7 @@ function DocumentLink({
 
   return (
     <>
-      <div style={{ position: "relative" }} onDragLeave={resetHoverExpanding}>
+      <Relative onDragLeave={resetHoverExpanding}>
         <Draggable
           key={node.id}
           ref={drag}
@@ -229,20 +243,26 @@ function DocumentLink({
                       title={node.title || t("Untitled")}
                       onSubmit={handleTitleChange}
                       canUpdate={canUpdate}
+                      maxLength={MAX_TITLE_LENGTH}
                     />
                   </>
+                }
+                isActive={(match, location) =>
+                  match && location.search !== "?starred"
                 }
                 isActiveDrop={isOverReparent && canDropToReparent}
                 depth={depth}
                 exact={false}
                 showActions={menuOpen}
+                scrollIntoViewIfNeeded={!document?.isStarred}
+                ref={ref}
                 menu={
                   document && !isMoving ? (
                     <Fade>
                       <DocumentMenu
                         document={document}
-                        onOpen={() => setMenuOpen(true)}
-                        onClose={() => setMenuOpen(false)}
+                        onOpen={handleMenuOpen}
+                        onClose={handleMenuClose}
                       />
                     </Fade>
                   ) : undefined
@@ -254,7 +274,7 @@ function DocumentLink({
         {manualSort && (
           <DropCursor isActiveDrop={isOverReorder} innerRef={dropToReorder} />
         )}
-      </div>
+      </Relative>
       {expanded && !isDragging && (
         <>
           {node.children.map((childNode, index) => (
@@ -276,17 +296,15 @@ function DocumentLink({
   );
 }
 
-const Draggable = styled("div")`
+const Relative = styled.div`
+  position: relative;
+`;
+
+const Draggable = styled.div`
   opacity: ${(props) => (props.$isDragging || props.$isMoving ? 0.5 : 1)};
   pointer-events: ${(props) => (props.$isMoving ? "none" : "all")};
 `;
 
-const Disclosure = styled(CollapsedIcon)`
-  position: absolute;
-  left: -24px;
+const ObservedDocumentLink = observer(React.forwardRef(DocumentLink));
 
-  ${({ expanded }) => !expanded && "transform: rotate(-90deg);"};
-`;
-
-const ObservedDocumentLink = observer(DocumentLink);
 export default ObservedDocumentLink;

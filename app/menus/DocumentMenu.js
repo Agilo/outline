@@ -1,5 +1,25 @@
 // @flow
 import { observer } from "mobx-react";
+import {
+  EditIcon,
+  PinIcon,
+  StarredIcon,
+  UnstarredIcon,
+  DuplicateIcon,
+  ArchiveIcon,
+  TrashIcon,
+  MoveIcon,
+  HistoryIcon,
+  UnpublishIcon,
+  ShapesIcon,
+  PrintIcon,
+  ImportIcon,
+  NewDocumentIcon,
+  DownloadIcon,
+  BuildingBlocksIcon,
+  RestoreIcon,
+  CrossIcon,
+} from "outline-icons";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { useHistory } from "react-router-dom";
@@ -8,7 +28,8 @@ import { VisuallyHidden } from "reakit/VisuallyHidden";
 import styled from "styled-components";
 import Document from "models/Document";
 import DocumentDelete from "scenes/DocumentDelete";
-import DocumentShare from "scenes/DocumentShare";
+import DocumentMove from "scenes/DocumentMove";
+import DocumentPermanentDelete from "scenes/DocumentPermanentDelete";
 import DocumentTemplatize from "scenes/DocumentTemplatize";
 import CollectionIcon from "components/CollectionIcon";
 import ContextMenu from "components/ContextMenu";
@@ -18,13 +39,13 @@ import Flex from "components/Flex";
 import Modal from "components/Modal";
 import useCurrentTeam from "hooks/useCurrentTeam";
 import useStores from "hooks/useStores";
+import useToasts from "hooks/useToasts";
 import getDataTransferFiles from "utils/getDataTransferFiles";
 import {
   documentHistoryUrl,
-  documentMoveUrl,
   documentUrl,
   editDocumentUrl,
-  newDocumentUrl,
+  newDocumentPath,
 } from "utils/routeHelpers";
 
 type Props = {|
@@ -53,14 +74,24 @@ function DocumentMenu({
   onClose,
 }: Props) {
   const team = useCurrentTeam();
-  const { policies, collections, ui, documents } = useStores();
-  const menu = useMenuState({ modal });
+  const { policies, collections, documents } = useStores();
+  const { showToast } = useToasts();
+  const menu = useMenuState({
+    modal,
+    unstable_preventOverflow: true,
+    unstable_fixed: true,
+    unstable_flip: true,
+  });
   const history = useHistory();
   const { t } = useTranslation();
   const [renderModals, setRenderModals] = React.useState(false);
   const [showDeleteModal, setShowDeleteModal] = React.useState(false);
+  const [
+    showPermanentDeleteModal,
+    setShowPermanentDeleteModal,
+  ] = React.useState(false);
+  const [showMoveModal, setShowMoveModal] = React.useState(false);
   const [showTemplateModal, setShowTemplateModal] = React.useState(false);
-  const [showShareModal, setShowShareModal] = React.useState(false);
   const file = React.useRef<?HTMLInputElement>();
 
   const handleOpen = React.useCallback(() => {
@@ -76,38 +107,42 @@ function DocumentMenu({
 
       // when duplicating, go straight to the duplicated document content
       history.push(duped.url);
-      ui.showToast(t("Document duplicated"), { type: "success" });
+      showToast(t("Document duplicated"), { type: "success" });
     },
-    [ui, t, history, document]
+    [t, history, showToast, document]
   );
 
   const handleArchive = React.useCallback(
     async (ev: SyntheticEvent<>) => {
       await document.archive();
-      ui.showToast(t("Document archived"), { type: "success" });
+      showToast(t("Document archived"), { type: "success" });
     },
-    [ui, t, document]
+    [showToast, t, document]
   );
 
   const handleRestore = React.useCallback(
     async (ev: SyntheticEvent<>, options?: { collectionId: string }) => {
       await document.restore(options);
-      ui.showToast(t("Document restored"), { type: "success" });
+      showToast(t("Document restored"), { type: "success" });
     },
-    [ui, t, document]
+    [showToast, t, document]
   );
 
   const handleUnpublish = React.useCallback(
     async (ev: SyntheticEvent<>) => {
       await document.unpublish();
-      ui.showToast(t("Document unpublished"), { type: "success" });
+      showToast(t("Document unpublished"), { type: "success" });
     },
-    [ui, t, document]
+    [showToast, t, document]
   );
 
-  const handlePrint = React.useCallback((ev: SyntheticEvent<>) => {
-    window.print();
-  }, []);
+  const handlePrint = React.useCallback(
+    (ev: SyntheticEvent<>) => {
+      menu.hide();
+      window.print();
+    },
+    [menu]
+  );
 
   const handleStar = React.useCallback(
     (ev: SyntheticEvent<>) => {
@@ -127,18 +162,30 @@ function DocumentMenu({
     [document]
   );
 
-  const handleShareLink = React.useCallback(
-    async (ev: SyntheticEvent<>) => {
-      await document.share();
-      setShowShareModal(true);
-    },
-    [document]
-  );
-
   const collection = collections.get(document.collectionId);
   const can = policies.abilities(document.id);
-  const canShareDocuments = !!(can.share && team.sharing);
   const canViewHistory = can.read && !can.restore;
+  const restoreItems = React.useMemo(
+    () => [
+      ...collections.orderedData.reduce((filtered, collection) => {
+        const can = policies.abilities(collection.id);
+
+        if (can.update) {
+          filtered.push({
+            onClick: (ev) => handleRestore(ev, { collectionId: collection.id }),
+            title: (
+              <Flex align="center">
+                <CollectionIcon collection={collection} />
+                <CollectionName>{collection.name}</CollectionName>
+              </Flex>
+            ),
+          });
+        }
+        return filtered;
+      }, []),
+    ],
+    [collections.orderedData, handleRestore, policies]
+  );
 
   const stopPropagation = React.useCallback((ev: SyntheticEvent<>) => {
     ev.stopPropagation();
@@ -183,14 +230,14 @@ function DocumentMenu({
         );
         history.push(importedDocument.url);
       } catch (err) {
-        ui.showToast(err.message, {
+        showToast(err.message, {
           type: "error",
         });
 
         throw err;
       }
     },
-    [history, ui, collection, documents, document.id]
+    [history, showToast, collection, documents, document.id]
   );
 
   return (
@@ -225,129 +272,135 @@ function DocumentMenu({
           items={[
             {
               title: t("Restore"),
-              visible: !!can.unarchive,
+              visible: (!!collection && can.restore) || can.unarchive,
               onClick: handleRestore,
+              icon: <RestoreIcon />,
             },
             {
               title: t("Restore"),
-              visible: !!(collection && can.restore),
-              onClick: handleRestore,
-            },
-            {
-              title: t("Restore"),
-              visible: !collection && !!can.restore,
+              visible:
+                !collection && !!can.restore && restoreItems.length !== 0,
               style: {
                 left: -170,
                 position: "relative",
                 top: -40,
               },
+              icon: <RestoreIcon />,
               hover: true,
               items: [
                 {
                   type: "heading",
                   title: t("Choose a collection"),
                 },
-                ...collections.orderedData.map((collection) => {
-                  const can = policies.abilities(collection.id);
-
-                  return {
-                    title: (
-                      <Flex align="center">
-                        <CollectionIcon collection={collection} />
-                        <CollectionName>{collection.name}</CollectionName>
-                      </Flex>
-                    ),
-                    onClick: (ev) =>
-                      handleRestore(ev, { collectionId: collection.id }),
-                    disabled: !can.update,
-                  };
-                }),
+                ...restoreItems,
               ],
             },
             {
               title: t("Unpin"),
               onClick: document.unpin,
               visible: !!(showPin && document.pinned && can.unpin),
+              icon: <PinIcon />,
             },
             {
               title: t("Pin to collection"),
               onClick: document.pin,
               visible: !!(showPin && !document.pinned && can.pin),
+              icon: <PinIcon />,
             },
             {
               title: t("Unstar"),
               onClick: handleUnstar,
               visible: document.isStarred && !!can.unstar,
+              icon: <UnstarredIcon />,
             },
             {
               title: t("Star"),
               onClick: handleStar,
               visible: !document.isStarred && !!can.star,
-            },
-            {
-              title: `${t("Share link")}…`,
-              onClick: handleShareLink,
-              visible: canShareDocuments,
-            },
-            {
-              title: t("Enable embeds"),
-              onClick: document.enableEmbeds,
-              visible: !!showToggleEmbeds && document.embedsDisabled,
-            },
-            {
-              title: t("Disable embeds"),
-              onClick: document.disableEmbeds,
-              visible: !!showToggleEmbeds && !document.embedsDisabled,
+              icon: <StarredIcon />,
             },
             {
               type: "separator",
             },
             {
+              title: t("Edit"),
+              to: editDocumentUrl(document),
+              visible: !!can.update && !team.collaborativeEditing,
+              icon: <EditIcon />,
+            },
+            {
               title: t("New nested document"),
-              to: newDocumentUrl(document.collectionId, {
+              to: newDocumentPath(document.collectionId, {
                 parentDocumentId: document.id,
               }),
               visible: !!can.createChildDocument,
+              icon: <NewDocumentIcon />,
             },
             {
               title: t("Import document"),
               visible: can.createChildDocument,
               onClick: handleImportDocument,
+              icon: <ImportIcon />,
             },
             {
               title: `${t("Create template")}…`,
               onClick: () => setShowTemplateModal(true),
               visible: !!can.update && !document.isTemplate,
-            },
-            {
-              title: t("Edit"),
-              to: editDocumentUrl(document),
-              visible: !!can.update,
+              icon: <ShapesIcon />,
             },
             {
               title: t("Duplicate"),
               onClick: handleDuplicate,
               visible: !!can.update,
+              icon: <DuplicateIcon />,
             },
             {
               title: t("Unpublish"),
               onClick: handleUnpublish,
               visible: !!can.unpublish,
+              icon: <UnpublishIcon />,
             },
             {
               title: t("Archive"),
               onClick: handleArchive,
               visible: !!can.archive,
+              icon: <ArchiveIcon />,
             },
             {
               title: `${t("Delete")}…`,
               onClick: () => setShowDeleteModal(true),
               visible: !!can.delete,
+              icon: <TrashIcon />,
+            },
+            {
+              title: `${t("Permanently delete")}…`,
+              onClick: () => setShowPermanentDeleteModal(true),
+              visible: can.permanentDelete,
+              icon: <CrossIcon />,
             },
             {
               title: `${t("Move")}…`,
-              to: documentMoveUrl(document),
+              onClick: () => setShowMoveModal(true),
               visible: !!can.move,
+              icon: <MoveIcon />,
+            },
+            {
+              title: t("Enable embeds"),
+              onClick: document.enableEmbeds,
+              visible:
+                !!showToggleEmbeds &&
+                document.embedsDisabled &&
+                !team.collaborativeEditing,
+              icon: <BuildingBlocksIcon />,
+            },
+            {
+              title: t("Disable embeds"),
+              onClick: document.disableEmbeds,
+              visible:
+                !!showToggleEmbeds &&
+                !document.embedsDisabled &&
+                !team.collaborativeEditing,
+              icon: <BuildingBlocksIcon />,
             },
             {
               type: "separator",
@@ -358,54 +411,79 @@ function DocumentMenu({
                 ? documentUrl(document)
                 : documentHistoryUrl(document),
               visible: canViewHistory,
+              icon: <HistoryIcon />,
             },
             {
               title: t("Download"),
               onClick: document.download,
               visible: !!can.download,
+              icon: <DownloadIcon />,
             },
             {
               title: t("Print"),
               onClick: handlePrint,
               visible: !!showPrint,
+              icon: <PrintIcon />,
             },
           ]}
         />
       </ContextMenu>
       {renderModals && (
         <>
-          <Modal
-            title={t("Delete {{ documentName }}", {
-              documentName: document.noun,
-            })}
-            onRequestClose={() => setShowDeleteModal(false)}
-            isOpen={showDeleteModal}
-          >
-            <DocumentDelete
-              document={document}
-              onSubmit={() => setShowDeleteModal(false)}
-            />
-          </Modal>
-          <Modal
-            title={t("Create template")}
-            onRequestClose={() => setShowTemplateModal(false)}
-            isOpen={showTemplateModal}
-          >
-            <DocumentTemplatize
-              document={document}
-              onSubmit={() => setShowTemplateModal(false)}
-            />
-          </Modal>
-          <Modal
-            title={t("Share document")}
-            onRequestClose={() => setShowShareModal(false)}
-            isOpen={showShareModal}
-          >
-            <DocumentShare
-              document={document}
-              onSubmit={() => setShowShareModal(false)}
-            />
-          </Modal>
+          {can.move && (
+            <Modal
+              title={t("Move {{ documentName }}", {
+                documentName: document.noun,
+              })}
+              onRequestClose={() => setShowMoveModal(false)}
+              isOpen={showMoveModal}
+            >
+              <DocumentMove
+                document={document}
+                onRequestClose={() => setShowMoveModal(false)}
+              />
+            </Modal>
+          )}
+          {can.delete && (
+            <Modal
+              title={t("Delete {{ documentName }}", {
+                documentName: document.noun,
+              })}
+              onRequestClose={() => setShowDeleteModal(false)}
+              isOpen={showDeleteModal}
+            >
+              <DocumentDelete
+                document={document}
+                onSubmit={() => setShowDeleteModal(false)}
+              />
+            </Modal>
+          )}
+          {can.permanentDelete && (
+            <Modal
+              title={t("Permanently delete {{ documentName }}", {
+                documentName: document.noun,
+              })}
+              onRequestClose={() => setShowPermanentDeleteModal(false)}
+              isOpen={showPermanentDeleteModal}
+            >
+              <DocumentPermanentDelete
+                document={document}
+                onSubmit={() => setShowPermanentDeleteModal(false)}
+              />
+            </Modal>
+          )}
+          {can.update && (
+            <Modal
+              title={t("Create template")}
+              onRequestClose={() => setShowTemplateModal(false)}
+              isOpen={showTemplateModal}
+            >
+              <DocumentTemplatize
+                documentId={document.id}
+                onSubmit={() => setShowTemplateModal(false)}
+              />
+            </Modal>
+          )}
         </>
       )}
     </>

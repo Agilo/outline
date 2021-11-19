@@ -1,137 +1,152 @@
 // @flow
 import { find } from "lodash";
-import { inject, observer } from "mobx-react";
+import { observer } from "mobx-react";
 import * as React from "react";
+import { useTranslation, Trans } from "react-i18next";
 import styled from "styled-components";
 
-import getQueryVariable from "shared/utils/getQueryVariable";
-import AuthStore from "stores/AuthStore";
-import CollectionsStore from "stores/CollectionsStore";
-import IntegrationsStore from "stores/IntegrationsStore";
 import Button from "components/Button";
-import CenteredContent from "components/CenteredContent";
+import CollectionIcon from "components/CollectionIcon";
+import Heading from "components/Heading";
 import HelpText from "components/HelpText";
+import List from "components/List";
+import ListItem from "components/List/Item";
 import Notice from "components/Notice";
-import PageTitle from "components/PageTitle";
+import Scene from "components/Scene";
+import SlackIcon from "components/SlackIcon";
 import SlackButton from "./components/SlackButton";
 import env from "env";
+import useCurrentTeam from "hooks/useCurrentTeam";
+import useQuery from "hooks/useQuery";
+import useStores from "hooks/useStores";
 
-type Props = {
-  collections: CollectionsStore,
-  integrations: IntegrationsStore,
-  auth: AuthStore,
-};
+function Slack() {
+  const team = useCurrentTeam();
+  const { collections, integrations } = useStores();
+  const { t } = useTranslation();
+  const query = useQuery();
+  const error = query.get("error");
 
-@observer
-class Slack extends React.Component<Props> {
-  error: ?string;
+  React.useEffect(() => {
+    collections.fetchPage({ limit: 100 });
+    integrations.fetchPage({ limit: 100 });
+  }, [collections, integrations]);
 
-  componentDidMount() {
-    this.error = getQueryVariable("error");
-    this.props.collections.fetchPage({ limit: 100 });
-    this.props.integrations.fetchPage();
-  }
+  const commandIntegration = find(integrations.slackIntegrations, {
+    type: "command",
+  });
 
-  get commandIntegration() {
-    return find(this.props.integrations.slackIntegrations, {
-      type: "command",
-    });
-  }
+  return (
+    <Scene title="Slack" icon={<SlackIcon color="currentColor" />}>
+      <Heading>Slack</Heading>
 
-  render() {
-    const { collections, integrations, auth } = this.props;
-    const teamId = auth.team ? auth.team.id : "";
-
-    return (
-      <CenteredContent>
-        <PageTitle title="Slack" />
-        <h1>Slack</h1>
-        {this.error === "access_denied" && (
-          <Notice>
+      {error === "access_denied" && (
+        <Notice>
+          <Trans>
             Whoops, you need to accept the permissions in Slack to connect
             Outline to your team. Try again?
-          </Notice>
-        )}
-        {this.error === "unauthenticated" && (
-          <Notice>
+          </Trans>
+        </Notice>
+      )}
+      {error === "unauthenticated" && (
+        <Notice>
+          <Trans>
             Something went wrong while authenticating your request. Please try
             logging in again?
-          </Notice>
-        )}
-        <HelpText>
-          Preview Outline links your team mates share and use the{" "}
-          <Code>/outline</Code> slash command in Slack to search for documents
-          in your team’s wiki.
-        </HelpText>
-        <p>
-          {this.commandIntegration ? (
-            <Button onClick={this.commandIntegration.delete}>Disconnect</Button>
-          ) : (
-            <SlackButton
-              scopes={["commands", "links:read", "links:write"]}
-              redirectUri={`${env.URL}/auth/slack.commands`}
-              state={teamId}
-            />
-          )}
-        </p>
-        <p>&nbsp;</p>
+          </Trans>
+        </Notice>
+      )}
+      <HelpText>
+        <Trans
+          defaults="Get rich previews of Outline links shared in Slack and use the <em>{{ command }}</em> slash command to search for documents without leaving your chat."
+          values={{ command: "/outline" }}
+          components={{ em: <Code /> }}
+        />
+      </HelpText>
+      {env.SLACK_KEY ? (
+        <>
+          <p>
+            {commandIntegration ? (
+              <Button onClick={commandIntegration.delete}>
+                {t("Disconnect")}
+              </Button>
+            ) : (
+              <SlackButton
+                scopes={["commands", "links:read", "links:write"]}
+                redirectUri={`${env.URL}/auth/slack.commands`}
+                state={team.id}
+              />
+            )}
+          </p>
+          <p>&nbsp;</p>
 
-        <h2>Collections</h2>
-        <HelpText>
-          Connect Outline collections to Slack channels and messages will be
-          posted in Slack when documents are published or updated.
-        </HelpText>
+          <h2>{t("Collections")}</h2>
+          <HelpText>
+            <Trans>
+              Connect Outline collections to Slack channels and messages will be
+              automatically posted to Slack when documents are published or
+              updated.
+            </Trans>
+          </HelpText>
 
-        <List>
-          {collections.orderedData.map((collection) => {
-            const integration = find(integrations.slackIntegrations, {
-              collectionId: collection.id,
-            });
+          <List>
+            {collections.orderedData.map((collection) => {
+              const integration = find(integrations.slackIntegrations, {
+                collectionId: collection.id,
+              });
 
-            if (integration) {
+              if (integration) {
+                return (
+                  <ListItem
+                    key={integration.id}
+                    title={collection.name}
+                    image={<CollectionIcon collection={collection} />}
+                    subtitle={
+                      <Trans
+                        defaults={`Connected to the <em>{{ channelName }}</em> channel`}
+                        values={{ channelName: integration.settings.channel }}
+                        components={{ em: <strong /> }}
+                      />
+                    }
+                    actions={
+                      <Button onClick={integration.delete} neutral>
+                        {t("Disconnect")}
+                      </Button>
+                    }
+                  />
+                );
+              }
+
               return (
-                <ListItem key={integration.id}>
-                  <span>
-                    <strong>{collection.name}</strong> posting activity to the{" "}
-                    <strong>{integration.settings.channel}</strong> Slack
-                    channel
-                  </span>
-                  <Button onClick={integration.delete}>Disconnect</Button>
-                </ListItem>
-              );
-            }
-
-            return (
-              <ListItem key={collection.id}>
-                <strong>{collection.name}</strong>
-                <SlackButton
-                  scopes={["incoming-webhook"]}
-                  redirectUri={`${env.URL}/auth/slack.post`}
-                  state={collection.id}
-                  label="Connect"
+                <ListItem
+                  key={collection.id}
+                  title={collection.name}
+                  image={<CollectionIcon collection={collection} />}
+                  actions={
+                    <SlackButton
+                      scopes={["incoming-webhook"]}
+                      redirectUri={`${env.URL}/auth/slack.post`}
+                      state={collection.id}
+                      label={t("Connect")}
+                    />
+                  }
                 />
-              </ListItem>
-            );
-          })}
-        </List>
-      </CenteredContent>
-    );
-  }
+              );
+            })}
+          </List>
+        </>
+      ) : (
+        <Notice>
+          <Trans>
+            The Slack integration is currently disabled. Please set the
+            associated environment variables and restart the server to enable
+            the integration.
+          </Trans>
+        </Notice>
+      )}
+    </Scene>
+  );
 }
-
-const List = styled.ol`
-  list-style: none;
-  margin: 8px 0;
-  padding: 0;
-`;
-
-const ListItem = styled.li`
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 0;
-  border-bottom: 1px solid #eaebea;
-`;
 
 const Code = styled.code`
   padding: 4px 6px;
@@ -140,4 +155,4 @@ const Code = styled.code`
   border-radius: 4px;
 `;
 
-export default inject("collections", "integrations", "auth")(Slack);
+export default observer(Slack);

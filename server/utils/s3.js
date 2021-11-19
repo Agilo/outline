@@ -1,10 +1,10 @@
 // @flow
 import crypto from "crypto";
-import * as Sentry from "@sentry/node";
 import AWS from "aws-sdk";
-import addHours from "date-fns/add_hours";
-import format from "date-fns/format";
-import fetch from "isomorphic-fetch";
+import { addHours, format } from "date-fns";
+import fetch from "fetch-with-proxy";
+import { v4 as uuidv4 } from "uuid";
+import Logger from "../logging/logger";
 
 const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY;
 const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID;
@@ -36,7 +36,7 @@ export const makeCredential = () => {
   const credential =
     AWS_ACCESS_KEY_ID +
     "/" +
-    format(new Date(), "YYYYMMDD") +
+    format(new Date(), "yyyyMMdd") +
     "/" +
     AWS_REGION +
     "/s3/aws4_request";
@@ -62,7 +62,7 @@ export const makePolicy = (
       { "x-amz-credential": credential },
       { "x-amz-date": longDate },
     ],
-    expiration: format(tomorrow, "YYYY-MM-DDTHH:mm:ss\\Z"),
+    expiration: format(tomorrow, "yyyy-MM-dd'T'HH:mm:ss'Z'"),
   };
 
   return Buffer.from(JSON.stringify(policy)).toString("base64");
@@ -71,7 +71,7 @@ export const makePolicy = (
 export const getSignature = (policy: any) => {
   const kDate = hmac(
     "AWS4" + AWS_SECRET_ACCESS_KEY,
-    format(new Date(), "YYYYMMDD")
+    format(new Date(), "yyyyMMdd")
   );
   const kRegion = hmac(kDate, AWS_REGION);
   const kService = hmac(kRegion, "s3");
@@ -147,11 +147,11 @@ export const uploadToS3FromUrl = async (
     const endpoint = publicS3Endpoint(true);
     return `${endpoint}/${key}`;
   } catch (err) {
-    if (process.env.SENTRY_DSN) {
-      Sentry.captureException(err);
-    } else {
-      throw err;
-    }
+    Logger.error("Error uploading to S3 from URL", err, {
+      url,
+      key,
+      acl,
+    });
   }
 };
 
@@ -164,7 +164,7 @@ export const deleteFromS3 = (key: string) => {
     .promise();
 };
 
-export const getSignedImageUrl = async (key: string) => {
+export const getSignedUrl = async (key: string) => {
   const isDocker = process.env.AWS_S3_UPLOAD_BUCKET_URL.match(/http:\/\/s3:/);
 
   const params = {
@@ -178,6 +178,12 @@ export const getSignedImageUrl = async (key: string) => {
     : s3.getSignedUrl("getObject", params);
 };
 
+// function assumes that acl is private
+export const getAWSKeyForFileOp = (teamId: string, name: string) => {
+  const bucket = "uploads";
+  return `${bucket}/${teamId}/${uuidv4()}/${name}-export.zip`;
+};
+
 export const getFileByKey = async (key: string) => {
   const params = {
     Bucket: AWS_S3_UPLOAD_BUCKET_NAME,
@@ -188,10 +194,8 @@ export const getFileByKey = async (key: string) => {
     const data = await s3.getObject(params).promise();
     return data.Body;
   } catch (err) {
-    if (process.env.SENTRY_DSN) {
-      Sentry.captureException(err);
-    } else {
-      throw err;
-    }
+    Logger.error("Error getting file from S3 by key", err, {
+      key,
+    });
   }
 };

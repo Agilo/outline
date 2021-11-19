@@ -12,6 +12,7 @@ import ResizeBorder from "./components/ResizeBorder";
 import Toggle, { ToggleButton, Positioner } from "./components/Toggle";
 import usePrevious from "hooks/usePrevious";
 import useStores from "hooks/useStores";
+import { fadeIn } from "styles/animations";
 
 let ANIMATION_MS = 250;
 let isFirstRender = true;
@@ -154,9 +155,7 @@ const Sidebar = React.forwardRef<Props, HTMLButtonElement>(
       <>
         {ui.mobileSidebarVisible && (
           <Portal>
-            <Fade>
-              <Background onClick={ui.toggleMobileSidebar} />
-            </Fade>
+            <Backdrop onClick={ui.toggleMobileSidebar} />
           </Portal>
         )}
         {children}
@@ -203,7 +202,8 @@ const Sidebar = React.forwardRef<Props, HTMLButtonElement>(
   }
 );
 
-const Background = styled.a`
+const Backdrop = styled.a`
+  animation: ${fadeIn} 250ms ease-in-out;
   position: fixed;
   top: 0;
   left: 0;
@@ -211,7 +211,7 @@ const Background = styled.a`
   right: 0;
   cursor: default;
   z-index: ${(props) => props.theme.depths.sidebar - 1};
-  background: rgba(0, 0, 0, 0.5);
+  background: ${(props) => props.theme.backdrop};
 `;
 
 const Container = styled(Flex)`
@@ -242,7 +242,6 @@ const Container = styled(Flex)`
 
   ${breakpoint("tablet")`
     margin: 0;
-    z-index: 3;
     min-width: 0;
     transform: translateX(${(props) =>
       props.$collapsed ? "calc(-100% + 16px)" : 0});

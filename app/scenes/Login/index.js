@@ -3,9 +3,10 @@ import { find } from "lodash";
 import { observer } from "mobx-react";
 import { BackIcon, EmailIcon } from "outline-icons";
 import * as React from "react";
-import { Redirect, Link, type Location } from "react-router-dom";
+import { Trans, useTranslation } from "react-i18next";
+import { Link, type Location, Redirect } from "react-router-dom";
 import styled from "styled-components";
-import getQueryVariable from "shared/utils/getQueryVariable";
+import { setCookie } from "tiny-cookie";
 import ButtonLarge from "components/ButtonLarge";
 import Fade from "components/Fade";
 import Flex from "components/Flex";
@@ -14,16 +15,45 @@ import HelpText from "components/HelpText";
 import OutlineLogo from "components/OutlineLogo";
 import PageTitle from "components/PageTitle";
 import TeamLogo from "components/TeamLogo";
+import { changeLanguage, detectLanguage } from "../../utils/language";
 import Notices from "./Notices";
 import Provider from "./Provider";
 import env from "env";
+import useQuery from "hooks/useQuery";
 import useStores from "hooks/useStores";
+import { isCustomDomain } from "utils/domains";
 
 type Props = {|
   location: Location,
 |};
 
+function Header({ config }) {
+  const { t } = useTranslation();
+  const isHosted = env.DEPLOYMENT === "hosted";
+  const isSubdomain = !!config.hostname;
+
+  if (!isHosted || isCustomDomain()) {
+    return null;
+  }
+
+  if (isSubdomain) {
+    return (
+      <Back href={env.URL}>
+        <BackIcon color="currentColor" /> {t("Back to home")}
+      </Back>
+    );
+  }
+
+  return (
+    <Back href="https://www.getoutline.com">
+      <BackIcon color="currentColor" /> {t("Back to website")}
+    </Back>
+  );
+}
+
 function Login({ location }: Props) {
+  const query = useQuery();
+  const { t, i18n } = useTranslation();
   const { auth } = useStores();
   const { config } = auth;
   const [emailLinkSentTo, setEmailLinkSentTo] = React.useState("");
@@ -41,6 +71,24 @@ function Login({ location }: Props) {
     auth.fetchConfig();
   }, [auth]);
 
+  // TODO: Persist detected language to new user
+  // Try to detect the user's language and show the login page on its idiom
+  // if translation is available
+  React.useEffect(() => {
+    changeLanguage(detectLanguage(), i18n);
+  }, [i18n]);
+
+  React.useEffect(() => {
+    const entries = Object.fromEntries(query.entries());
+
+    // We don't want to override this cookie if we're viewing an error notice
+    // sent back from the server via query string (notice=), or if there are no
+    // query params at all.
+    if (Object.keys(entries).length && !query.get("notice")) {
+      setCookie("signupQueryParams", JSON.stringify(entries));
+    }
+  }, [query]);
+
   if (auth.authenticated) {
     return <Redirect to="/home" />;
   }
@@ -56,34 +104,24 @@ function Login({ location }: Props) {
     (provider) => provider.id === auth.lastSignedIn && !isCreate
   );
 
-  const header =
-    env.DEPLOYMENT === "hosted" &&
-    (config.hostname ? (
-      <Back href={env.URL}>
-        <BackIcon color="currentColor" /> Back to home
-      </Back>
-    ) : (
-      <Back href="https://www.getoutline.com">
-        <BackIcon color="currentColor" /> Back to website
-      </Back>
-    ));
-
   if (emailLinkSentTo) {
     return (
       <Background>
-        {header}
+        <Header config={config} />
         <Centered align="center" justify="center" column auto>
           <PageTitle title="Check your email" />
           <CheckEmailIcon size={38} color="currentColor" />
-
-          <Heading centered>Check your email</Heading>
+          <Heading centered>{t("Check your email")}</Heading>
           <Note>
-            A magic sign-in link has been sent to the email{" "}
-            <em>{emailLinkSentTo}</em>, no password needed.
+            <Trans
+              defaults="A magic sign-in link has been sent to the email <em>{{ emailLinkSentTo }}</em>, no password needed."
+              values={{ emailLinkSentTo: emailLinkSentTo }}
+              components={{ em: <em /> }}
+            />
           </Note>
           <br />
           <ButtonLarge onClick={handleReset} fullwidth neutral>
-            Back to login
+            {t("Back to login")}
           </ButtonLarge>
         </Centered>
       </Background>
@@ -92,7 +130,7 @@ function Login({ location }: Props) {
 
   return (
     <Background>
-      {header}
+      <Header config={config} />
       <Centered align="center" justify="center" column auto>
         <PageTitle title="Login" />
         <Logo>
@@ -104,12 +142,23 @@ function Login({ location }: Props) {
         </Logo>
 
         {isCreate ? (
-          <Heading centered>Create an account</Heading>
+          <>
+            <Heading centered>{t("Create an account")}</Heading>
+            <GetStarted>
+              {t(
+                "Get started by choosing a sign-in method for your new team below…"
+              )}
+            </GetStarted>
+          </>
         ) : (
-          <Heading centered>Login to {config.name || "Outline"}</Heading>
+          <Heading centered>
+            {t("Login to {{ authProviderName }}", {
+              authProviderName: config.name || "Outline",
+            })}
+          </Heading>
         )}
 
-        <Notices notice={getQueryVariable("notice")} />
+        <Notices />
 
         {defaultProvider && (
           <React.Fragment key={defaultProvider.id}>
@@ -121,7 +170,9 @@ function Login({ location }: Props) {
             {hasMultipleProviders && (
               <>
                 <Note>
-                  You signed in with {defaultProvider.name} last time.
+                  {t("You signed in with {{ authProviderName }} last time.", {
+                    authProviderName: defaultProvider.name,
+                  })}
                 </Note>
                 <Or />
               </>
@@ -146,7 +197,9 @@ function Login({ location }: Props) {
 
         {isCreate && (
           <Note>
-            Already have an account? Go to <Link to="/">login</Link>.
+            <Trans>
+              Already have an account? Go to <Link to="/">login</Link>.
+            </Trans>
           </Note>
         )}
       </Centered>
@@ -168,6 +221,11 @@ const Background = styled(Fade)`
 const Logo = styled.div`
   margin-bottom: -1.5em;
   height: 38px;
+`;
+
+const GetStarted = styled(HelpText)`
+  text-align: center;
+  margin-top: -12px;
 `;
 
 const Note = styled(HelpText)`

@@ -1,23 +1,50 @@
 // @flow
 import queryString from "query-string";
+import Collection from "models/Collection";
 import Document from "models/Document";
 
-export function homeUrl(): string {
+export function homePath(): string {
   return "/home";
 }
 
-export function starredUrl(): string {
-  return "/starred";
+export function draftsPath(): string {
+  return "/drafts";
 }
 
-export function newCollectionUrl(): string {
-  return "/collections/new";
+export function templatesPath(): string {
+  return "/templates";
 }
 
-export function collectionUrl(collectionId: string, section: ?string): string {
-  const path = `/collections/${collectionId}`;
-  if (section) return `${path}/${section}`;
-  return path;
+export function settingsPath(): string {
+  return "/settings";
+}
+
+export function archivePath(): string {
+  return "/archive";
+}
+
+export function trashPath(): string {
+  return "/trash";
+}
+
+export function groupSettingsPath(): string {
+  return "/settings/groups";
+}
+
+export function collectionUrl(url: string, section: ?string): string {
+  if (section) return `${url}/${section}`;
+  return url;
+}
+
+export function updateCollectionUrl(
+  oldUrl: string,
+  collection: Collection
+): string {
+  // Update url to match the current one
+  return oldUrl.replace(
+    new RegExp("/collection/[0-9a-zA-Z-_~]*"),
+    collection.url
+  );
 }
 
 export function documentUrl(doc: Document): string {
@@ -42,17 +69,12 @@ export function documentHistoryUrl(doc: Document, revisionId?: string): string {
  * Replace full url's document part with the new one in case
  * the document slug has been updated
  */
-export function updateDocumentUrl(oldUrl: string, newUrl: string): string {
+export function updateDocumentUrl(oldUrl: string, document: Document): string {
   // Update url to match the current one
-  const urlParts = oldUrl.trim().split("/");
-  const actions = urlParts.slice(3);
-  if (actions[0]) {
-    return [newUrl, actions].join("/");
-  }
-  return newUrl;
+  return oldUrl.replace(new RegExp("/doc/[0-9a-zA-Z-_~]*"), document.url);
 }
 
-export function newDocumentUrl(
+export function newDocumentPath(
   collectionId: string,
   params?: {
     parentDocumentId?: string,
@@ -60,7 +82,7 @@ export function newDocumentUrl(
     template?: boolean,
   }
 ): string {
-  return `/collections/${collectionId}/new?${queryString.stringify(params)}`;
+  return `/collection/${collectionId}/new?${queryString.stringify(params)}`;
 }
 
 export function searchUrl(
@@ -74,7 +96,7 @@ export function searchUrl(
   let route = "/search";
 
   if (query) {
-    route += `/${encodeURIComponent(query.replace("%", "%25"))}`;
+    route += `/${encodeURIComponent(query.replace(/%/g, "%25"))}`;
   }
 
   search = search ? `?${search}` : "";

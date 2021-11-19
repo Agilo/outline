@@ -1,5 +1,5 @@
 // @flow
-import distanceInWordsToNow from "date-fns/distance_in_words_to_now";
+import { formatDistanceToNow } from "date-fns";
 import invariant from "invariant";
 import { deburr, sortBy } from "lodash";
 import { observable } from "mobx";
@@ -8,6 +8,7 @@ import * as React from "react";
 import type { RouterHistory, Match } from "react-router-dom";
 import { withRouter } from "react-router-dom";
 import parseDocumentSlug from "shared/utils/parseDocumentSlug";
+import AuthStore from "stores/AuthStore";
 import DocumentsStore from "stores/DocumentsStore";
 import PoliciesStore from "stores/PoliciesStore";
 import RevisionsStore from "stores/RevisionsStore";
@@ -17,35 +18,43 @@ import Document from "models/Document";
 import Revision from "models/Revision";
 import Error404 from "scenes/Error404";
 import ErrorOffline from "scenes/ErrorOffline";
-import DocumentComponent from "./Document";
 import HideSidebar from "./HideSidebar";
 import Loading from "./Loading";
-import SocketPresence from "./SocketPresence";
-import { type LocationWithState } from "types";
+import { type LocationWithState, type NavigationNode } from "types";
 import { NotFoundError, OfflineError } from "utils/errors";
 import { matchDocumentEdit, updateDocumentUrl } from "utils/routeHelpers";
 import { isInternalUrl } from "utils/urls";
 
 type Props = {|
   match: Match,
+  auth: AuthStore,
   location: LocationWithState,
   shares: SharesStore,
   documents: DocumentsStore,
   policies: PoliciesStore,
   revisions: RevisionsStore,
+  auth: AuthStore,
   ui: UiStore,
   history: RouterHistory,
+  children: (any) => React.Node,
 |};
+
+const sharedTreeCache = {};
 
 @observer
 class DataLoader extends React.Component<Props> {
+  sharedTree: ?NavigationNode;
   @observable document: ?Document;
   @observable revision: ?Revision;
+  @observable shapshot: ?Blob;
   @observable error: ?Error;
 
   componentDidMount() {
     const { documents, match } = this.props;
     this.document = documents.getByUrl(match.params.documentSlug);
+    this.sharedTree = this.document
+      ? sharedTreeCache[this.document.id]
+      : undefined;
     this.loadDocument();
   }
 
@@ -57,7 +66,12 @@ class DataLoader extends React.Component<Props> {
       const document = this.document;
       const policy = this.props.policies.get(document.id);
 
-      if (!policy && !this.error) {
+      if (
+        !policy &&
+        !this.error &&
+        this.props.auth.user &&
+        this.props.auth.user.id
+      ) {
         this.loadDocument();
       }
     }
@@ -74,7 +88,10 @@ class DataLoader extends React.Component<Props> {
   }
 
   get isEditing() {
-    return this.props.match.path === matchDocumentEdit;
+    return (
+      this.props.match.path === matchDocumentEdit ||
+      this.props.auth?.team?.collaborativeEditing
+    );
   }
 
   onSearchLink = async (term: string) => {
@@ -82,8 +99,11 @@ class DataLoader extends React.Component<Props> {
       // search for exact internal document
       const slug = parseDocumentSlug(term);
       try {
-        const document = await this.props.documents.fetch(slug);
-        const time = distanceInWordsToNow(document.updatedAt, {
+        const {
+          document,
+        }: { document: Document } = await this.props.documents.fetch(slug);
+
+        const time = formatDistanceToNow(Date.parse(document.updatedAt), {
           addSuffix: true,
         });
         return [
@@ -106,7 +126,7 @@ class DataLoader extends React.Component<Props> {
 
     return sortBy(
       results.map((document) => {
-        const time = distanceInWordsToNow(document.updatedAt, {
+        const time = formatDistanceToNow(Date.parse(document.updatedAt), {
           addSuffix: true,
         });
         return {
@@ -152,9 +172,13 @@ class DataLoader extends React.Component<Props> {
     }
 
     try {
-      this.document = await this.props.documents.fetch(documentSlug, {
+      const response = await this.props.documents.fetch(documentSlug, {
         shareId,
       });
+
+      this.sharedTree = response.sharedTree;
+      this.document = response.document;
+      sharedTreeCache[this.document.id] = response.sharedTree;
 
       if (revisionId && revisionId !== "latest") {
         await this.loadRevision();
@@ -195,10 +219,7 @@ class DataLoader extends React.Component<Props> {
       const isMove = this.props.location.pathname.match(/move$/);
       const canRedirect = !revisionId && !isMove && !shareId;
       if (canRedirect) {
-        const canonicalUrl = updateDocumentUrl(
-          this.props.match.url,
-          document.url
-        );
+        const canonicalUrl = updateDocumentUrl(this.props.match.url, document);
         if (this.props.location.pathname !== canonicalUrl) {
           this.props.history.replace(canonicalUrl);
         }
@@ -207,7 +228,8 @@ class DataLoader extends React.Component<Props> {
   };
 
   render() {
-    const { location, policies, ui } = this.props;
+    const { location, policies, auth, match, ui } = this.props;
+    const { revisionId } = match.params;
 
     if (this.error) {
       return this.error instanceof OfflineError ? (
@@ -217,33 +239,47 @@ class DataLoader extends React.Component<Props> {
       );
     }
 
+    const team = auth.team;
     const document = this.document;
     const revision = this.revision;
 
-    if (!document) {
+    if (!document || !team || (revisionId && !revision)) {
       return (
         <>
           <Loading location={location} />
-          {this.isEditing && <HideSidebar ui={ui} />}
+          {this.isEditing && !team?.collaborativeEditing && (
+            <HideSidebar ui={ui} />
+          )}
         </>
       );
     }
 
     const abilities = policies.abilities(document.id);
 
+    // We do not want to remount the document when changing from view->edit
+    // on the multiplayer flag as the doc is guaranteed to be upto date.
+    const key = team.collaborativeEditing
+      ? ""
+      : this.isEditing
+      ? "editing"
+      : "read-only";
+
     return (
-      <SocketPresence documentId={document.id} isEditing={this.isEditing}>
-        {this.isEditing && <HideSidebar ui={ui} />}
-        <DocumentComponent
-          document={document}
-          revision={revision}
-          abilities={abilities}
-          location={location}
-          readOnly={!this.isEditing || !abilities.update || document.isArchived}
-          onSearchLink={this.onSearchLink}
-          onCreateLink={this.onCreateLink}
-        />
-      </SocketPresence>
+      <React.Fragment key={key}>
+        {this.isEditing && !team.collaborativeEditing && (
+          <HideSidebar ui={ui} />
+        )}
+        {this.props.children({
+          document,
+          revision,
+          abilities,
+          isEditing: this.isEditing,
+          readOnly: !this.isEditing || !abilities.update || document.isArchived,
+          onSearchLink: this.onSearchLink,
+          onCreateLink: this.onCreateLink,
+          sharedTree: this.sharedTree,
+        })}
+      </React.Fragment>
     );
   }
 }

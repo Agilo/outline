@@ -3,8 +3,8 @@ import * as React from "react";
 import styled from "styled-components";
 
 const Button = styled.button`
-  width: ${(props) => props.size}px;
-  height: ${(props) => props.size}px;
+  width: ${(props) => props.width || props.size}px;
+  height: ${(props) => props.height || props.size}px;
   background: none;
   border-radius: 4px;
   line-height: 0;
@@ -12,6 +12,7 @@ const Button = styled.button`
   padding: 0;
   cursor: pointer;
   user-select: none;
+  color: inherit;
 `;
 
 export default React.forwardRef<any, typeof Button>(

@@ -5,8 +5,9 @@ import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { Switch, Route } from "react-router-dom";
 import { Action } from "components/Actions";
+import Empty from "components/Empty";
 import Heading from "components/Heading";
-import InputSearch from "components/InputSearch";
+import InputSearchPage from "components/InputSearchPage";
 import LanguagePrompt from "components/LanguagePrompt";
 import Scene from "components/Scene";
 import Tab from "components/Tab";
@@ -29,11 +30,7 @@ function Home() {
       actions={
         <>
           <Action>
-            <InputSearch
-              source="dashboard"
-              label={t("Search documents")}
-              labelHidden
-            />
+            <InputSearchPage source="dashboard" label={t("Search documents")} />
           </Action>
           <Action>
             <NewDocumentMenu />
@@ -45,19 +42,19 @@ function Home() {
       <Heading>{t("Home")}</Heading>
       <Tabs>
         <Tab to="/home" exact>
-          {t("Recently updated")}
+          {t("Recently viewed")}
         </Tab>
         <Tab to="/home/recent" exact>
-          {t("Recently viewed")}
+          {t("Recently updated")}
         </Tab>
         <Tab to="/home/created">{t("Created by me")}</Tab>
       </Tabs>
       <Switch>
         <Route path="/home/recent">
           <PaginatedDocumentList
-            key="recent"
-            documents={documents.recentlyViewed}
-            fetch={documents.fetchRecentlyViewed}
+            documents={documents.recentlyUpdated}
+            fetch={documents.fetchRecentlyUpdated}
+            empty={<Empty>{t("Weird, this shouldn’t ever be empty")}</Empty>}
             showCollection
           />
         </Route>
@@ -67,13 +64,22 @@ function Home() {
             documents={documents.createdByUser(user)}
             fetch={documents.fetchOwned}
             options={{ user }}
+            empty={<Empty>{t("You haven’t created any documents yet")}</Empty>}
             showCollection
           />
         </Route>
         <Route path="/home">
           <PaginatedDocumentList
-            documents={documents.recentlyUpdated}
-            fetch={documents.fetchRecentlyUpdated}
+            key="recent"
+            documents={documents.recentlyViewed}
+            fetch={documents.fetchRecentlyViewed}
+            empty={
+              <Empty>
+                {t(
+                  "Documents you’ve recently viewed will be here for easy access"
+                )}
+              </Empty>
+            }
             showCollection
           />
         </Route>

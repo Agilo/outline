@@ -1,6 +1,7 @@
 // @flow
 import { EmailIcon } from "outline-icons";
 import * as React from "react";
+import { withTranslation, type TFunction } from "react-i18next";
 import styled from "styled-components";
 import AuthLogo from "components/AuthLogo";
 import ButtonLarge from "components/ButtonLarge";
@@ -13,6 +14,7 @@ type Props = {
   authUrl: string,
   isCreate: boolean,
   onEmailSuccess: (email: string) => void,
+  t: TFunction,
 };
 
 type State = {
@@ -56,7 +58,7 @@ class Provider extends React.Component<Props, State> {
   };
 
   render() {
-    const { isCreate, id, name, authUrl } = this.props;
+    const { isCreate, id, name, authUrl, t } = this.props;
 
     if (id === "email") {
       if (isCreate) {
@@ -84,12 +86,12 @@ class Provider extends React.Component<Props, State> {
                   short
                 />
                 <ButtonLarge type="submit" disabled={this.state.isSubmitting}>
-                  Sign In →
+                  {t("Sign In")} →
                 </ButtonLarge>
               </>
             ) : (
               <ButtonLarge type="submit" icon={<EmailIcon />} fullwidth>
-                Continue with Email
+                {t("Continue with Email")}
               </ButtonLarge>
             )}
           </Form>
@@ -97,29 +99,21 @@ class Provider extends React.Component<Props, State> {
       );
     }
 
-    const icon = <AuthLogo providerName={id} />;
-
     return (
       <Wrapper key={id}>
         <ButtonLarge
           onClick={() => (window.location.href = authUrl)}
-          icon={icon ? <Logo>{icon}</Logo> : null}
+          icon={<AuthLogo providerName={id} />}
           fullwidth
         >
-          {isCreate ? "Sign up" : "Continue"} with {name}
+          {t("Continue with {{ authProviderName }}", {
+            authProviderName: name,
+          })}
         </ButtonLarge>
       </Wrapper>
     );
   }
 }
-
-const Logo = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-`;
 
 const Wrapper = styled.div`
   margin-bottom: 1em;
@@ -132,4 +126,4 @@ const Form = styled.form`
   justify-content: space-between;
 `;
 
-export default Provider;
+export default withTranslation()<Provider>(Provider);

@@ -1,7 +1,6 @@
 // @flow
 import ApiKey from "./ApiKey";
 import Attachment from "./Attachment";
-import Authentication from "./Authentication";
 import AuthenticationProvider from "./AuthenticationProvider";
 import Backlink from "./Backlink";
 import Collection from "./Collection";
@@ -9,9 +8,11 @@ import CollectionGroup from "./CollectionGroup";
 import CollectionUser from "./CollectionUser";
 import Document from "./Document";
 import Event from "./Event";
+import FileOperation from "./FileOperation";
 import Group from "./Group";
 import GroupUser from "./GroupUser";
 import Integration from "./Integration";
+import IntegrationAuthentication from "./IntegrationAuthentication";
 import Notification from "./Notification";
 import NotificationSetting from "./NotificationSetting";
 import Revision from "./Revision";
@@ -26,7 +27,6 @@ import View from "./View";
 const models = {
   ApiKey,
   Attachment,
-  Authentication,
   AuthenticationProvider,
   Backlink,
   Collection,
@@ -37,6 +37,7 @@ const models = {
   Group,
   GroupUser,
   Integration,
+  IntegrationAuthentication,
   Notification,
   NotificationSetting,
   Revision,
@@ -47,6 +48,7 @@ const models = {
   User,
   UserAuthentication,
   View,
+  FileOperation,
 };
 
 // based on https://github.com/sequelize/express-example/blob/master/models/index.js
@@ -59,7 +61,6 @@ Object.keys(models).forEach((modelName) => {
 export {
   ApiKey,
   Attachment,
-  Authentication,
   AuthenticationProvider,
   Backlink,
   Collection,
@@ -70,6 +71,7 @@ export {
   Group,
   GroupUser,
   Integration,
+  IntegrationAuthentication,
   Notification,
   NotificationSetting,
   Revision,
@@ -80,4 +82,5 @@ export {
   User,
   UserAuthentication,
   View,
+  FileOperation,
 };

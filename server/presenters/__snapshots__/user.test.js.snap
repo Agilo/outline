@@ -3,11 +3,12 @@
 exports[`presents a user 1`] = `
 Object {
   "avatarUrl": undefined,
+  "color": undefined,
   "createdAt": undefined,
   "id": "123",
   "isAdmin": undefined,
   "isSuspended": undefined,
-  "language": "en_US",
+  "isViewer": undefined,
   "lastActiveAt": undefined,
   "name": "Test User",
 }
@@ -16,11 +17,12 @@ Object {
 exports[`presents a user without slack data 1`] = `
 Object {
   "avatarUrl": undefined,
+  "color": undefined,
   "createdAt": undefined,
   "id": "123",
   "isAdmin": undefined,
   "isSuspended": undefined,
-  "language": "en_US",
+  "isViewer": undefined,
   "lastActiveAt": undefined,
   "name": "Test User",
 }

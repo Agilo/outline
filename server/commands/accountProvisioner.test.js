@@ -1,8 +1,11 @@
 // @flow
+import mailer from "../mailer";
 import { Collection, UserAuthentication } from "../models";
 import { buildUser, buildTeam } from "../test/factories";
 import { flushdb } from "../test/support";
 import accountProvisioner from "./accountProvisioner";
+
+jest.mock("../mailer");
 
 jest.mock("aws-sdk", () => {
   const mS3 = { putObject: jest.fn().mockReturnThis(), promise: jest.fn() };
@@ -12,7 +15,12 @@ jest.mock("aws-sdk", () => {
   };
 });
 
-beforeEach(() => flushdb());
+beforeEach(() => {
+  // $FlowFixMe
+  mailer.sendTemplate.mockReset();
+
+  return flushdb();
+});
 
 describe("accountProvisioner", () => {
   const ip = "127.0.0.1";
@@ -24,6 +32,7 @@ describe("accountProvisioner", () => {
         name: "Jenny Tester",
         email: "jenny@example.com",
         avatarUrl: "https://example.com/avatar.png",
+        username: "jtester",
       },
       team: {
         name: "New team",
@@ -49,8 +58,10 @@ describe("accountProvisioner", () => {
     expect(auth.scopes[0]).toEqual("read");
     expect(team.name).toEqual("New team");
     expect(user.email).toEqual("jenny@example.com");
+    expect(user.username).toEqual("jtester");
     expect(isNewUser).toEqual(true);
     expect(isNewTeam).toEqual(true);
+    expect(mailer.sendTemplate).toHaveBeenCalled();
 
     const collectionCount = await Collection.count();
     expect(collectionCount).toEqual(1);
@@ -64,13 +75,15 @@ describe("accountProvisioner", () => {
     const authentications = await existing.getAuthentications();
     const authentication = authentications[0];
     const newEmail = "test@example.com";
+    const newUsername = "tname";
 
-    const { user } = await accountProvisioner({
+    const { user, isNewUser, isNewTeam } = await accountProvisioner({
       ip,
       user: {
         name: existing.name,
         email: newEmail,
         avatarUrl: existing.avatarUrl,
+        username: newUsername,
       },
       team: {
         name: existingTeam.name,
@@ -93,6 +106,10 @@ describe("accountProvisioner", () => {
     expect(auth.scopes.length).toEqual(1);
     expect(auth.scopes[0]).toEqual("read");
     expect(user.email).toEqual(newEmail);
+    expect(user.username).toEqual(newUsername);
+    expect(isNewTeam).toEqual(false);
+    expect(isNewUser).toEqual(false);
+    expect(mailer.sendTemplate).not.toHaveBeenCalled();
 
     const collectionCount = await Collection.count();
     expect(collectionCount).toEqual(0);
@@ -150,6 +167,7 @@ describe("accountProvisioner", () => {
         name: "Jenny Tester",
         email: "jenny@example.com",
         avatarUrl: "https://example.com/avatar.png",
+        username: "jtester",
       },
       team: {
         name: team.name,
@@ -174,9 +192,12 @@ describe("accountProvisioner", () => {
     expect(auth.scopes.length).toEqual(1);
     expect(auth.scopes[0]).toEqual("read");
     expect(user.email).toEqual("jenny@example.com");
+    expect(user.username).toEqual("jtester");
     expect(isNewUser).toEqual(true);
+    expect(mailer.sendTemplate).toHaveBeenCalled();
 
+    // should provision welcome collection
     const collectionCount = await Collection.count();
-    expect(collectionCount).toEqual(0);
+    expect(collectionCount).toEqual(1);
   });
 });

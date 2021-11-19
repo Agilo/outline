@@ -1,19 +1,22 @@
 // @flow
-import distanceInWordsToNow from "date-fns/distance_in_words_to_now";
+import { formatDistanceToNow } from "date-fns";
 import * as React from "react";
 
-const LocaleTime = React.lazy(() => import("components/LocaleTime"));
+const LocaleTime = React.lazy(() =>
+  import(/* webpackChunkName: "locale-time" */ "components/LocaleTime")
+);
 
 type Props = {
   dateTime: string,
   children?: React.Node,
   tooltipDelay?: number,
   addSuffix?: boolean,
+  format?: string,
   shorten?: boolean,
 };
 
 function Time(props: Props) {
-  let content = distanceInWordsToNow(props.dateTime, {
+  let content = formatDistanceToNow(Date.parse(props.dateTime), {
     addSuffix: props.addSuffix,
   });
 
@@ -30,7 +33,7 @@ function Time(props: Props) {
         <time dateTime={props.dateTime}>{props.children || content}</time>
       }
     >
-      <LocaleTime {...props} />
+      <LocaleTime tooltipDelay={250} {...props} />
     </React.Suspense>
   );
 }

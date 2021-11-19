@@ -1,24 +1,28 @@
 // @flow
 import fractionalIndex from "fractional-index";
 import { observer } from "mobx-react";
-import { PlusIcon } from "outline-icons";
+import { CollapsedIcon } from "outline-icons";
 import * as React from "react";
 import { useDrop } from "react-dnd";
 import { useTranslation } from "react-i18next";
+import styled from "styled-components";
 import Fade from "components/Fade";
 import Flex from "components/Flex";
 import useStores from "../../../hooks/useStores";
 import CollectionLink from "./CollectionLink";
-import CollectionsLoading from "./CollectionsLoading";
 import DropCursor from "./DropCursor";
-import Header from "./Header";
+import PlaceholderCollections from "./PlaceholderCollections";
+import SidebarAction from "./SidebarAction";
 import SidebarLink from "./SidebarLink";
-type Props = {
-  onCreateCollection: () => void,
-};
+import { createCollection } from "actions/definitions/collections";
+import useToasts from "hooks/useToasts";
 
-function Collections({ onCreateCollection }: Props) {
+function Collections() {
+  const [isFetching, setFetching] = React.useState(false);
+  const [fetchError, setFetchError] = React.useState();
   const { ui, policies, documents, collections } = useStores();
+  const { showToast } = useToasts();
+  const [expanded, setExpanded] = React.useState(true);
   const isPreloaded: boolean = !!collections.orderedData.length;
   const { t } = useTranslation();
   const orderedCollections = collections.orderedData;
@@ -27,10 +31,26 @@ function Collections({ onCreateCollection }: Props) {
   );
 
   React.useEffect(() => {
-    if (!collections.isLoaded) {
-      collections.fetchPage({ limit: 100 });
+    async function load() {
+      if (!collections.isLoaded && !isFetching && !fetchError) {
+        try {
+          setFetching(true);
+          await collections.fetchPage({ limit: 100 });
+        } catch (error) {
+          showToast(
+            t("Collections could not be loaded, please reload the app"),
+            {
+              type: "error",
+            }
+          );
+          setFetchError(error);
+        } finally {
+          setFetching(false);
+        }
+      }
     }
-  });
+    load();
+  }, [collections, isFetching, showToast, fetchError, t]);
 
   const [{ isCollectionDropping }, dropToReorderCollection] = useDrop({
     accept: "collection",
@@ -68,31 +88,37 @@ function Collections({ onCreateCollection }: Props) {
           belowCollection={orderedCollections[index + 1]}
         />
       ))}
-      <SidebarLink
-        to="/collections"
-        onClick={onCreateCollection}
-        icon={<PlusIcon color="currentColor" />}
-        label={`${t("New collection")}…`}
-        exact
-      />
+      <SidebarAction action={createCollection} depth={0.5} />
     </>
   );
 
-  if (!collections.isLoaded) {
+  if (!collections.isLoaded || fetchError) {
     return (
       <Flex column>
-        <Header>{t("Collections")}</Header>
-        <CollectionsLoading />
+        <SidebarLink
+          label={t("Collections")}
+          icon={<Disclosure expanded={expanded} color="currentColor" />}
+        />
+        <PlaceholderCollections />
       </Flex>
     );
   }
 
   return (
     <Flex column>
-      <Header>{t("Collections")}</Header>
-      {isPreloaded ? content : <Fade>{content}</Fade>}
+      <SidebarLink
+        onClick={() => setExpanded((prev) => !prev)}
+        label={t("Collections")}
+        icon={<Disclosure expanded={expanded} color="currentColor" />}
+      />
+      {expanded && (isPreloaded ? content : <Fade>{content}</Fade>)}
     </Flex>
   );
 }
+
+const Disclosure = styled(CollapsedIcon)`
+  transition: transform 100ms ease, fill 50ms !important;
+  ${({ expanded }) => !expanded && "transform: rotate(-90deg);"};
+`;
 
 export default observer(Collections);

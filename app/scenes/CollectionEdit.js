@@ -1,169 +1,123 @@
 // @flow
-import { observable } from "mobx";
-import { inject, observer } from "mobx-react";
+import invariant from "invariant";
+import { observer } from "mobx-react";
 import * as React from "react";
-import { withTranslation, Trans, type TFunction } from "react-i18next";
-import AuthStore from "stores/AuthStore";
-import UiStore from "stores/UiStore";
-import Collection from "models/Collection";
+import { useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
+import { useHistory } from "react-router-dom";
 import Button from "components/Button";
 import Flex from "components/Flex";
 import HelpText from "components/HelpText";
 import IconPicker from "components/IconPicker";
 import Input from "components/Input";
 import InputSelect from "components/InputSelect";
-import Switch from "components/Switch";
+import useStores from "hooks/useStores";
+import useToasts from "hooks/useToasts";
 
 type Props = {
-  collection: Collection,
-  ui: UiStore,
-  auth: AuthStore,
+  collectionId: string,
   onSubmit: () => void,
-  t: TFunction,
 };
 
-@observer
-class CollectionEdit extends React.Component<Props> {
-  @observable name: string = this.props.collection.name;
-  @observable sharing: boolean = this.props.collection.sharing;
-  @observable icon: string = this.props.collection.icon;
-  @observable color: string = this.props.collection.color || "#4E5C6E";
-  @observable private: boolean = this.props.collection.private;
-  @observable sort: { field: string, direction: "asc" | "desc" } = this.props
-    .collection.sort;
-  @observable isSaving: boolean;
+const CollectionEdit = ({ collectionId, onSubmit }: Props) => {
+  const { collections } = useStores();
+  const collection = collections.get(collectionId);
+  invariant(collection, "Collection not found");
 
-  handleSubmit = async (ev: SyntheticEvent<*>) => {
-    ev.preventDefault();
-    this.isSaving = true;
-    const { t } = this.props;
+  const [name, setName] = useState(collection.name);
+  const [icon, setIcon] = useState(collection.icon);
+  const [color, setColor] = useState(collection.color || "#4E5C6E");
+  const [sort, setSort] = useState<{
+    field: string,
+    direction: "asc" | "desc",
+  }>(collection.sort);
+  const history = useHistory();
+  const [isSaving, setIsSaving] = useState();
+  const { showToast } = useToasts();
+  const { t } = useTranslation();
 
-    try {
-      await this.props.collection.save({
-        name: this.name,
-        icon: this.icon,
-        color: this.color,
-        private: this.private,
-        sharing: this.sharing,
-        sort: this.sort,
-      });
-      this.props.onSubmit();
-      this.props.ui.showToast(t("The collection was updated"), {
-        type: "success",
-      });
-    } catch (err) {
-      this.props.ui.showToast(err.message, { type: "error" });
-    } finally {
-      this.isSaving = false;
-    }
-  };
+  const handleSubmit = React.useCallback(
+    async (ev: SyntheticEvent<*>) => {
+      ev.preventDefault();
+      setIsSaving(true);
 
-  handleSortChange = (ev: SyntheticInputEvent<HTMLSelectElement>) => {
-    const [field, direction] = ev.target.value.split(".");
+      try {
+        await collection.save({
+          name,
+          icon,
+          color,
+          sort,
+        });
+
+        history.push(collection.url);
+        onSubmit();
+        showToast(t("The collection was updated"), {
+          type: "success",
+        });
+      } catch (err) {
+        showToast(err.message, { type: "error" });
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [collection, history, color, icon, name, onSubmit, showToast, sort, t]
+  );
+
+  const handleSortChange = (value: string) => {
+    const [field, direction] = value.split(".");
 
     if (direction === "asc" || direction === "desc") {
-      this.sort = { field, direction };
+      setSort({ field, direction });
     }
   };
 
-  handleNameChange = (ev: SyntheticInputEvent<*>) => {
-    this.name = ev.target.value;
+  const handleNameChange = (ev: SyntheticInputEvent<*>) => {
+    setName(ev.target.value.trim());
   };
 
-  handleChange = (color: string, icon: string) => {
-    this.color = color;
-    this.icon = icon;
+  const handleChange = (color: string, icon: string) => {
+    setColor(color);
+    setIcon(icon);
   };
 
-  handlePrivateChange = (ev: SyntheticInputEvent<*>) => {
-    this.private = ev.target.checked;
-  };
-
-  handleSharingChange = (ev: SyntheticInputEvent<*>) => {
-    this.sharing = ev.target.checked;
-  };
-
-  render() {
-    const { auth, t } = this.props;
-    const teamSharingEnabled = !!auth.team && auth.team.sharing;
-
-    return (
-      <Flex column>
-        <form onSubmit={this.handleSubmit}>
-          <HelpText>
-            <Trans>
-              You can edit the name and other details at any time, however doing
-              so often might confuse your team mates.
-            </Trans>
-          </HelpText>
-          <Flex>
-            <Input
-              type="text"
-              label={t("Name")}
-              onChange={this.handleNameChange}
-              value={this.name}
-              required
-              autoFocus
-              flex
-            />
-            &nbsp;
-            <IconPicker
-              onChange={this.handleChange}
-              color={this.color}
-              icon={this.icon}
-            />
-          </Flex>
-          <InputSelect
-            label={t("Sort in sidebar")}
-            options={[
-              { label: t("Alphabetical"), value: "title.asc" },
-              { label: t("Manual sort"), value: "index.asc" },
-            ]}
-            value={`${this.sort.field}.${this.sort.direction}`}
-            onChange={this.handleSortChange}
+  return (
+    <Flex column>
+      <form onSubmit={handleSubmit}>
+        <HelpText>
+          <Trans>
+            You can edit the name and other details at any time, however doing
+            so often might confuse your team mates.
+          </Trans>
+        </HelpText>
+        <Flex>
+          <Input
+            type="text"
+            label={t("Name")}
+            onChange={handleNameChange}
+            value={name}
+            required
+            autoFocus
+            flex
           />
-          <Switch
-            id="private"
-            label={t("Private collection")}
-            onChange={this.handlePrivateChange}
-            checked={this.private}
-          />
-          <HelpText>
-            <Trans>
-              A private collection will only be visible to invited team members.
-            </Trans>
-          </HelpText>
-          <Switch
-            id="sharing"
-            label={t("Public document sharing")}
-            onChange={this.handleSharingChange}
-            checked={this.sharing && teamSharingEnabled}
-            disabled={!teamSharingEnabled}
-          />
-          <HelpText>
-            {teamSharingEnabled ? (
-              <Trans>
-                When enabled, documents can be shared publicly on the internet.
-              </Trans>
-            ) : (
-              <Trans>
-                Public sharing is currently disabled in the team security
-                settings.
-              </Trans>
-            )}
-          </HelpText>
-          <Button
-            type="submit"
-            disabled={this.isSaving || !this.props.collection.name}
-          >
-            {this.isSaving ? `${t("Saving")}…` : t("Save")}
-          </Button>
-        </form>
-      </Flex>
-    );
-  }
-}
+          &nbsp;
+          <IconPicker onChange={handleChange} color={color} icon={icon} />
+        </Flex>
+        <InputSelect
+          label={t("Sort in sidebar")}
+          options={[
+            { label: t("Alphabetical"), value: "title.asc" },
+            { label: t("Manual sort"), value: "index.asc" },
+          ]}
+          value={`${sort.field}.${sort.direction}`}
+          onChange={handleSortChange}
+          ariaLabel={t("Sort")}
+        />
+        <Button type="submit" disabled={isSaving || !collection.name}>
+          {isSaving ? `${t("Saving")}…` : t("Save")}
+        </Button>
+      </form>
+    </Flex>
+  );
+};
 
-export default withTranslation()<CollectionEdit>(
-  inject("ui", "auth")(CollectionEdit)
-);
+export default observer(CollectionEdit);

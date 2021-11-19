@@ -3,16 +3,23 @@ import { lighten } from "polished";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { withRouter, type RouterHistory } from "react-router-dom";
+import { Extension } from "rich-markdown-editor";
 import styled, { withTheme } from "styled-components";
+import embeds from "shared/embeds";
+import { light } from "shared/theme";
 import UiStore from "stores/UiStore";
 import ErrorBoundary from "components/ErrorBoundary";
 import Tooltip from "components/Tooltip";
-import embeds from "../embeds";
+import useMediaQuery from "hooks/useMediaQuery";
+import useToasts from "hooks/useToasts";
+import { type Theme } from "types";
 import { isModKey } from "utils/keyboard";
 import { uploadFile } from "utils/uploadFile";
-import { isInternalUrl } from "utils/urls";
+import { isInternalUrl, isHash } from "utils/urls";
 
-const RichMarkdownEditor = React.lazy(() => import("rich-markdown-editor"));
+const RichMarkdownEditor = React.lazy(() =>
+  import(/* webpackChunkName: "rich-markdown-editor" */ "rich-markdown-editor")
+);
 
 const EMPTY_ARRAY = [];
 
@@ -24,11 +31,16 @@ export type Props = {|
   grow?: boolean,
   disableEmbeds?: boolean,
   ui?: UiStore,
+  style?: Object,
+  extensions?: Extension[],
+  shareId?: ?string,
   autoFocus?: boolean,
   template?: boolean,
   placeholder?: string,
   maxLength?: number,
   scrollTo?: string,
+  theme?: Theme,
+  className?: string,
   handleDOMEvents?: Object,
   readOnlyWriteCheckboxes?: boolean,
   onBlur?: (event: SyntheticEvent<>) => any,
@@ -51,8 +63,10 @@ type PropsWithRef = Props & {
 };
 
 function Editor(props: PropsWithRef) {
-  const { id, ui, history } = props;
+  const { id, shareId, history } = props;
   const { t } = useTranslation();
+  const { showToast } = useToasts();
+  const isPrinting = useMediaQuery("print");
 
   const onUploadImage = React.useCallback(
     async (file: File) => {
@@ -65,7 +79,7 @@ function Editor(props: PropsWithRef) {
   const onClickLink = React.useCallback(
     (href: string, event: MouseEvent) => {
       // on page hash
-      if (href[0] === "#") {
+      if (isHash(href)) {
         window.location.href = href;
         return;
       }
@@ -84,21 +98,23 @@ function Editor(props: PropsWithRef) {
           }
         }
 
+        if (shareId) {
+          navigateTo = `/share/${shareId}${navigateTo}`;
+        }
+
         history.push(navigateTo);
       } else if (href) {
         window.open(href, "_blank");
       }
     },
-    [history]
+    [history, shareId]
   );
 
   const onShowToast = React.useCallback(
     (message: string) => {
-      if (ui) {
-        ui.showToast(message);
-      }
+      showToast(message);
     },
-    [ui]
+    [showToast]
   );
 
   const dictionary = React.useMemo(() => {
@@ -121,6 +137,11 @@ function Editor(props: PropsWithRef) {
       deleteColumn: t("Delete column"),
       deleteRow: t("Delete row"),
       deleteTable: t("Delete table"),
+      deleteImage: t("Delete image"),
+      downloadImage: t("Download image"),
+      alignImageLeft: t("Float left"),
+      alignImageRight: t("Float right"),
+      alignImageDefault: t("Center large"),
       em: t("Italic"),
       embedInvalidLink: t("Sorry, that link won’t work for this embed type"),
       findOrCreateDoc: `${t("Find or create a doc")}…`,
@@ -131,6 +152,7 @@ function Editor(props: PropsWithRef) {
       hr: t("Divider"),
       image: t("Image"),
       imageUploadError: t("Sorry, an error occurred uploading the image"),
+      imageCaptionPlaceholder: t("Write a caption"),
       info: t("Info"),
       infoNotice: t("Info notice"),
       link: t("Link"),
@@ -141,6 +163,7 @@ function Editor(props: PropsWithRef) {
       noResults: t("No results"),
       openLink: t("Open link"),
       orderedList: t("Ordered list"),
+      pageBreak: t("Page break"),
       pasteLink: `${t("Paste a link")}…`,
       pasteLinkWithTitle: (service: string) =>
         t("Paste a {{service}} link…", { service }),
@@ -170,6 +193,7 @@ function Editor(props: PropsWithRef) {
         tooltip={EditorTooltip}
         dictionary={dictionary}
         {...props}
+        theme={isPrinting ? light : props.theme}
       />
     </ErrorBoundary>
   );
@@ -204,7 +228,8 @@ const StyledEditor = styled(RichMarkdownEditor)`
     visibility: hidden;
   }
 
-  .heading-name:first-child {
+  .heading-name:first-child,
+  .heading-name:first-child + .ProseMirror-yjs-cursor {
     & + h1,
     & + h2,
     & + h3,
@@ -225,6 +250,60 @@ const StyledEditor = styled(RichMarkdownEditor)`
         text-decoration: none;
       }
     }
+  }
+
+  .ProseMirror {
+    & > .ProseMirror-yjs-cursor {
+      display: none;
+    }
+
+    .ProseMirror-yjs-cursor {
+      position: relative;
+      margin-left: -1px;
+      margin-right: -1px;
+      border-left: 1px solid black;
+      border-right: 1px solid black;
+      height: 1em;
+      word-break: normal;
+
+      &:after {
+        content: "";
+        display: block;
+        position: absolute;
+        left: -8px;
+        right: -8px;
+        top: 0;
+        bottom: 0;
+      }
+      > div {
+        opacity: 0;
+        transition: opacity 100ms ease-in-out;
+        position: absolute;
+        top: -1.8em;
+        font-size: 13px;
+        background-color: rgb(250, 129, 0);
+        font-style: normal;
+        line-height: normal;
+        user-select: none;
+        white-space: nowrap;
+        color: white;
+        padding: 2px 6px;
+        font-weight: 500;
+        border-radius: 4px;
+        pointer-events: none;
+        left: -1px;
+      }
+
+      &:hover {
+        > div {
+          opacity: 1;
+        }
+      }
+    }
+  }
+
+  &.show-cursor-names .ProseMirror-yjs-cursor > div {
+    opacity: 1;
   }
 `;
 
