@@ -1,4 +1,3 @@
-// @flow
 module.exports = {
   contextSeparator: "_",
   // Key separator used in your translation keys
@@ -81,4 +80,8 @@ module.exports = {
   //   message: "${defaultValue}",
   //   description: "${maxLength}", // t('my-key', {maxLength: 150})
   // }
+
+  i18nextOptions: {
+    compatibilityJSON: "v3",
+  },
 };

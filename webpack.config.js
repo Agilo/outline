@@ -3,7 +3,6 @@ const path = require('path');
 const webpack = require('webpack');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const { RelativeCiAgentWebpackPlugin } = require('@relative-ci/agent');
-const pkg = require("rich-markdown-editor/package.json");
 const WebpackPwaManifest = require("webpack-pwa-manifest");
 const WorkboxPlugin = require("workbox-webpack-plugin");
 
@@ -18,7 +17,7 @@ module.exports = {
   module: {
     rules: [
       {
-       test: /\.js$/,
+       test: /\.[jt]sx?$/,
        loader: 'babel-loader',
        exclude: [
          path.join(__dirname, 'node_modules')
@@ -41,22 +40,21 @@ module.exports = {
     ]
   },
   resolve: {
+    extensions: ['.ts', '.tsx', '.js', '.json'],
     modules: [
       path.resolve(__dirname, 'app'),
       'node_modules'
     ],
     alias: {
-      shared: path.resolve(__dirname, 'shared'),
-      'boundless-arrow-key-navigation': 'boundless-arrow-key-navigation/build',
+      "~": path.resolve(__dirname, 'app'),
+      "@shared": path.resolve(__dirname, 'shared'),
+      "@server": path.resolve(__dirname, 'server'),
       'boundless-popover': 'boundless-popover/build',
       'boundless-utils-omit-keys': 'boundless-utils-omit-keys/build',
       'boundless-utils-uuid': 'boundless-utils-uuid/build'
     }
   },
   plugins: [
-    new webpack.DefinePlugin({
-      EDITOR_VERSION: JSON.stringify(pkg.version)
-    }),
     new webpack.IgnorePlugin(/unicode\/category\/So/),
     new HtmlWebpackPlugin({
       template: 'server/static/index.html',

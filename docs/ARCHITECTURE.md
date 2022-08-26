@@ -1,12 +1,10 @@
 # Architecture
 
-Outline is composed of a backend and frontend codebase in this monorepo. As both are written in Javascript, they share some code where possible. We utilize the latest ES6 language features, including `async`/`await`, and [Flow](https://flow.org/) typing. Prettier formatting and ESLint are enforced by CI.
+Outline is composed of a backend and frontend codebase in this monorepo. As both are written in TypeScript, they share some code where possible. We utilize the latest ES6 language features, including `async`/`await`, and types. Prettier formatting and ESLint are enforced by CI.
 
 ## Frontend
 
 Outline's frontend is a React application compiled with [Webpack](https://webpack.js.org/). It uses [MobX](https://mobx.js.org/) for state management and [Styled Components](https://www.styled-components.com/) for component styles. Unless global, state logic and styles are always co-located with React components together with their subcomponents to make the component tree easier to manage.
-
-> Important Note: The Outline editor is built on [Prosemirror](https://github.com/prosemirror) and managed in a separate open source repository to encourage re-use: [rich-markdown-editor](https://github.com/outline/rich-markdown-editor).
 
 ```
 app
@@ -19,7 +17,7 @@ app
 ├── routes      - Route definitions, note that chunks are async loaded with suspense
 ├── scenes      - A scene represents a full-page view that contains several components
 ├── stores      - Collections of models and associated fetch logic
-├── types       - Flow types
+├── types       - TypeScript types
 └── utils       - Utility methods specific to the frontend
 ```
 
@@ -39,7 +37,7 @@ server
 ├── commands          - We are gradually moving to the command pattern for new write logic
 ├── config            - Database configuration
 ├── emails            - Transactional email templates
-│   └── components    - Shared React components for email templates
+│   └── templates     - Classes that define each possible email template
 ├── middlewares       - Koa middlewares
 ├── migrations        - Database migrations
 ├── models            - Sequelize models
@@ -47,7 +45,8 @@ server
 ├── policies          - Authorization logic based on cancan
 ├── presenters        - JSON presenters for database models, the interface between backend -> frontend
 ├── queues            - Async queue definitions
-│   └── processors    - Processors perform async jobs, usually working on events from the event bus
+│   └── processors    - Processors perform jobs on events from the event bus
+│   └── tasks         - Tasks are arbitrary async jobs not from the event bus
 ├── services          - Services start distinct portions of the application eg api, worker
 ├── static            - Static assets
 ├── test              - Test helpers and fixtures, tests themselves are colocated
@@ -61,6 +60,7 @@ small utilities.
 
 ```
 shared
+├── editor            - The text editor, based on Prosemirror
 ├── i18n              - Internationalization confiuration
 │   └── locales       - Language specific translation files
 ├── styles            - Styles, colors and other global aesthetics
