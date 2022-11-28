@@ -1,5 +1,6 @@
 import { S3 } from "aws-sdk";
 import { truncate } from "lodash";
+import { CollectionPermission } from "@shared/types";
 import { CollectionValidation } from "@shared/validations";
 import attachmentCreator from "@server/commands/attachmentCreator";
 import documentCreator from "@server/commands/documentCreator";
@@ -272,7 +273,8 @@ export default abstract class ImportTask extends BaseTask<Props> {
                 length: CollectionValidation.maxDescriptionLength,
               }),
               createdById: fileOperation.userId,
-              permission: "read_write",
+              permission: CollectionPermission.ReadWrite,
+              importId: fileOperation.id,
             },
             transaction,
           });
@@ -292,7 +294,8 @@ export default abstract class ImportTask extends BaseTask<Props> {
                 teamId: fileOperation.teamId,
                 createdById: fileOperation.userId,
                 name,
-                permission: "read_write",
+                permission: CollectionPermission.ReadWrite,
+                importId: fileOperation.id,
               },
               { transaction }
             );
@@ -356,6 +359,7 @@ export default abstract class ImportTask extends BaseTask<Props> {
             updatedAt: item.updatedAt ?? item.createdAt,
             publishedAt: item.updatedAt ?? item.createdAt ?? new Date(),
             parentDocumentId: item.parentDocumentId,
+            importId: fileOperation.id,
             user,
             ip,
             transaction,

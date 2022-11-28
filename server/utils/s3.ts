@@ -6,7 +6,6 @@ import fetch from "fetch-with-proxy";
 import { compact } from "lodash";
 import { useAgent } from "request-filtering-agent";
 import { v4 as uuidv4 } from "uuid";
-import env from "@server/env";
 import Logger from "@server/logging/Logger";
 
 const AWS_S3_ACCELERATE_URL = process.env.AWS_S3_ACCELERATE_URL;
@@ -108,14 +107,13 @@ export const getSignature = (policy: string) => {
 export const getPresignedPost = (
   key: string,
   acl: string,
+  maxUploadSize: number,
   contentType = "image"
 ) => {
   const params = {
     Bucket: process.env.AWS_S3_UPLOAD_BUCKET_NAME,
     Conditions: compact([
-      process.env.AWS_S3_UPLOAD_MAX_SIZE
-        ? ["content-length-range", 0, +process.env.AWS_S3_UPLOAD_MAX_SIZE]
-        : undefined,
+      ["content-length-range", 0, maxUploadSize],
       ["starts-with", "$Content-Type", contentType],
       ["starts-with", "$Cache-Control", ""],
     ]),
@@ -184,11 +182,7 @@ export const uploadToS3FromUrl = async (
   acl: string
 ) => {
   const endpoint = publicS3Endpoint(true);
-  if (
-    url.startsWith("/api") ||
-    url.startsWith(endpoint) ||
-    url.startsWith(env.DEFAULT_AVATAR_HOST)
-  ) {
+  if (url.startsWith("/api") || url.startsWith(endpoint)) {
     return;
   }
 

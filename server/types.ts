@@ -1,18 +1,32 @@
 import { Context } from "koa";
+import { RouterContext } from "koa-router";
+import { Client } from "@shared/types";
+import { AccountProvisionerResult } from "./commands/accountProvisioner";
 import { FileOperation, Team, User } from "./models";
 
-export enum AuthenticationTypes {
+export enum AuthenticationType {
   API = "api",
   APP = "app",
 }
 
-export type ContextWithState = Context & {
-  state: {
-    user: User;
-    token: string;
-    authType: AuthenticationTypes;
-  };
+export type AuthenticationResult = AccountProvisionerResult & {
+  client: Client;
 };
+
+export type AuthenticatedState = {
+  user: User;
+  token: string;
+  authType: AuthenticationType;
+};
+
+export type ContextWithState = Context & {
+  state: AuthenticatedState;
+};
+
+export interface APIContext<ReqT = Record<string, unknown>>
+  extends RouterContext<AuthenticatedState, Context> {
+  input: ReqT;
+}
 
 type BaseEvent = {
   teamId: string;
@@ -95,9 +109,7 @@ export type DocumentEvent = BaseEvent &
           | "documents.permanent_delete"
           | "documents.archive"
           | "documents.unarchive"
-          | "documents.restore"
-          | "documents.star"
-          | "documents.unstar";
+          | "documents.restore";
         documentId: string;
         collectionId: string;
         data: {
@@ -276,9 +288,9 @@ export type ViewEvent = BaseEvent & {
 
 export type WebhookSubscriptionEvent = BaseEvent & {
   name:
-    | "webhook_subscriptions.create"
-    | "webhook_subscriptions.delete"
-    | "webhook_subscriptions.update";
+    | "webhookSubscriptions.create"
+    | "webhookSubscriptions.delete"
+    | "webhookSubscriptions.update";
   modelId: string;
   data: {
     name: string;
@@ -305,3 +317,7 @@ export type Event =
   | UserEvent
   | ViewEvent
   | WebhookSubscriptionEvent;
+
+export type NotificationMetadata = {
+  notificationId?: string;
+};

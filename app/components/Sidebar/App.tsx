@@ -14,6 +14,7 @@ import useCurrentUser from "~/hooks/useCurrentUser";
 import usePolicy from "~/hooks/usePolicy";
 import useStores from "~/hooks/useStores";
 import OrganizationMenu from "~/menus/OrganizationMenu";
+import Desktop from "~/utils/Desktop";
 import {
   homePath,
   draftsPath,
@@ -24,9 +25,9 @@ import TeamLogo from "../TeamLogo";
 import Sidebar from "./Sidebar";
 import ArchiveLink from "./components/ArchiveLink";
 import Collections from "./components/Collections";
+import HeaderButton, { HeaderButtonProps } from "./components/HeaderButton";
 import Section from "./components/Section";
 import SidebarAction from "./components/SidebarAction";
-import SidebarButton, { SidebarButtonProps } from "./components/SidebarButton";
 import SidebarLink from "./components/SidebarLink";
 import Starred from "./components/Starred";
 import TrashLink from "./components/TrashLink";
@@ -36,7 +37,7 @@ function AppSidebar() {
   const { documents } = useStores();
   const team = useCurrentTeam();
   const user = useCurrentUser();
-  const can = usePolicy(team.id);
+  const can = usePolicy(team);
 
   React.useEffect(() => {
     if (!user.isViewer) {
@@ -59,17 +60,19 @@ function AppSidebar() {
       {dndArea && (
         <DndProvider backend={HTML5Backend} options={html5Options}>
           <OrganizationMenu>
-            {(props: SidebarButtonProps) => (
-              <SidebarButton
+            {(props: HeaderButtonProps) => (
+              <HeaderButton
                 {...props}
                 title={team.name}
                 image={
-                  <StyledTeamLogo
-                    src={team.avatarUrl}
-                    width={32}
-                    height={32}
+                  <TeamLogo
+                    model={team}
+                    size={Desktop.hasInsetTitlebar() ? 24 : 32}
                     alt={t("Logo")}
                   />
+                }
+                style={
+                  Desktop.hasInsetTitlebar() ? { paddingLeft: 8 } : undefined
                 }
                 showDisclosure
               />
@@ -138,11 +141,6 @@ function AppSidebar() {
     </Sidebar>
   );
 }
-
-const StyledTeamLogo = styled(TeamLogo)`
-  margin-right: 4px;
-  background: white;
-`;
 
 const Drafts = styled(Text)`
   margin: 0 4px;

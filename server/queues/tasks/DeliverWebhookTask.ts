@@ -122,8 +122,6 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       case "documents.archive":
       case "documents.unarchive":
       case "documents.restore":
-      case "documents.star":
-      case "documents.unstar":
       case "documents.move":
       case "documents.update":
       case "documents.title_change":
@@ -190,9 +188,9 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       case "shares.revoke":
         await this.handleShareEvent(subscription, event);
         return;
-      case "webhook_subscriptions.create":
-      case "webhook_subscriptions.delete":
-      case "webhook_subscriptions.update":
+      case "webhookSubscriptions.create":
+      case "webhookSubscriptions.delete":
+      case "webhookSubscriptions.update":
         await this.handleWebhookSubscriptionEvent(subscription, event);
         return;
       case "views.create":
@@ -211,12 +209,20 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       paranoid: false,
     });
 
+    let data = null;
+    if (model) {
+      data = {
+        ...presentWebhookSubscription(model),
+        secret: undefined,
+      };
+    }
+
     await this.sendWebhook({
       event,
       subscription,
       payload: {
         id: event.modelId,
-        model: model && presentWebhookSubscription(model),
+        model: data,
       },
     });
   }
@@ -542,6 +548,12 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
           env.VERSION ? `/${env.VERSION.slice(0, 7)}` : ""
         }`,
       };
+
+      const signature = subscription.signature(JSON.stringify(requestBody));
+      if (signature) {
+        requestHeaders["Outline-Signature"] = signature;
+      }
+
       response = await fetch(subscription.url, {
         method: "POST",
         headers: requestHeaders,

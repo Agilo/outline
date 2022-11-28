@@ -1,7 +1,6 @@
 import { observer } from "mobx-react";
 import {
   EditIcon,
-  HistoryIcon,
   UnpublishIcon,
   PrintIcon,
   NewDocumentIcon,
@@ -38,20 +37,18 @@ import {
   unstarDocument,
   duplicateDocument,
   archiveDocument,
+  openDocumentHistory,
+  openDocumentInsights,
 } from "~/actions/definitions/documents";
 import useActionContext from "~/hooks/useActionContext";
 import useCurrentTeam from "~/hooks/useCurrentTeam";
 import useMobile from "~/hooks/useMobile";
 import usePolicy from "~/hooks/usePolicy";
+import useRequest from "~/hooks/useRequest";
 import useStores from "~/hooks/useStores";
 import useToasts from "~/hooks/useToasts";
 import { MenuItem } from "~/types";
-import {
-  documentHistoryUrl,
-  documentUrl,
-  editDocumentUrl,
-  newDocumentPath,
-} from "~/utils/routeHelpers";
+import { editDocumentUrl, newDocumentPath } from "~/utils/routeHelpers";
 
 type Props = {
   document: Document;
@@ -69,7 +66,6 @@ type Props = {
 
 function DocumentMenu({
   document,
-  isRevision,
   className,
   modal = true,
   showToggleEmbeds,
@@ -79,7 +75,7 @@ function DocumentMenu({
   onClose,
 }: Props) {
   const team = useCurrentTeam();
-  const { policies, collections, documents } = useStores();
+  const { policies, collections, documents, subscriptions } = useStores();
   const { showToast } = useToasts();
   const menu = useMenuState({
     modal,
@@ -96,6 +92,22 @@ function DocumentMenu({
   const { t } = useTranslation();
   const isMobile = useMobile();
   const file = React.useRef<HTMLInputElement>(null);
+  const { data, loading, request } = useRequest(() =>
+    subscriptions.fetchPage({
+      documentId: document.id,
+      event: "documents.update",
+    })
+  );
+
+  const handleOpen = React.useCallback(async () => {
+    if (!data && !loading) {
+      request();
+    }
+
+    if (onOpen) {
+      onOpen();
+    }
+  }, [data, loading, onOpen, request]);
 
   const handleRestore = React.useCallback(
     async (
@@ -125,8 +137,7 @@ function DocumentMenu({
   }, [menu]);
 
   const collection = collections.get(document.collectionId);
-  const can = usePolicy(document.id);
-  const canViewHistory = can.read && !can.restore;
+  const can = usePolicy(document);
   const restoreItems = React.useMemo(
     () => [
       ...collections.orderedData.reduce<MenuItem[]>((filtered, collection) => {
@@ -219,7 +230,7 @@ function DocumentMenu({
       <ContextMenu
         {...menu}
         aria-label={t("Document options")}
-        onOpen={onOpen}
+        onOpen={handleOpen}
         onClose={onClose}
       >
         <Template
@@ -263,7 +274,7 @@ function DocumentMenu({
               type: "route",
               title: t("Edit"),
               to: editDocumentUrl(document),
-              visible: !!can.update && !team.collaborativeEditing,
+              visible: !!can.update && !team.seamlessEditing,
               icon: <EditIcon />,
             },
             {
@@ -291,21 +302,9 @@ function DocumentMenu({
             {
               type: "separator",
             },
-            actionToMenuItem(deleteDocument, context),
-            actionToMenuItem(permanentlyDeleteDocument, context),
-            {
-              type: "separator",
-            },
-            {
-              type: "route",
-              title: t("History"),
-              to: isRevision
-                ? documentUrl(document)
-                : documentHistoryUrl(document),
-              visible: canViewHistory,
-              icon: <HistoryIcon />,
-            },
             actionToMenuItem(downloadDocument, context),
+            actionToMenuItem(openDocumentHistory, context),
+            actionToMenuItem(openDocumentInsights, context),
             {
               type: "button",
               title: t("Print"),
@@ -313,6 +312,11 @@ function DocumentMenu({
               visible: !!showDisplayOptions,
               icon: <PrintIcon />,
             },
+            {
+              type: "separator",
+            },
+            actionToMenuItem(deleteDocument, context),
+            actionToMenuItem(permanentlyDeleteDocument, context),
           ]}
         />
         {(showDisplayOptions || showToggleEmbeds) && (

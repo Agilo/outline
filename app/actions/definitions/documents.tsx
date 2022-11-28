@@ -17,6 +17,9 @@ import {
   TrashIcon,
   CrossIcon,
   ArchiveIcon,
+  ShuffleIcon,
+  HistoryIcon,
+  LightBulbIcon,
 } from "outline-icons";
 import * as React from "react";
 import { getEventFiles } from "@shared/utils/files";
@@ -27,7 +30,13 @@ import DocumentTemplatizeDialog from "~/components/DocumentTemplatizeDialog";
 import { createAction } from "~/actions";
 import { DocumentSection } from "~/actions/sections";
 import history from "~/utils/history";
-import { homePath, newDocumentPath, searchPath } from "~/utils/routeHelpers";
+import {
+  documentInsightsUrl,
+  documentHistoryUrl,
+  homePath,
+  newDocumentPath,
+  searchPath,
+} from "~/utils/routeHelpers";
 
 export const openDocument = createAction({
   name: ({ t }) => t("Open document"),
@@ -179,12 +188,12 @@ export const unsubscribeDocument = createAction({
   },
 });
 
-export const downloadDocument = createAction({
-  name: ({ t, isContextMenu }) =>
-    isContextMenu ? t("Download") : t("Download document"),
+export const downloadDocumentAsHTML = createAction({
+  name: ({ t }) => t("HTML"),
   section: DocumentSection,
+  keywords: "html export",
   icon: <DownloadIcon />,
-  keywords: "export",
+  iconInContextMenu: false,
   visible: ({ activeDocumentId, stores }) =>
     !!activeDocumentId && stores.policies.abilities(activeDocumentId).download,
   perform: ({ activeDocumentId, stores }) => {
@@ -193,8 +202,35 @@ export const downloadDocument = createAction({
     }
 
     const document = stores.documents.get(activeDocumentId);
-    document?.download();
+    document?.download("text/html");
   },
+});
+
+export const downloadDocumentAsMarkdown = createAction({
+  name: ({ t }) => t("Markdown"),
+  section: DocumentSection,
+  keywords: "md markdown export",
+  icon: <DownloadIcon />,
+  iconInContextMenu: false,
+  visible: ({ activeDocumentId, stores }) =>
+    !!activeDocumentId && stores.policies.abilities(activeDocumentId).download,
+  perform: ({ activeDocumentId, stores }) => {
+    if (!activeDocumentId) {
+      return;
+    }
+
+    const document = stores.documents.get(activeDocumentId);
+    document?.download("text/markdown");
+  },
+});
+
+export const downloadDocument = createAction({
+  name: ({ t, isContextMenu }) =>
+    isContextMenu ? t("Download") : t("Download document"),
+  section: DocumentSection,
+  icon: <DownloadIcon />,
+  keywords: "export",
+  children: [downloadDocumentAsHTML, downloadDocumentAsMarkdown],
 });
 
 export const duplicateDocument = createAction({
@@ -389,6 +425,24 @@ export const createTemplate = createAction({
   },
 });
 
+export const openRandomDocument = createAction({
+  id: "random",
+  section: DocumentSection,
+  name: ({ t }) => t(`Open random document`),
+  icon: <ShuffleIcon />,
+  perform: ({ stores, activeDocumentId }) => {
+    const documentPaths = stores.collections.pathsToDocuments.filter(
+      (path) => path.type === "document" && path.id !== activeDocumentId
+    );
+    const documentPath =
+      documentPaths[Math.round(Math.random() * documentPaths.length)];
+
+    if (documentPath) {
+      history.push(documentPath.url);
+    }
+  },
+});
+
 export const searchDocumentsForQuery = (searchQuery: string) =>
   createAction({
     id: "search",
@@ -525,6 +579,46 @@ export const permanentlyDeleteDocument = createAction({
   },
 });
 
+export const openDocumentHistory = createAction({
+  name: ({ t }) => t("History"),
+  section: DocumentSection,
+  icon: <HistoryIcon />,
+  visible: ({ activeDocumentId, stores }) => {
+    const can = stores.policies.abilities(activeDocumentId ?? "");
+    return !!activeDocumentId && can.read && !can.restore;
+  },
+  perform: ({ activeDocumentId, stores }) => {
+    if (!activeDocumentId) {
+      return;
+    }
+    const document = stores.documents.get(activeDocumentId);
+    if (!document) {
+      return;
+    }
+    history.push(documentHistoryUrl(document));
+  },
+});
+
+export const openDocumentInsights = createAction({
+  name: ({ t }) => t("Insights"),
+  section: DocumentSection,
+  icon: <LightBulbIcon />,
+  visible: ({ activeDocumentId, stores }) => {
+    const can = stores.policies.abilities(activeDocumentId ?? "");
+    return !!activeDocumentId && can.read;
+  },
+  perform: ({ activeDocumentId, stores }) => {
+    if (!activeDocumentId) {
+      return;
+    }
+    const document = stores.documents.get(activeDocumentId);
+    if (!document) {
+      return;
+    }
+    history.push(documentInsightsUrl(document));
+  },
+});
+
 export const rootDocumentActions = [
   openDocument,
   archiveDocument,
@@ -539,8 +633,11 @@ export const rootDocumentActions = [
   unsubscribeDocument,
   duplicateDocument,
   moveDocument,
+  openRandomDocument,
   permanentlyDeleteDocument,
   printDocument,
   pinDocumentToCollection,
   pinDocumentToHome,
+  openDocumentHistory,
+  openDocumentInsights,
 ];

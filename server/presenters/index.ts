@@ -1,5 +1,7 @@
 import presentApiKey from "./apiKey";
+import presentAttachment from "./attachment";
 import presentAuthenticationProvider from "./authenticationProvider";
+import presentAvailableTeam from "./availableTeam";
 import presentCollection from "./collection";
 import presentCollectionGroupMembership from "./collectionGroupMembership";
 import presentDocument from "./document";
@@ -26,28 +28,30 @@ import presentWebhookSubscription from "./webhookSubscription";
 
 export {
   presentApiKey,
-  presentFileOperation,
+  presentAttachment,
   presentAuthenticationProvider,
-  presentUser,
-  presentView,
+  presentAvailableTeam,
+  presentCollection,
+  presentCollectionGroupMembership,
   presentDocument,
   presentEvent,
-  presentRevision,
-  presentCollection,
-  presentShare,
-  presentSearchQuery,
-  presentStar,
-  presentSubscription,
-  presentTeam,
+  presentFileOperation,
   presentGroup,
+  presentGroupMembership,
   presentIntegration,
   presentMembership,
   presentNotificationSetting,
-  presentSlackAttachment,
   presentPin,
   presentPolicies,
-  presentGroupMembership,
-  presentCollectionGroupMembership,
+  presentRevision,
+  presentSearchQuery,
+  presentShare,
+  presentSlackAttachment,
+  presentStar,
+  presentSubscription,
+  presentTeam,
+  presentUser,
+  presentView,
   presentWebhook,
   presentWebhookSubscription,
 };
