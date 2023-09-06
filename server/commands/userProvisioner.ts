@@ -1,4 +1,3 @@
-import { sequelize } from "@server/database/sequelize";
 import InviteAcceptedEmail from "@server/emails/templates/InviteAcceptedEmail";
 import {
   DomainNotAllowedError,
@@ -6,6 +5,7 @@ import {
   InviteRequiredError,
 } from "@server/errors";
 import { Event, Team, User, UserAuthentication } from "@server/models";
+import { sequelize } from "@server/storage/database";
 
 type UserProvisionerResult = {
   user: User;
@@ -18,8 +18,6 @@ type Props = {
   name: string;
   /** The email address of the user */
   email: string;
-  /** The username of the user */
-  username?: string;
   /** Provision the new user as an administrator */
   isAdmin?: boolean;
   /** The public url of an image representing the user */
@@ -35,7 +33,7 @@ type Props = {
   authentication?: {
     authenticationProviderId: string;
     /** External identifier of the user in the authentication provider  */
-    providerId: string;
+    providerId: string | number;
     /** The scopes granted by the access token */
     scopes: string[];
     /** The token provided by the authentication provider */
@@ -50,7 +48,6 @@ type Props = {
 export default async function userProvisioner({
   name,
   email,
-  username,
   isAdmin,
   avatarUrl,
   teamId,
@@ -60,7 +57,7 @@ export default async function userProvisioner({
   const auth = authentication
     ? await UserAuthentication.findOne({
         where: {
-          providerId: authentication.providerId,
+          providerId: "" + authentication.providerId,
         },
         include: [
           {
@@ -92,7 +89,6 @@ export default async function userProvisioner({
     if (user) {
       await user.update({
         email,
-        username,
       });
       await auth.update(rest);
       return {
@@ -185,12 +181,12 @@ export default async function userProvisioner({
     if (isInvite) {
       const inviter = await existingUser.$get("invitedBy");
       if (inviter) {
-        await InviteAcceptedEmail.schedule({
+        await new InviteAcceptedEmail({
           to: inviter.email,
           inviterId: inviter.id,
           invitedName: existingUser.name,
           teamUrl: existingUser.team.url,
-        });
+        }).schedule();
       }
     }
 
@@ -231,7 +227,6 @@ export default async function userProvisioner({
       {
         name,
         email,
-        username,
         isAdmin: typeof isAdmin === "boolean" && isAdmin,
         isViewer: isAdmin === true ? false : defaultUserRole === "viewer",
         teamId,

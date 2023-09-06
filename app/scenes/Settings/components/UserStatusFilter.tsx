@@ -1,4 +1,4 @@
-import { compact } from "lodash";
+import compact from "lodash/compact";
 import { observer } from "mobx-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -24,6 +24,10 @@ const UserStatusFilter = ({ activeKey, onSelect, ...rest }: Props) => {
         {
           key: "all",
           label: t("Everyone"),
+        },
+        {
+          key: "members",
+          label: t("Members"),
         },
         {
           key: "admins",

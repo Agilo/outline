@@ -1,8 +1,10 @@
-import removeMarkdown from "@tommoor/remove-markdown";
-import { compact, uniq } from "lodash";
+import compact from "lodash/compact";
+import isNil from "lodash/isNil";
+import uniq from "lodash/uniq";
 import randomstring from "randomstring";
 import type { SaveOptions } from "sequelize";
 import {
+  Sequelize,
   Transaction,
   Op,
   FindOptions,
@@ -29,11 +31,9 @@ import {
   IsNumeric,
   IsDate,
 } from "sequelize-typescript";
-import MarkdownSerializer from "slate-md-serializer";
 import isUUID from "validator/lib/isUUID";
+import type { NavigationNode } from "@shared/types";
 import getTasks from "@shared/utils/getTasks";
-import parseTitle from "@shared/utils/parseTitle";
-import unescape from "@shared/utils/unescape";
 import { SLUG_URL_REGEX } from "@shared/utils/urlHelpers";
 import { DocumentValidation } from "@shared/validations";
 import slugify from "@server/utils/slugify";
@@ -47,9 +47,8 @@ import User from "./User";
 import View from "./View";
 import ParanoidModel from "./base/ParanoidModel";
 import Fix from "./decorators/Fix";
+import DocumentHelper from "./helpers/DocumentHelper";
 import Length from "./validators/Length";
-
-const serializer = new MarkdownSerializer();
 
 export const DOCUMENT_VERSION = 2;
 
@@ -115,6 +114,17 @@ export const DOCUMENT_VERSION = 2;
         as: "collection",
       },
     ],
+  },
+  withStateIsEmpty: {
+    attributes: {
+      exclude: ["state"],
+      include: [
+        [
+          Sequelize.literal(`CASE WHEN state IS NULL THEN true ELSE false END`),
+          "stateIsEmpty",
+        ],
+      ],
+    },
   },
   withState: {
     attributes: {
@@ -187,6 +197,9 @@ class Document extends ParanoidModel {
   @Column
   fullWidth: boolean;
 
+  @Column
+  insightsEnabled: boolean;
+
   @SimpleLength({
     max: 255,
     msg: `editorVersion must be 255 characters or less`,
@@ -248,7 +261,7 @@ class Document extends ParanoidModel {
   // hooks
 
   @BeforeSave
-  static async updateTitleInCollectionStructure(
+  static async updateCollectionStructure(
     model: Document,
     { transaction }: SaveOptions<Document>
   ) {
@@ -258,7 +271,8 @@ class Document extends ParanoidModel {
       model.archivedAt ||
       model.template ||
       !model.publishedAt ||
-      !model.changed("title")
+      !(model.changed("title") || model.changed("emoji")) ||
+      !model.collectionId
     ) {
       return;
     }
@@ -277,12 +291,17 @@ class Document extends ParanoidModel {
 
   @AfterCreate
   static async addDocumentToCollectionStructure(model: Document) {
-    if (model.archivedAt || model.template || !model.publishedAt) {
+    if (
+      model.archivedAt ||
+      model.template ||
+      !model.publishedAt ||
+      !model.collectionId
+    ) {
       return;
     }
 
     return this.sequelize!.transaction(async (transaction: Transaction) => {
-      const collection = await Collection.findByPk(model.collectionId, {
+      const collection = await Collection.findByPk(model.collectionId!, {
         transaction,
         lock: transaction.LOCK.UPDATE,
       });
@@ -311,10 +330,6 @@ class Document extends ParanoidModel {
 
   @BeforeUpdate
   static processUpdate(model: Document) {
-    const { emoji } = parseTitle(model.title);
-    // emoji in the title is split out for easier display
-    model.emoji = emoji || null;
-
     // ensure documents have a title
     model.title = model.title || "";
 
@@ -390,7 +405,7 @@ class Document extends ParanoidModel {
 
   @ForeignKey(() => Collection)
   @Column(DataType.UUID)
-  collectionId: string;
+  collectionId?: string | null;
 
   @HasMany(() => Revision)
   revisions: Revision[];
@@ -458,36 +473,24 @@ class Document extends ParanoidModel {
 
   // instance methods
 
-  migrateVersion = () => {
-    let migrated = false;
+  /**
+   * Whether this document is considered active or not. A document is active if
+   * it has not been archived or deleted.
+   *
+   * @returns boolean
+   */
+  get isActive(): boolean {
+    return !this.archivedAt && !this.deletedAt;
+  }
 
-    // migrate from document version 0 -> 1
-    if (!this.version) {
-      // removing the title from the document text attribute
-      this.text = this.text.replace(/^#\s(.*)\n/, "");
-      this.version = 1;
-      migrated = true;
-    }
-
-    // migrate from document version 1 -> 2
-    if (this.version === 1) {
-      const nodes = serializer.deserialize(this.text);
-      this.text = serializer.serialize(nodes, {
-        version: 2,
-      });
-      this.version = 2;
-      migrated = true;
-    }
-
-    if (migrated) {
-      return this.save({
-        silent: true,
-        hooks: false,
-      });
-    }
-
-    return undefined;
-  };
+  /**
+   * Convenience method that returns whether this document is a draft.
+   *
+   * @returns boolean
+   */
+  get isDraft(): boolean {
+    return !this.publishedAt;
+  }
 
   get titleWithDefault(): string {
     return this.title || "Untitled";
@@ -524,8 +527,9 @@ class Document extends ParanoidModel {
     const getChildDocumentIds = async (
       ...parentDocumentId: string[]
     ): Promise<string[]> => {
-      const childDocuments = await (this
-        .constructor as typeof Document).findAll({
+      const childDocuments = await (
+        this.constructor as typeof Document
+      ).findAll({
         attributes: ["id"],
         where: {
           parentDocumentId,
@@ -557,18 +561,19 @@ class Document extends ParanoidModel {
 
     // Helper to archive all child documents for a document
     const archiveChildren = async (parentDocumentId: string) => {
-      const childDocuments = await (this
-        .constructor as typeof Document).findAll({
+      const childDocuments = await (
+        this.constructor as typeof Document
+      ).findAll({
         where: {
           parentDocumentId,
         },
       });
-      childDocuments.forEach(async (child) => {
+      for (const child of childDocuments) {
         await archiveChildren(child.id);
         child.archivedAt = archivedAt;
         child.lastModifiedById = userId;
         await child.save(options);
-      });
+      }
     };
 
     await archiveChildren(this.id);
@@ -577,11 +582,19 @@ class Document extends ParanoidModel {
     return this.save(options);
   };
 
-  publish = async (userId: string, { transaction }: SaveOptions<Document>) => {
+  publish = async (
+    userId: string,
+    collectionId: string,
+    { transaction }: SaveOptions<Document>
+  ) => {
     // If the document is already published then calling publish should act like
     // a regular save
     if (this.publishedAt) {
       return this.save({ transaction });
+    }
+
+    if (!this.collectionId) {
+      this.collectionId = collectionId;
     }
 
     if (!this.template) {
@@ -609,10 +622,12 @@ class Document extends ParanoidModel {
     }
 
     await this.sequelize.transaction(async (transaction: Transaction) => {
-      const collection = await Collection.findByPk(this.collectionId, {
-        transaction,
-        lock: transaction.LOCK.UPDATE,
-      });
+      const collection = this.collectionId
+        ? await Collection.findByPk(this.collectionId, {
+            transaction,
+            lock: transaction.LOCK.UPDATE,
+          })
+        : undefined;
 
       if (collection) {
         await collection.removeDocumentInStructure(this, { transaction });
@@ -632,10 +647,12 @@ class Document extends ParanoidModel {
   // to the archived area, where it can be subsequently restored.
   archive = async (userId: string) => {
     await this.sequelize.transaction(async (transaction: Transaction) => {
-      const collection = await Collection.findByPk(this.collectionId, {
-        transaction,
-        lock: transaction.LOCK.UPDATE,
-      });
+      const collection = this.collectionId
+        ? await Collection.findByPk(this.collectionId, {
+            transaction,
+            lock: transaction.LOCK.UPDATE,
+          })
+        : undefined;
 
       if (collection) {
         await collection.removeDocumentInStructure(this, { transaction });
@@ -650,10 +667,12 @@ class Document extends ParanoidModel {
   // Restore an archived document back to being visible to the team
   unarchive = async (userId: string) => {
     await this.sequelize.transaction(async (transaction: Transaction) => {
-      const collection = await Collection.findByPk(this.collectionId, {
-        transaction,
-        lock: transaction.LOCK.UPDATE,
-      });
+      const collection = this.collectionId
+        ? await Collection.findByPk(this.collectionId, {
+            transaction,
+            lock: transaction.LOCK.UPDATE,
+          })
+        : undefined;
 
       // check to see if the documents parent hasn't been archived also
       // If it has then restore the document to the collection root.
@@ -690,13 +709,14 @@ class Document extends ParanoidModel {
   };
 
   // Delete a document, archived or otherwise.
-  delete = (userId: string) => {
-    return this.sequelize.transaction(async (transaction: Transaction) => {
+  delete = (userId: string) =>
+    this.sequelize.transaction(async (transaction: Transaction) => {
       if (!this.archivedAt && !this.template && this.collectionId) {
         // delete any children and remove from the document structure
         const collection = await Collection.findByPk(this.collectionId, {
           transaction,
           lock: transaction.LOCK.UPDATE,
+          paranoid: false,
         });
         await collection?.deleteDocument(this, { transaction });
       } else {
@@ -721,17 +741,12 @@ class Document extends ParanoidModel {
       );
       return this;
     });
-  };
 
-  getTimestamp = () => {
-    return Math.round(new Date(this.updatedAt).getTime() / 1000);
-  };
+  getTimestamp = () => Math.round(new Date(this.updatedAt).getTime() / 1000);
 
   getSummary = () => {
-    const plain = removeMarkdown(unescape(this.text), {
-      stripHTML: false,
-    });
-    const lines = compact(plain.split("\n"));
+    const plainText = DocumentHelper.toPlainText(this);
+    const lines = compact(plainText.split("\n"));
     const notEmpty = lines.length >= 1;
 
     if (this.version) {
@@ -741,14 +756,43 @@ class Document extends ParanoidModel {
     return notEmpty ? lines[1] : "";
   };
 
-  toJSON = () => {
-    // Warning: only use for new documents as order of children is
-    // handled in the collection's documentStructure
+  /**
+   * Returns a JSON representation of the document suitable for use in the
+   * collection documentStructure.
+   *
+   * @param options Optional transaction to use for the query
+   * @returns Promise resolving to a NavigationNode
+   */
+  toNavigationNode = async (
+    options?: FindOptions<Document>
+  ): Promise<NavigationNode> => {
+    const childDocuments = await (this.constructor as typeof Document)
+      .unscoped()
+      .scope("withoutState")
+      .findAll({
+        where: {
+          teamId: this.teamId,
+          parentDocumentId: this.id,
+          archivedAt: {
+            [Op.is]: null,
+          },
+          publishedAt: {
+            [Op.ne]: null,
+          },
+        },
+        transaction: options?.transaction,
+      });
+
+    const children = await Promise.all(
+      childDocuments.map((child) => child.toNavigationNode(options))
+    );
+
     return {
       id: this.id,
       title: this.title,
       url: this.url,
-      children: [],
+      emoji: isNil(this.emoji) ? undefined : this.emoji,
+      children,
     };
   };
 }

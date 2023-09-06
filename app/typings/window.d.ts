@@ -1,5 +1,15 @@
 declare global {
+  interface ImportMeta {
+    /**
+     * A special feature that allows you to get all matching modules starting from some base directory.
+     */
+    glob: (pattern: string, option?: { eager: boolean }) => any;
+  }
+
   interface Window {
+    dataLayer: any[];
+    gtag: (...args: any[]) => void;
+
     DesktopBridge: {
       /**
        * The name of the platform running on.
@@ -9,7 +19,7 @@ declare global {
       /**
        * The version of the loaded application.
        */
-      version: () => Promise<string>;
+      version: () => string;
 
       /**
        * Restarts the application.
@@ -32,6 +42,11 @@ declare global {
       onTitlebarDoubleClick: () => Promise<void>;
 
       /**
+       * Passes log out events from the app to the main process
+       */
+      onLogout: () => Promise<void>;
+
+      /**
        * Adds a custom host to config
        */
       addCustomHost: (host: string) => Promise<void>;
@@ -40,6 +55,11 @@ declare global {
        * Set the language used by the spellchecker on Windows/Linux.
        */
       setSpellCheckerLanguages: (languages: string[]) => Promise<void>;
+
+      /**
+       * Set the badge on the app icon.
+       */
+      setNotificationCount: (count: number) => Promise<void>;
 
       /**
        * Registers a callback to be called when the window is focused.
@@ -61,6 +81,31 @@ declare global {
        * Registers a callback to be called when the application is ready to update.
        */
       updateDownloaded: (callback: () => void) => void;
+
+      /**
+       * Registers a callback to be called when the application wants to open keyboard shortcuts.
+       */
+      openKeyboardShortcuts: (callback: () => void) => void;
+
+      /**
+       * Go back in history, if possible
+       */
+      goBack: () => void;
+
+      /**
+       * Go forward in history, if possible
+       */
+      goForward: () => void;
+
+      /**
+       * Registers a callback to be called when the application wants to open the find in page dialog.
+       */
+      onFindInPage: (callback: () => void) => void;
+
+      /**
+       * Registers a callback to be called when the application wants to open the replace in page dialog.
+       */
+      onReplaceInPage: (callback: () => void) => void;
     };
   }
 }

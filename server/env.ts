@@ -5,18 +5,17 @@ require("dotenv").config({
   silent: true,
 });
 
+import os from "os";
 import {
   validate,
   IsNotEmpty,
   IsUrl,
   IsOptional,
   IsByteLength,
-  Equals,
   IsNumber,
   IsIn,
   IsEmail,
   IsBoolean,
-  Contains,
   MaxLength,
 } from "class-validator";
 import { languages } from "@shared/i18n";
@@ -148,16 +147,33 @@ export class Environment {
   );
 
   /**
+   * The maximum number of network clients that can be connected to a single
+   * document at once. Defaults to 100.
+   */
+  @IsOptional()
+  @IsNumber()
+  public COLLABORATION_MAX_CLIENTS_PER_DOCUMENT = parseInt(
+    process.env.COLLABORATION_MAX_CLIENTS_PER_DOCUMENT || "100",
+    10
+  );
+
+  /**
    * The port that the server will listen on, defaults to 3000.
    */
   @IsNumber()
   @IsOptional()
-  public PORT = this.toOptionalNumber(process.env.PORT);
+  public PORT = this.toOptionalNumber(process.env.PORT) ?? 3000;
 
   /**
    * Optional extra debugging. Comma separated
    */
   public DEBUG = process.env.DEBUG || "";
+
+  /**
+   * Configure lowest severity level for server logs
+   */
+  @IsIn(["error", "warn", "info", "http", "verbose", "debug", "silly"])
+  public LOG_LEVEL = process.env.LOG_LEVEL || "info";
 
   /**
    * How many processes should be spawned. As a reasonable rule divide your
@@ -191,13 +207,6 @@ export class Environment {
   public SSL_CERT = this.toOptionalString(process.env.SSL_CERT);
 
   /**
-   * Should always be left unset in a self-hosted environment.
-   */
-  @Equals("hosted")
-  @IsOptional()
-  public DEPLOYMENT = this.toOptionalString(process.env.DEPLOYMENT);
-
-  /**
    * The default interface language. See translate.getoutline.com for a list of
    * available language codes and their percentage translated.
    */
@@ -225,15 +234,6 @@ export class Environment {
   public FORCE_HTTPS = this.toBoolean(process.env.FORCE_HTTPS ?? "true");
 
   /**
-   * Whether to support multiple subdomains in a single instance.
-   */
-  @IsBoolean()
-  @Deprecated("The community edition of Outline does not support subdomains")
-  public SUBDOMAINS_ENABLED = this.toBoolean(
-    process.env.SUBDOMAINS_ENABLED ?? "false"
-  );
-
-  /**
    * Should the installation send anonymized statistics to the maintainers.
    * Defaults to true.
    */
@@ -241,15 +241,6 @@ export class Environment {
   public TELEMETRY = this.toBoolean(
     process.env.ENABLE_UPDATES ?? process.env.TELEMETRY ?? "true"
   );
-
-  /**
-   * Because imports can be much larger than regular file attachments and are
-   * deleted automatically we allow an optional separate limit on the size of
-   * imports.
-   */
-  @IsNumber()
-  public MAXIMUM_IMPORT_SIZE =
-    this.toOptionalNumber(process.env.MAXIMUM_IMPORT_SIZE) ?? 5120000;
 
   /**
    * An optional comma separated list of allowed domains.
@@ -263,6 +254,12 @@ export class Environment {
    * The host of your SMTP server for enabling emails.
    */
   public SMTP_HOST = process.env.SMTP_HOST;
+
+  /**
+   * Optional hostname of the client, used for identifying to the server
+   * defaults to hostname of the machine.
+   */
+  public SMTP_NAME = process.env.SMTP_NAME;
 
   /**
    * The port of your SMTP server.
@@ -330,9 +327,8 @@ export class Environment {
   public RELEASE = this.toOptionalString(process.env.RELEASE);
 
   /**
-   * A Google Analytics tracking ID, only v3 supported at this time.
+   * A Google Analytics tracking ID, supports v3 or v4 properties.
    */
-  @Contains("UA-")
   @IsOptional()
   public GOOGLE_ANALYTICS_ID = this.toOptionalString(
     process.env.GOOGLE_ANALYTICS_ID
@@ -342,6 +338,11 @@ export class Environment {
    * A DataDog API key for tracking server metrics.
    */
   public DD_API_KEY = process.env.DD_API_KEY;
+
+  /**
+   * The name of the service to use in DataDog.
+   */
+  public DD_SERVICE = process.env.DD_SERVICE ?? "outline";
 
   /**
    * Google OAuth2 client credentials. To enable authentication with Google.
@@ -380,10 +381,9 @@ export class Environment {
   );
 
   /**
-   * This is injected into the HTML page headers for Slack.
+   * This is used to verify webhook requests received from Slack.
    */
   @IsOptional()
-  @CannotUseWithout("SLACK_CLIENT_ID")
   public SLACK_VERIFICATION_TOKEN = this.toOptionalString(
     process.env.SLACK_VERIFICATION_TOKEN
   );
@@ -525,6 +525,16 @@ export class Environment {
     this.toOptionalNumber(process.env.RATE_LIMITER_REQUESTS) ?? 1000;
 
   /**
+   * Set max allowed realtime connections before throttling. Defaults to 50
+   * requests/ip/duration window.
+   */
+  @IsOptional()
+  @IsNumber()
+  public RATE_LIMITER_COLLABORATION_REQUESTS =
+    this.toOptionalNumber(process.env.RATE_LIMITER_COLLABORATION_REQUESTS) ??
+    50;
+
+  /**
    * Set fixed duration window(in secs) for default rate limiter, elapsing which
    * the request quota is reset (the bucket is refilled with tokens).
    */
@@ -540,13 +550,121 @@ export class Environment {
   @IsOptional()
   @IsNumber()
   public AWS_S3_UPLOAD_MAX_SIZE =
-    this.toOptionalNumber(process.env.AWS_S3_UPLOAD_MAX_SIZE) ?? 10000000000;
+    this.toOptionalNumber(process.env.AWS_S3_UPLOAD_MAX_SIZE) ?? 100000000;
+
+  /**
+   * Access key ID for AWS S3.
+   */
+  @IsOptional()
+  public AWS_ACCESS_KEY_ID = this.toOptionalString(
+    process.env.AWS_ACCESS_KEY_ID
+  );
+
+  /**
+   * Secret key for AWS S3.
+   */
+  @IsOptional()
+  @CannotUseWithout("AWS_ACCESS_KEY_ID")
+  public AWS_SECRET_ACCESS_KEY = this.toOptionalString(
+    process.env.AWS_SECRET_ACCESS_KEY
+  );
+
+  /**
+   * The name of the AWS S3 region to use.
+   */
+  @IsOptional()
+  public AWS_REGION = this.toOptionalString(process.env.AWS_REGION);
+
+  /**
+   * Optional AWS S3 endpoint URL for file attachments.
+   */
+  @IsOptional()
+  public AWS_S3_ACCELERATE_URL = this.toOptionalString(
+    process.env.AWS_S3_ACCELERATE_URL
+  );
+
+  /**
+   * Optional AWS S3 endpoint URL for file attachments.
+   */
+  @IsOptional()
+  public AWS_S3_UPLOAD_BUCKET_URL = process.env.AWS_S3_UPLOAD_BUCKET_URL ?? "";
+
+  /**
+   * The bucket name to store file attachments in.
+   */
+  @IsOptional()
+  public AWS_S3_UPLOAD_BUCKET_NAME = this.toOptionalString(
+    process.env.AWS_S3_UPLOAD_BUCKET_NAME
+  );
+
+  /**
+   * Whether to force path style URLs for S3 objects, this is required for some
+   * S3-compatible storage providers.
+   */
+  @IsOptional()
+  public AWS_S3_FORCE_PATH_STYLE = this.toBoolean(
+    process.env.AWS_S3_FORCE_PATH_STYLE ?? "true"
+  );
 
   /**
    * Set default AWS S3 ACL for file attachments.
    */
   @IsOptional()
   public AWS_S3_ACL = process.env.AWS_S3_ACL ?? "private";
+
+  /**
+   * Because imports can be much larger than regular file attachments and are
+   * deleted automatically we allow an optional separate limit on the size of
+   * imports.
+   */
+  @IsNumber()
+  public MAXIMUM_IMPORT_SIZE = Math.max(
+    this.toOptionalNumber(process.env.MAXIMUM_IMPORT_SIZE) ?? 100000000,
+    this.AWS_S3_UPLOAD_MAX_SIZE
+  );
+
+  /**
+   * Limit on export size in bytes. Defaults to the total memory available to
+   * the container.
+   */
+  @IsNumber()
+  public MAXIMUM_EXPORT_SIZE =
+    this.toOptionalNumber(process.env.MAXIMUM_EXPORT_SIZE) ?? os.totalmem();
+
+  /**
+   * Iframely url
+   */
+  @IsOptional()
+  @IsUrl({
+    require_tld: false,
+    allow_underscores: true,
+    protocols: ["http", "https"],
+  })
+  public IFRAMELY_URL = process.env.IFRAMELY_URL ?? "https://iframe.ly";
+
+  /**
+   * Iframely API key
+   */
+  @IsOptional()
+  @CannotUseWithout("IFRAMELY_URL")
+  public IFRAMELY_API_KEY = this.toOptionalString(process.env.IFRAMELY_API_KEY);
+
+  /**
+   * The product name
+   */
+  public APP_NAME = "Outline";
+
+  /**
+   * Returns true if the current installation is the cloud hosted version at
+   * getoutline.com
+   */
+  public get isCloudHosted() {
+    return [
+      "https://app.getoutline.com",
+      "https://app.outline.dev",
+      "https://app.outline.dev:3000",
+    ].includes(this.URL);
+  }
 
   private toOptionalString(value: string | undefined) {
     return value ? value : undefined;

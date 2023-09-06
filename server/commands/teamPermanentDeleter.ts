@@ -1,7 +1,6 @@
 import { Transaction } from "sequelize";
-import { sequelize } from "@server/database/sequelize";
 import Logger from "@server/logging/Logger";
-import { APM } from "@server/logging/tracing";
+import { traceFunction } from "@server/logging/tracing";
 import {
   ApiKey,
   Attachment,
@@ -12,7 +11,6 @@ import {
   FileOperation,
   Group,
   Team,
-  NotificationSetting,
   User,
   UserAuthentication,
   Integration,
@@ -20,6 +18,7 @@ import {
   SearchQuery,
   Share,
 } from "@server/models";
+import { sequelize } from "@server/storage/database";
 
 async function teamPermanentDeleter(team: Team) {
   if (!team.deletedAt) {
@@ -154,13 +153,6 @@ async function teamPermanentDeleter(team: Team) {
       force: true,
       transaction,
     });
-    await NotificationSetting.destroy({
-      where: {
-        teamId,
-      },
-      force: true,
-      transaction,
-    });
     await SearchQuery.destroy({
       where: {
         teamId,
@@ -198,7 +190,6 @@ async function teamPermanentDeleter(team: Team) {
   }
 }
 
-export default APM.traceFunction({
-  serviceName: "command",
+export default traceFunction({
   spanName: "teamPermanentDeleter",
 })(teamPermanentDeleter);

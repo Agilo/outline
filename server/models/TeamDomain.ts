@@ -19,13 +19,11 @@ import Fix from "./decorators/Fix";
 import IsFQDN from "./validators/IsFQDN";
 import Length from "./validators/Length";
 
-const isCloudHosted = env.DEPLOYMENT === "hosted";
-
 @Table({ tableName: "team_domains", modelName: "team_domain" })
 @Fix
 class TeamDomain extends IdModel {
   @NotIn({
-    args: isCloudHosted ? [emailProviders] : [],
+    args: env.isCloudHosted ? [emailProviders] : [],
     msg: "You chose a restricted domain, please try another.",
   })
   @NotEmpty

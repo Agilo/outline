@@ -1,15 +1,16 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
 exports[`#documents.create should error with invalid parentDocument 1`] = `
-Object {
+{
   "error": "authorization_error",
   "message": "Authorization error",
   "ok": false,
+  "status": 403,
 }
 `;
 
 exports[`#documents.delete should require authentication 1`] = `
-Object {
+{
   "error": "authentication_required",
   "message": "Authentication required",
   "ok": false,
@@ -18,7 +19,7 @@ Object {
 `;
 
 exports[`#documents.list should require authentication 1`] = `
-Object {
+{
   "error": "authentication_required",
   "message": "Authentication required",
   "ok": false,
@@ -27,7 +28,7 @@ Object {
 `;
 
 exports[`#documents.restore should require authentication 1`] = `
-Object {
+{
   "error": "authentication_required",
   "message": "Authentication required",
   "ok": false,
@@ -36,7 +37,7 @@ Object {
 `;
 
 exports[`#documents.search should require authentication 1`] = `
-Object {
+{
   "error": "authentication_required",
   "message": "Authentication error",
   "ok": false,
@@ -44,17 +45,8 @@ Object {
 }
 `;
 
-exports[`#documents.update should fail if document lastRevision does not match 1`] = `
-Object {
-  "error": "invalid_request",
-  "message": "Document has changed since last revision",
-  "ok": false,
-  "status": 400,
-}
-`;
-
 exports[`#documents.update should require authentication 1`] = `
-Object {
+{
   "error": "authentication_required",
   "message": "Authentication required",
   "ok": false,
@@ -63,16 +55,16 @@ Object {
 `;
 
 exports[`#documents.update should require text while appending 1`] = `
-Object {
+{
   "error": "validation_error",
-  "message": "ValidationError: text is required while appending",
+  "message": "text is required while appending",
   "ok": false,
   "status": 400,
 }
 `;
 
 exports[`#documents.viewed should require authentication 1`] = `
-Object {
+{
   "error": "authentication_required",
   "message": "Authentication required",
   "ok": false,

@@ -1,26 +1,31 @@
-import { groupBy } from "lodash";
+import groupBy from "lodash/groupBy";
 import { observer } from "mobx-react";
-import { BackIcon } from "outline-icons";
+import { BackIcon, SidebarIcon } from "outline-icons";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { useHistory } from "react-router-dom";
 import styled from "styled-components";
 import Flex from "~/components/Flex";
 import Scrollable from "~/components/Scrollable";
-import useAuthorizedSettingsConfig from "~/hooks/useAuthorizedSettingsConfig";
-import Desktop from "~/utils/Desktop";
+import useSettingsConfig from "~/hooks/useSettingsConfig";
+import useStores from "~/hooks/useStores";
 import isCloudHosted from "~/utils/isCloudHosted";
+import { metaDisplay } from "~/utils/keyboard";
+import Tooltip from "../Tooltip";
 import Sidebar from "./Sidebar";
 import Header from "./components/Header";
-import HeaderButton from "./components/HeaderButton";
+import HistoryNavigation from "./components/HistoryNavigation";
 import Section from "./components/Section";
+import SidebarButton from "./components/SidebarButton";
 import SidebarLink from "./components/SidebarLink";
+import ToggleButton from "./components/ToggleButton";
 import Version from "./components/Version";
 
 function SettingsSidebar() {
+  const { ui } = useStores();
   const { t } = useTranslation();
   const history = useHistory();
-  const configs = useAuthorizedSettingsConfig();
+  const configs = useSettingsConfig();
   const groupedConfig = groupBy(configs, "group");
 
   const returnToApp = React.useCallback(() => {
@@ -29,12 +34,24 @@ function SettingsSidebar() {
 
   return (
     <Sidebar>
-      <HeaderButton
+      <HistoryNavigation />
+      <SidebarButton
         title={t("Return to App")}
-        image={<StyledBackIcon color="currentColor" />}
+        image={<StyledBackIcon />}
         onClick={returnToApp}
-        minHeight={Desktop.hasInsetTitlebar() ? undefined : 48}
-      />
+      >
+        <Tooltip
+          tooltip={t("Toggle sidebar")}
+          shortcut={`${metaDisplay}+.`}
+          delay={500}
+        >
+          <ToggleButton
+            position="bottom"
+            image={<SidebarIcon />}
+            onClick={ui.toggleCollapsedSidebar}
+          />
+        </Tooltip>
+      </SidebarButton>
 
       <Flex auto column>
         <Scrollable shadow>
@@ -45,7 +62,7 @@ function SettingsSidebar() {
                   <SidebarLink
                     key={item.path}
                     to={item.path}
-                    icon={<item.icon color="currentColor" />}
+                    icon={<item.icon />}
                     label={item.name}
                   />
                 ))}

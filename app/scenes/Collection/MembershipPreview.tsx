@@ -1,4 +1,4 @@
-import { sortBy } from "lodash";
+import sortBy from "lodash/sortBy";
 import { observer } from "mobx-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -53,7 +53,7 @@ const MembershipPreview = ({ collection, limit = 8 }: Props) => {
       }
     };
 
-    fetchData();
+    void fetchData();
   }, [
     isMobile,
     collection.permission,
@@ -80,7 +80,7 @@ const MembershipPreview = ({ collection, limit = 8 }: Props) => {
               ? groupsCount > 1
                 ? t(
                     `{{ usersCount }} users and {{ groupsCount }} groups with access`,
-                    { usersCount, count: usersCount }
+                    { usersCount, groupsCount, count: usersCount }
                   )
                 : t(`{{ usersCount }} users and a group have access`, {
                     usersCount,

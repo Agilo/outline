@@ -1,10 +1,14 @@
 import WelcomeEmail from "@server/emails/templates/WelcomeEmail";
-import env from "@server/env";
 import { TeamDomain } from "@server/models";
 import Collection from "@server/models/Collection";
 import UserAuthentication from "@server/models/UserAuthentication";
 import { buildUser, buildTeam } from "@server/test/factories";
-import { setupTestDatabase, seed } from "@server/test/support";
+import {
+  setupTestDatabase,
+  seed,
+  setCloudHosted,
+  setSelfHosted,
+} from "@server/test/support";
 import accountProvisioner from "./accountProvisioner";
 
 setupTestDatabase();
@@ -13,19 +17,16 @@ describe("accountProvisioner", () => {
   const ip = "127.0.0.1";
 
   describe("hosted", () => {
-    beforeEach(() => {
-      env.DEPLOYMENT = "hosted";
-    });
+    beforeEach(setCloudHosted);
 
     it("should create a new user and team", async () => {
-      const spy = jest.spyOn(WelcomeEmail, "schedule");
+      const spy = jest.spyOn(WelcomeEmail.prototype, "schedule");
       const { user, team, isNewTeam, isNewUser } = await accountProvisioner({
         ip,
         user: {
           name: "Jenny Tester",
           email: "jenny@example-company.com",
           avatarUrl: "https://example.com/avatar.png",
-          username: "jtester",
         },
         team: {
           name: "New workspace",
@@ -49,7 +50,6 @@ describe("accountProvisioner", () => {
       expect(auth.scopes[0]).toEqual("read");
       expect(team.name).toEqual("New workspace");
       expect(user.email).toEqual("jenny@example-company.com");
-      expect(user.username).toEqual("jtester");
       expect(isNewUser).toEqual(true);
       expect(isNewTeam).toEqual(true);
       expect(spy).toHaveBeenCalled();
@@ -60,7 +60,7 @@ describe("accountProvisioner", () => {
     });
 
     it("should update exising user and authentication", async () => {
-      const spy = jest.spyOn(WelcomeEmail, "schedule");
+      const spy = jest.spyOn(WelcomeEmail.prototype, "schedule");
       const existingTeam = await buildTeam();
       const providers = await existingTeam.$get("authenticationProviders");
       const authenticationProvider = providers[0];
@@ -70,14 +70,12 @@ describe("accountProvisioner", () => {
       const authentications = await existing.$get("authentications");
       const authentication = authentications[0];
       const newEmail = "test@example-company.com";
-      const newUsername = "tname";
       const { user, isNewUser, isNewTeam } = await accountProvisioner({
         ip,
         user: {
           name: existing.name,
           email: newEmail,
           avatarUrl: existing.avatarUrl,
-          username: newUsername,
         },
         team: {
           name: existingTeam.name,
@@ -99,7 +97,6 @@ describe("accountProvisioner", () => {
       expect(auth?.scopes.length).toEqual(1);
       expect(auth?.scopes[0]).toEqual("read");
       expect(user.email).toEqual(newEmail);
-      expect(user.username).toEqual(newUsername);
       expect(isNewTeam).toEqual(false);
       expect(isNewUser).toEqual(false);
       expect(spy).not.toHaveBeenCalled();
@@ -211,7 +208,6 @@ describe("accountProvisioner", () => {
             name: "Jenny Tester",
             email: "jenny@example-company.com",
             avatarUrl: "https://example.com/avatar.png",
-            username: "jtester",
           },
           team: {
             name: existingTeam.name,
@@ -236,7 +232,7 @@ describe("accountProvisioner", () => {
     });
 
     it("should create a new user in an existing team when the domain is allowed", async () => {
-      const spy = jest.spyOn(WelcomeEmail, "schedule");
+      const spy = jest.spyOn(WelcomeEmail.prototype, "schedule");
       const { admin, team } = await seed();
       const authenticationProviders = await team.$get(
         "authenticationProviders"
@@ -254,7 +250,6 @@ describe("accountProvisioner", () => {
           name: "Jenny Tester",
           email: "jenny@example-company.com",
           avatarUrl: "https://example.com/avatar.png",
-          username: "jtester",
         },
         team: {
           name: team.name,
@@ -277,7 +272,6 @@ describe("accountProvisioner", () => {
       expect(auth.scopes.length).toEqual(1);
       expect(auth.scopes[0]).toEqual("read");
       expect(user.email).toEqual("jenny@example-company.com");
-      expect(user.username).toEqual("jtester");
       expect(isNewUser).toEqual(true);
       expect(spy).toHaveBeenCalled();
       // should provision welcome collection
@@ -288,7 +282,7 @@ describe("accountProvisioner", () => {
     });
 
     it("should create a new user in an existing team", async () => {
-      const spy = jest.spyOn(WelcomeEmail, "schedule");
+      const spy = jest.spyOn(WelcomeEmail.prototype, "schedule");
       const team = await buildTeam();
       const authenticationProviders = await team.$get(
         "authenticationProviders"
@@ -300,7 +294,6 @@ describe("accountProvisioner", () => {
           name: "Jenny Tester",
           email: "jenny@example-company.com",
           avatarUrl: "https://example.com/avatar.png",
-          username: "jtester",
         },
         team: {
           name: team.name,
@@ -323,7 +316,6 @@ describe("accountProvisioner", () => {
       expect(auth.scopes.length).toEqual(1);
       expect(auth.scopes[0]).toEqual("read");
       expect(user.email).toEqual("jenny@example-company.com");
-      expect(user.username).toEqual("jtester");
       expect(isNewUser).toEqual(true);
       expect(spy).toHaveBeenCalled();
       // should provision welcome collection
@@ -335,9 +327,7 @@ describe("accountProvisioner", () => {
   });
 
   describe("self hosted", () => {
-    beforeEach(() => {
-      env.DEPLOYMENT = undefined;
-    });
+    beforeEach(setSelfHosted);
 
     it("should fail if existing team and domain not in allowed list", async () => {
       let error;
@@ -350,7 +340,6 @@ describe("accountProvisioner", () => {
             name: "Jenny Tester",
             email: "jenny@example-company.com",
             avatarUrl: "https://example.com/avatar.png",
-            username: "jtester",
           },
           team: {
             teamId: team.id,
@@ -373,7 +362,7 @@ describe("accountProvisioner", () => {
       }
 
       expect(error.message).toEqual(
-        "The maximum number of teams has been reached"
+        "The maximum number of workspaces has been reached"
       );
     });
 
@@ -385,7 +374,6 @@ describe("accountProvisioner", () => {
           name: "Jenny Tester",
           email: "jenny@example-company.com",
           avatarUrl: "https://example.com/avatar.png",
-          username: "jtester",
         },
         team: {
           teamId: team.id,
@@ -406,7 +394,6 @@ describe("accountProvisioner", () => {
       });
 
       expect(user.teamId).toEqual(team.id);
-      expect(user.username).toEqual("jtester");
       expect(isNewUser).toEqual(true);
 
       const providers = await team.$get("authenticationProviders");

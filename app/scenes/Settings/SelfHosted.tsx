@@ -1,21 +1,22 @@
-import { find } from "lodash";
+import find from "lodash/find";
 import { observer } from "mobx-react";
 import { BuildingBlocksIcon } from "outline-icons";
 import * as React from "react";
 import { useForm } from "react-hook-form";
-import { useTranslation, Trans } from "react-i18next";
-import { IntegrationType } from "@shared/types";
+import { useTranslation } from "react-i18next";
+import { IntegrationService, IntegrationType } from "@shared/types";
 import Integration from "~/models/Integration";
 import Button from "~/components/Button";
 import Heading from "~/components/Heading";
-import { ReactHookWrappedInput as Input } from "~/components/Input";
+import Input from "~/components/Input";
 import Scene from "~/components/Scene";
-import Text from "~/components/Text";
 import useStores from "~/hooks/useStores";
 import useToasts from "~/hooks/useToasts";
+import SettingRow from "./components/SettingRow";
 
 type FormData = {
   drawIoUrl: string;
+  gristUrl: string;
 };
 
 function SelfHosted() {
@@ -23,9 +24,14 @@ function SelfHosted() {
   const { t } = useTranslation();
   const { showToast } = useToasts();
 
-  const integration = find(integrations.orderedData, {
+  const integrationDiagrams = find(integrations.orderedData, {
     type: IntegrationType.Embed,
-    service: "diagrams",
+    service: IntegrationService.Diagrams,
+  }) as Integration<IntegrationType.Embed> | undefined;
+
+  const integrationGrist = find(integrations.orderedData, {
+    type: IntegrationType.Embed,
+    service: IntegrationService.Grist,
   }) as Integration<IntegrationType.Embed> | undefined;
 
   const {
@@ -36,31 +42,52 @@ function SelfHosted() {
   } = useForm<FormData>({
     mode: "all",
     defaultValues: {
-      drawIoUrl: integration?.settings.url,
+      drawIoUrl: integrationDiagrams?.settings.url,
+      gristUrl: integrationGrist?.settings.url,
     },
   });
 
   React.useEffect(() => {
-    integrations.fetchPage({
+    void integrations.fetchPage({
       type: IntegrationType.Embed,
     });
   }, [integrations]);
 
   React.useEffect(() => {
-    reset({ drawIoUrl: integration?.settings.url });
-  }, [integration, reset]);
+    reset({
+      drawIoUrl: integrationDiagrams?.settings.url,
+      gristUrl: integrationGrist?.settings.url,
+    });
+  }, [integrationDiagrams, integrationGrist, reset]);
 
   const handleSubmit = React.useCallback(
     async (data: FormData) => {
       try {
-        await integrations.save({
-          id: integration?.id,
-          type: IntegrationType.Embed,
-          service: "diagrams",
-          settings: {
-            url: data.drawIoUrl,
-          },
-        });
+        if (data.drawIoUrl) {
+          await integrations.save({
+            id: integrationDiagrams?.id,
+            type: IntegrationType.Embed,
+            service: IntegrationService.Diagrams,
+            settings: {
+              url: data.drawIoUrl,
+            },
+          });
+        } else {
+          await integrationDiagrams?.delete();
+        }
+
+        if (data.gristUrl) {
+          await integrations.save({
+            id: integrationGrist?.id,
+            type: IntegrationType.Embed,
+            service: IntegrationService.Grist,
+            settings: {
+              url: data.gristUrl,
+            },
+          });
+        } else {
+          await integrationGrist?.delete();
+        }
 
         showToast(t("Settings saved"), {
           type: "success",
@@ -71,37 +98,46 @@ function SelfHosted() {
         });
       }
     },
-    [integrations, integration, t, showToast]
+    [integrations, integrationDiagrams, integrationGrist, t, showToast]
   );
 
   return (
-    <Scene
-      title={t("Self Hosted")}
-      icon={<BuildingBlocksIcon color="currentColor" />}
-    >
+    <Scene title={t("Self Hosted")} icon={<BuildingBlocksIcon />}>
       <Heading>{t("Self Hosted")}</Heading>
 
-      <Text type="secondary">
-        <Trans>
-          Add your self-hosted draw.io installation url here to enable automatic
-          embedding of diagrams within documents.
-        </Trans>
-        <form onSubmit={formHandleSubmit(handleSubmit)}>
-          <p>
-            <Input
-              label={t("Draw.io deployment")}
-              placeholder="https://app.diagrams.net/"
-              pattern="https?://.*"
-              {...register("drawIoUrl", {
-                required: true,
-              })}
-            />
-            <Button type="submit" disabled={formState.isSubmitting}>
-              {formState.isSubmitting ? `${t("Saving")}…` : t("Save")}
-            </Button>
-          </p>
-        </form>
-      </Text>
+      <form onSubmit={formHandleSubmit(handleSubmit)}>
+        <SettingRow
+          label={t("Draw.io deployment")}
+          name="drawIoUrl"
+          description={t(
+            "Add your self-hosted draw.io installation url here to enable automatic embedding of diagrams within documents."
+          )}
+          border={false}
+        >
+          <Input
+            placeholder="https://app.diagrams.net/"
+            pattern="https?://.*"
+            {...register("drawIoUrl")}
+          />
+        </SettingRow>
+
+        <SettingRow
+          label={t("Grist deployment")}
+          name="gristUrl"
+          description={t("Add your self-hosted grist installation URL here.")}
+          border={false}
+        >
+          <Input
+            placeholder="https://docs.getgrist.com/"
+            pattern="https?://.*"
+            {...register("gristUrl")}
+          />
+        </SettingRow>
+
+        <Button type="submit" disabled={formState.isSubmitting}>
+          {formState.isSubmitting ? `${t("Saving")}…` : t("Save")}
+        </Button>
+      </form>
     </Scene>
   );
 }

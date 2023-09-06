@@ -1,5 +1,5 @@
 import invariant from "invariant";
-import { filter } from "lodash";
+import filter from "lodash/filter";
 import { action, runInAction } from "mobx";
 import GroupMembership from "~/models/GroupMembership";
 import { PaginationParams } from "~/types";
@@ -73,7 +73,6 @@ export default class GroupMembershipsStore extends BaseStore<GroupMembership> {
     });
   };
 
-  inGroup = (groupId: string) => {
-    return filter(this.orderedData, (member) => member.groupId === groupId);
-  };
+  inGroup = (groupId: string) =>
+    filter(this.orderedData, (member) => member.groupId === groupId);
 }

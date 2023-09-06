@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import styled from "styled-components";
+import { s } from "@shared/styles";
 import Flex from "~/components/Flex";
 import Heading from "~/components/Heading";
 import PageTitle from "~/components/PageTitle";
@@ -14,10 +15,14 @@ const DesktopRedirect = () => {
 
   React.useEffect(() => {
     if (token) {
-      window.location.href = `outline://${window.location.host}/auth/redirect?token=${token}`;
+      window.open(
+        `outline://${window.location.host}/auth/redirect?token=${token}`,
+        "_self"
+      );
 
-      // Clean the url so it's not possible to hit reload, re-using the transfer token will not work.
-      window.location.search = "";
+      // Clean the url after a short delay so it's not possible to hit reload, re-using the transfer token
+      // will not work and changing the location immediately cancels the window.open call in Safari.
+      setTimeout(() => (window.location.search = ""), 500);
     }
   }, [token]);
 
@@ -36,7 +41,7 @@ const DesktopRedirect = () => {
 };
 
 const Note = styled(Text)`
-  color: ${(props) => props.theme.textTertiary};
+  color: ${s("textTertiary")};
   text-align: center;
   font-size: 14px;
   margin-top: 8px;
