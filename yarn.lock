@@ -3288,10 +3288,10 @@
   resolved "https://registry.yarnpkg.com/@types/qs/-/qs-6.9.7.tgz#63bb7d067db107cc1e457c303bc25d511febf6cb"
   integrity sha512-FGa1F62FT09qcrueBA6qYTrJPVDzah9a+493+o2PCXsesWHIn27G98TsSMs3WPNbZIEj4+VJf6saSFpvD+3Zsw==
 
-"@types/quoted-printable@^1.0.0":
-  version "1.0.0"
-  resolved "https://registry.yarnpkg.com/@types/quoted-printable/-/quoted-printable-1.0.0.tgz#903f81f5d81698d361c176b5b52970cd2bc9868e"
-  integrity sha512-hgFjmHmgT5M8SvDVe+tMhiUb3xViwqkEAM/sTpWCpO0B2Z7RGAgwiQaxPcLVk4KLiZmqj7BMXZvaQQdX6uPM6A==
+"@types/quoted-printable@^1.0.2":
+  version "1.0.2"
+  resolved "https://registry.yarnpkg.com/@types/quoted-printable/-/quoted-printable-1.0.2.tgz#1d89663da9ded3df30d162558c5d18759831f659"
+  integrity sha512-3B28oB1rRaZNb3N5dlxysm8lH1ujzvReDuYBiIO4jvpTIg9ksrILCNgPxSGVyTWE/qwuxzgHaVehwMK3CVqAtA==
 
 "@types/randomstring@^1.1.8":
   version "1.1.8"

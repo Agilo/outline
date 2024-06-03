@@ -268,7 +268,7 @@
     "@types/node-fetch": "^2.6.2",
     "@types/nodemailer": "^6.4.9",
     "@types/passport-oauth2": "^1.4.11",
-    "@types/quoted-printable": "^1.0.0",
+    "@types/quoted-printable": "^1.0.2",
     "@types/randomstring": "^1.1.8",
     "@types/react": "^17.0.34",
     "@types/react-avatar-editor": "^13.0.0",
