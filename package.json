@@ -152,7 +152,7 @@
     "passport-slack-oauth2": "^1.2.0",
     "patch-package": "^7.0.2",
     "pg": "^8.11.1",
-    "pg-tsquery": "^8.4.1",
+    "pg-tsquery": "^8.4.2",
     "polished": "^4.2.2",
     "prosemirror-codemark": "^0.4.2",
     "prosemirror-commands": "^1.5.2",
