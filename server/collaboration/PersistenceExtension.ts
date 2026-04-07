@@ -1,4 +1,4 @@
-import {
+import type {
   onStoreDocumentPayload,
   onLoadDocumentPayload,
   onChangePayload,
@@ -8,19 +8,18 @@ import * as Y from "yjs";
 import Logger from "@server/logging/Logger";
 import { trace } from "@server/logging/tracing";
 import Document from "@server/models/Document";
-import ProsemirrorHelper from "@server/models/helpers/ProsemirrorHelper";
+import { ProsemirrorHelper } from "@server/models/helpers/ProsemirrorHelper";
 import { sequelize } from "@server/storage/database";
+import Redis from "@server/storage/redis";
 import documentCollaborativeUpdater from "../commands/documentCollaborativeUpdater";
+import type { withContext } from "./types";
 
 @trace()
 export default class PersistenceExtension implements Extension {
-  /**
-   * Map of documentId -> userIds that have modified the document since it
-   * was last persisted to the database. The map is cleared on every save.
-   */
-  documentCollaboratorIds = new Map<string, Set<string>>();
-
-  async onLoadDocument({ documentName, ...data }: onLoadDocumentPayload) {
+  async onLoadDocument({
+    documentName,
+    ...data
+  }: withContext<onLoadDocumentPayload>) {
     const [, documentId] = documentName.split(".");
     const fieldName = "default";
 
@@ -30,8 +29,27 @@ export default class PersistenceExtension implements Extension {
       return;
     }
 
+    // First, try to find the document without a lock to check if it has state
+    const documentWithoutLock = await Document.unscoped().findOne({
+      attributes: ["state"],
+      rejectOnEmpty: true,
+      where: {
+        id: documentId,
+      },
+    });
+
+    // If the document already has state, we can return it without needing a transaction
+    if (documentWithoutLock.state) {
+      const ydoc = new Y.Doc();
+      Logger.info("database", `Document ${documentId} is in database state`);
+      Y.applyUpdate(ydoc, documentWithoutLock.state);
+      return ydoc;
+    }
+
+    // If the document doesn't have state yet, we need to acquire a lock and create it
     return await sequelize.transaction(async (transaction) => {
-      const document = await Document.scope("withState").findOne({
+      const document = await Document.unscoped().findOne({
+        attributes: ["id", "state", "content", "text"],
         transaction,
         lock: transaction.LOCK.UPDATE,
         rejectOnEmpty: true,
@@ -39,19 +57,29 @@ export default class PersistenceExtension implements Extension {
           id: documentId,
         },
       });
+      let ydoc;
 
+      // Double-check the state in case another process created it
       if (document.state) {
-        const ydoc = new Y.Doc();
+        ydoc = new Y.Doc();
         Logger.info("database", `Document ${documentId} is in database state`);
         Y.applyUpdate(ydoc, document.state);
         return ydoc;
       }
 
-      Logger.info(
-        "database",
-        `Document ${documentId} is not in state, creating from markdown`
-      );
-      const ydoc = ProsemirrorHelper.toYDoc(document.text, fieldName);
+      if (document.content) {
+        Logger.info(
+          "database",
+          `Document ${documentId} is not in state, creating from content`
+        );
+        ydoc = ProsemirrorHelper.toYDoc(document.content, fieldName);
+      } else {
+        Logger.info(
+          "database",
+          `Document ${documentId} is not in state, creating from text`
+        );
+        ydoc = ProsemirrorHelper.toYDoc(document.text, fieldName);
+      }
       const state = ProsemirrorHelper.toState(ydoc);
       await document.update(
         {
@@ -67,15 +95,18 @@ export default class PersistenceExtension implements Extension {
     });
   }
 
-  async onChange({ context, documentName }: onChangePayload) {
-    Logger.debug(
-      "multiplayer",
-      `${context.user?.name} changed ${documentName}`
-    );
+  async onChange({ context, documentName }: withContext<onChangePayload>) {
+    const [, documentId] = documentName.split(".");
 
-    const state = this.documentCollaboratorIds.get(documentName) ?? new Set();
-    state.add(context.user?.id);
-    this.documentCollaboratorIds.set(documentName, state);
+    if (context.user) {
+      Logger.debug(
+        "multiplayer",
+        `${context.user.name} changed ${documentName}`
+      );
+
+      const key = Document.getCollaboratorKey(documentId);
+      await Redis.defaultClient.sadd(key, context.user.id);
+    }
   }
 
   async onStoreDocument({
@@ -83,30 +114,25 @@ export default class PersistenceExtension implements Extension {
     context,
     documentName,
     clientsCount,
+    requestParameters,
   }: onStoreDocumentPayload) {
     const [, documentId] = documentName.split(".");
+    const clientVersion = requestParameters.get("editorVersion");
 
-    // Find the collaborators that have modified the document since it was last
-    // persisted and clear the map, if there's no collaborators then we don't
-    // need to persist the document.
-    const documentCollaboratorIds =
-      this.documentCollaboratorIds.get(documentName);
-    if (!documentCollaboratorIds) {
+    const key = Document.getCollaboratorKey(documentId);
+    const sessionCollaboratorIds = await Redis.defaultClient.smembers(key);
+    if (!sessionCollaboratorIds || sessionCollaboratorIds.length === 0) {
       Logger.debug("multiplayer", `No changes for ${documentName}`);
       return;
     }
-
-    const collaboratorIds = Array.from(documentCollaboratorIds.values());
-    this.documentCollaboratorIds.delete(documentName);
 
     try {
       await documentCollaborativeUpdater({
         documentId,
         ydoc: document,
-        // TODO: Right now we're attributing all changes to the last editor,
-        // It would be nice in the future to have multiple editors per revision.
-        userId: collaboratorIds.pop(),
+        sessionCollaboratorIds,
         isLastConnection: clientsCount === 0,
+        clientVersion,
       });
     } catch (err) {
       Logger.error("Unable to persist document", err, {

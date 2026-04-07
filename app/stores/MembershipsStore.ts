@@ -1,13 +1,17 @@
 import invariant from "invariant";
 import { action, runInAction } from "mobx";
-import { CollectionPermission } from "@shared/types";
+import type { CollectionPermission } from "@shared/types";
 import Membership from "~/models/Membership";
-import { PaginationParams } from "~/types";
+import type { PaginationParams } from "~/types";
 import { client } from "~/utils/ApiClient";
-import BaseStore, { PAGINATION_SYMBOL, RPCAction } from "./BaseStore";
-import RootStore from "./RootStore";
+import type RootStore from "./RootStore";
+import Store, {
+  PAGINATION_SYMBOL,
+  type PaginatedResponse,
+  RPCAction,
+} from "./base/Store";
 
-export default class MembershipsStore extends BaseStore<Membership> {
+export default class MembershipsStore extends Store<Membership> {
   actions = [RPCAction.Create, RPCAction.Delete];
 
   constructor(rootStore: RootStore) {
@@ -16,15 +20,15 @@ export default class MembershipsStore extends BaseStore<Membership> {
 
   @action
   fetchPage = async (
-    params: PaginationParams | undefined
-  ): Promise<Membership[]> => {
+    params: (PaginationParams & { id?: string }) | undefined
+  ): Promise<PaginatedResponse<Membership>> => {
     this.isFetching = true;
 
     try {
       const res = await client.post(`/collections.memberships`, params);
       invariant(res?.data, "Data not available");
 
-      let response: Membership[] = [];
+      let response: PaginatedResponse<Membership> = [];
       runInAction(`MembershipsStore#fetchPage`, () => {
         res.data.users.forEach(this.rootStore.users.add);
         response = res.data.memberships.map(this.add);
@@ -71,16 +75,20 @@ export default class MembershipsStore extends BaseStore<Membership> {
       id: collectionId,
       userId,
     });
-    this.remove(`${userId}-${collectionId}`);
-    this.rootStore.users.remove(userId);
+    this.removeAll({ userId, collectionId });
   }
 
   @action
   removeCollectionMemberships = (collectionId: string) => {
     this.data.forEach((membership, key) => {
-      if (key.includes(collectionId)) {
+      if (membership.collectionId === collectionId) {
         this.remove(key);
       }
     });
   };
+
+  inCollection = (collectionId: string) =>
+    this.orderedData.filter(
+      (membership) => membership.collectionId === collectionId
+    );
 }

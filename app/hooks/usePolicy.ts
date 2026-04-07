@@ -1,5 +1,6 @@
-import * as React from "react";
-import BaseModel from "~/models/BaseModel";
+import { useEffect } from "react";
+import type Model from "~/models/base/Model";
+import useCurrentUser from "./useCurrentUser";
 import useStores from "./useStores";
 
 /**
@@ -9,26 +10,30 @@ import useStores from "./useStores";
  * @param entity The model or model id
  * @returns The policy for the model
  */
-export default function usePolicy(entity?: string | BaseModel | null) {
+export default function usePolicy(entity?: string | Model | null) {
   const { policies } = useStores();
-  const triggered = React.useRef(false);
+  const user = useCurrentUser({ rejectOnEmpty: false });
   const entityId = entity
     ? typeof entity === "string"
       ? entity
       : entity.id
     : "";
+  const policy = policies.get(entityId);
 
-  React.useEffect(() => {
-    if (entity && typeof entity !== "string") {
-      // The policy for this model is missing and we haven't tried to fetch it
-      // yet, go ahead and do that now. The force flag is needed otherwise the
-      // network request will be skipped due to the model existing in the store
-      if (!policies.get(entity.id) && !triggered.current) {
-        triggered.current = true;
-        void entity.store.fetch(entity.id, { force: true });
+  useEffect(() => {
+    if (
+      entity &&
+      typeof entity !== "string" &&
+      !entity.isNew &&
+      !entity.isSaving
+    ) {
+      // The policy for this model is missing and we have an authenticated session, attempt to
+      // reload relationships for this model.
+      if (!policy && user) {
+        void entity.loadRelations();
       }
     }
-  }, [policies, entity]);
+  }, [policies, policy, user, entity]);
 
   return policies.abilities(entityId);
 }

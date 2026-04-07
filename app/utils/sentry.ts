@@ -1,17 +1,40 @@
+import { BrowserTracing } from "@sentry/browser";
 import * as Sentry from "@sentry/react";
-import { Integrations } from "@sentry/tracing";
-import { History } from "history";
+import type { History } from "history";
 import env from "~/env";
+import {
+  AuthorizationError,
+  BadRequestError,
+  NetworkError,
+  NotFoundError,
+  OfflineError,
+  PaymentRequiredError,
+  RateLimitExceededError,
+  ServiceUnavailableError,
+  UpdateRequiredError,
+} from "./errors";
 
 export function initSentry(history: History) {
+  const ignoredErrorTypes = [
+    AuthorizationError,
+    BadRequestError,
+    NetworkError,
+    NotFoundError,
+    OfflineError,
+    PaymentRequiredError,
+    RateLimitExceededError,
+    ServiceUnavailableError,
+    UpdateRequiredError,
+  ];
+
   Sentry.init({
     dsn: env.SENTRY_DSN,
     environment: env.ENVIRONMENT,
-    release: env.RELEASE,
+    release: env.VERSION,
     tunnel: env.SENTRY_TUNNEL,
     allowUrls: [env.URL, env.CDN_URL, env.COLLABORATION_URL],
     integrations: [
-      new Integrations.BrowserTracing({
+      new BrowserTracing({
         routingInstrumentation: Sentry.reactRouterV5Instrumentation(history),
       }),
     ],
@@ -20,16 +43,15 @@ export function initSentry(history: History) {
       "Failed to fetch dynamically imported module",
       "ResizeObserver loop completed with undelivered notifications",
       "ResizeObserver loop limit exceeded",
-      "AuthorizationError",
-      "BadRequestError",
-      "NetworkError",
-      "NotFoundError",
-      "OfflineError",
-      "RateLimitExceededError",
-      "ServiceUnavailableError",
-      "UpdateRequiredError",
       "file://",
       "chrome-extension://",
     ],
+    beforeSend(event, hint) {
+      const error = hint.originalException;
+      if (error && ignoredErrorTypes.some((type) => error instanceof type)) {
+        return null;
+      }
+      return event;
+    },
   });
 }

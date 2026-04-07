@@ -44,9 +44,9 @@ function Highlight({
 }
 
 export const Mark = styled.mark`
-  background: ${s("searchHighlight")};
-  border-radius: 2px;
-  padding: 0 2px;
+  color: ${s("text")};
+  background: transparent;
+  font-weight: 600;
 `;
 
 export default Highlight;

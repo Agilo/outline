@@ -5,28 +5,32 @@ import {
   Heading1Icon,
   Heading2Icon,
   Heading3Icon,
+  Heading4Icon,
   HorizontalRuleIcon,
   OrderedListIcon,
   PageBreakIcon,
+  PDFIcon,
   TableIcon,
   TodoListIcon,
   ImageIcon,
   StarredIcon,
   WarningIcon,
   InfoIcon,
-  LinkIcon,
   AttachmentIcon,
   ClockIcon,
   CalendarIcon,
   MathIcon,
   DoneIcon,
+  EmbedIcon,
+  CollapseIcon,
 } from "outline-icons";
 import * as React from "react";
 import styled from "styled-components";
 import Image from "@shared/editor/components/Img";
-import { MenuItem } from "@shared/editor/types";
-import { Dictionary } from "~/hooks/useDictionary";
-import { metaDisplay } from "~/utils/keyboard";
+import type { MenuItem } from "@shared/editor/types";
+import { metaDisplay } from "@shared/utils/keyboard";
+import type { Dictionary } from "~/hooks/useDictionary";
+import Desktop from "~/utils/Desktop";
 
 const Img = styled(Image)`
   border-radius: 2px;
@@ -37,8 +41,13 @@ const Img = styled(Image)`
   height: 18px;
 `;
 
-export default function blockMenuItems(dictionary: Dictionary): MenuItem[] {
-  return [
+export default function blockMenuItems(
+  dictionary: Dictionary,
+  documentRef: React.RefObject<HTMLDivElement>
+): MenuItem[] {
+  const documentWidth = documentRef.current?.clientWidth ?? 0;
+
+  const items = [
     {
       name: "heading",
       title: dictionary.h1,
@@ -62,6 +71,14 @@ export default function blockMenuItems(dictionary: Dictionary): MenuItem[] {
       icon: <Heading3Icon />,
       shortcut: "^ ⇧ 3",
       attrs: { level: 3 },
+    },
+    {
+      name: "heading",
+      title: dictionary.h4,
+      keywords: "h4 heading4",
+      icon: <Heading4Icon />,
+      shortcut: "^ ⇧ 4",
+      attrs: { level: 4 },
     },
     {
       name: "separator",
@@ -95,11 +112,22 @@ export default function blockMenuItems(dictionary: Dictionary): MenuItem[] {
       keywords: "picture photo",
     },
     {
-      name: "link",
-      title: dictionary.link,
-      icon: <LinkIcon />,
-      shortcut: `${metaDisplay} k`,
-      keywords: "link url uri href",
+      name: "video",
+      title: dictionary.video,
+      icon: <EmbedIcon />,
+      keywords: "mov avi upload player",
+    },
+    {
+      name: "attachment",
+      title: dictionary.pdf,
+      icon: <PDFIcon />,
+      keywords: "pdf upload attach",
+      attrs: {
+        accept: "application/pdf",
+        width: 300,
+        height: 424,
+        preview: true,
+      },
     },
     {
       name: "attachment",
@@ -111,7 +139,11 @@ export default function blockMenuItems(dictionary: Dictionary): MenuItem[] {
       name: "table",
       title: dictionary.table,
       icon: <TableIcon />,
-      attrs: { rowsCount: 3, colsCount: 3 },
+      attrs: {
+        rowsCount: 3,
+        colsCount: 3,
+        colWidth: documentWidth / 3,
+      },
     },
     {
       name: "blockquote",
@@ -124,7 +156,7 @@ export default function blockMenuItems(dictionary: Dictionary): MenuItem[] {
       name: "code_block",
       title: dictionary.codeBlock,
       icon: <CodeIcon />,
-      shortcut: "^ ⇧ \\",
+      shortcut: "^ ⇧ c",
       keywords: "script",
     },
     {
@@ -132,6 +164,12 @@ export default function blockMenuItems(dictionary: Dictionary): MenuItem[] {
       title: dictionary.mathBlock,
       icon: <MathIcon />,
       keywords: "math katex latex",
+    },
+    {
+      name: "container_toggle",
+      title: dictionary.toggleBlock,
+      icon: <CollapseIcon />,
+      keywords: "toggle collapsible collapse fold",
     },
     {
       name: "hr",
@@ -204,7 +242,18 @@ export default function blockMenuItems(dictionary: Dictionary): MenuItem[] {
       title: "Mermaid Diagram",
       icon: <Img src="/images/mermaidjs.png" alt="Mermaid Diagram" />,
       keywords: "diagram flowchart",
-      attrs: { language: "mermaidjs" },
+      attrs: { language: "mermaid" },
+    },
+    {
+      name: "editDiagram",
+      title: "Diagrams.net Diagram",
+      icon: <Img src="/images/diagrams.png" alt="Diagrams.net Diagram" />,
+      keywords: "diagram flowchart draw.io",
     },
   ];
+
+  // Filter out diagrams.net in desktop app
+  return Desktop.isElectron()
+    ? items.filter((item) => item.name !== "editDiagram")
+    : items;
 }

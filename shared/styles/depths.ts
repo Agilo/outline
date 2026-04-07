@@ -1,10 +1,12 @@
 const depths = {
+  toc: 100,
   header: 800,
   sidebar: 900,
   editorToolbar: 925,
+  mobileSidebar: 930,
   hoverPreview: 950,
   // Note: editor lightbox is z-index 999
-  modalOverlay: 2000,
+  overlay: 2000,
   modal: 3000,
   menu: 4000,
   toasts: 5000,
@@ -12,6 +14,8 @@ const depths = {
   titleBarDivider: 10000,
   loadingIndicatorBar: 20000,
   commandBar: 30000,
+  presentation: 40000,
+  tooltip: 50000,
 };
 
 export default depths;

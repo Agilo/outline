@@ -1,7 +1,9 @@
-/* eslint-disable @typescript-eslint/ban-ts-comment */
+/* oxlint-disable @typescript-eslint/ban-ts-comment */
 // @ts-nocheck
 // https://raw.githubusercontent.com/ProseMirror/prosemirror-markdown/master/src/to_markdown.js
 // forked for table support
+
+type Options = { tightLists?: boolean; softBreak?: boolean };
 
 // ::- A specification for serializing a ProseMirror document as
 // Markdown/CommonMark text.
@@ -50,7 +52,7 @@ export class MarkdownSerializer {
   // :: (Node, ?Object) → string
   // Serialize the content of the given node to
   // [CommonMark](http://commonmark.org/).
-  serialize(content, options?: { tightLists?: boolean }): string {
+  serialize(content, options?: Options): string {
     const state = new MarkdownSerializerState(this.nodes, this.marks, options);
     state.renderContent(content);
     return state.out;
@@ -62,9 +64,12 @@ export class MarkdownSerializer {
 // node and mark serialization methods (see `toMarkdown`).
 export class MarkdownSerializerState {
   inTable = false;
+  inList = false;
   inTightList = false;
   closed = false;
   delim = "";
+  out = "";
+  options: Options;
 
   constructor(nodes, marks, options) {
     this.nodes = nodes;
@@ -220,8 +225,8 @@ export class MarkdownSerializerState {
           return info && info.expelEnclosingWhitespace;
         })
       ) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
-        const [_, lead, inner, trail] = /^(\s*)(.*?)(\s*)$/m.exec(node.text);
+        // oxlint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
+        const [, lead, inner, trail] = /^(\s*)(.*?)(\s*)$/m.exec(node.text);
         leading += lead;
         trailing = trail;
         if (lead || trail) {
@@ -324,6 +329,19 @@ export class MarkdownSerializerState {
   // `firstDelim` is a function going from an item index to a
   // delimiter for the first line of the item.
   renderList(node, delim, firstDelim) {
+    // In tables, render list items inline separated by <br> to avoid
+    // breaking the table structure with newlines
+    if (this.inTable) {
+      node.forEach((child, _, i) => {
+        if (i > 0) {
+          this.out += " <br> ";
+        }
+        this.out += firstDelim(i).trim() + " ";
+        this.render(child, node, i);
+      });
+      return;
+    }
+
     if (this.closed && this.closed.type === node.type) {
       this.flushClose(3);
     } else if (this.inTightList) {
@@ -353,54 +371,63 @@ export class MarkdownSerializerState {
   renderTable(node) {
     this.flushClose(1);
 
-    let headerBuffer = "";
     const prevTable = this.inTable;
     this.inTable = true;
 
-    // ensure there is an empty newline above all tables
+    // Calculate column widths from header row
+    const columnWidths: number[] = [];
+    const headerRow = node.child(0);
+    headerRow.forEach((cell, _, j) => {
+      // Use textContent length as minimum width (minimum 3 for separator)
+      columnWidths[j] = Math.max(cell.textContent.length, 3);
+    });
+
+    // Ensure there is an empty newline above all tables
     this.out += "\n";
 
-    // rows
+    // Render rows
     node.forEach((row, _, i) => {
-      // cols
       row.forEach((cell, _, j) => {
         this.out += j === 0 ? "| " : " | ";
 
-        cell.forEach((node) => {
-          // just padding the output so that empty cells take up the same space
-          // as headings.
-          // TODO: Ideally we'd calc the longest cell length and use that
-          // to pad all the others.
+        const startPos = this.out.length;
+
+        cell.forEach((cellNode) => {
           if (
-            node.textContent === "" &&
-            node.content.size === 0 &&
-            node.type.name === "paragraph"
+            !(
+              cellNode.textContent === "" &&
+              cellNode.content.size === 0 &&
+              cellNode.type.name === "paragraph"
+            )
           ) {
-            this.out += "  ";
-          } else {
             this.closed = false;
-            this.render(node, row, j);
+            this.render(cellNode, row, j);
           }
         });
 
-        if (i === 0) {
-          if (cell.attrs.alignment === "center") {
-            headerBuffer += "|:---:";
-          } else if (cell.attrs.alignment === "left") {
-            headerBuffer += "|:---";
-          } else if (cell.attrs.alignment === "right") {
-            headerBuffer += "|---:";
-          } else {
-            headerBuffer += "|----";
-          }
-        }
+        // Pad to column width
+        const contentLength = this.out.length - startPos;
+        const padding = Math.max(0, columnWidths[j] - contentLength);
+        this.out += " ".repeat(padding);
       });
 
       this.out += " |\n";
 
-      if (headerBuffer) {
-        this.out += `${headerBuffer}|\n`;
-        headerBuffer = undefined;
+      // Header separator after first row
+      if (i === 0) {
+        headerRow.forEach((cell, _, j) => {
+          const width = columnWidths[j];
+          if (cell.attrs.alignment === "center") {
+            this.out += "|:" + "-".repeat(width) + ":";
+          } else if (cell.attrs.alignment === "left") {
+            this.out += "|:" + "-".repeat(width + 1);
+          } else if (cell.attrs.alignment === "right") {
+            this.out += "|" + "-".repeat(width + 1) + ":";
+          } else {
+            this.out += "|" + "-".repeat(width + 2);
+          }
+        });
+        this.out += "|\n";
       }
     });
 

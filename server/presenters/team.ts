@@ -1,15 +1,18 @@
-import { Team } from "@server/models";
+import type { Team } from "@server/models";
 
 export default function presentTeam(team: Team) {
   return {
     id: team.id,
     name: team.name,
+    description: team.description,
     avatarUrl: team.avatarUrl,
     sharing: team.sharing,
     memberCollectionCreate: team.memberCollectionCreate,
+    memberTeamCreate: team.memberTeamCreate,
     defaultCollectionId: team.defaultCollectionId,
     documentEmbeds: team.documentEmbeds,
     guestSignin: team.emailSigninEnabled,
+    passkeysEnabled: team.passkeysEnabled,
     subdomain: team.subdomain,
     domain: team.domain,
     url: team.url,
@@ -17,5 +20,6 @@ export default function presentTeam(team: Team) {
     inviteRequired: team.inviteRequired,
     allowedDomains: team.allowedDomains?.map((d) => d.name),
     preferences: team.preferences,
+    guidanceMCP: team.guidanceMCP,
   };
 }

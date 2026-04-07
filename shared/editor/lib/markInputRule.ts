@@ -1,43 +1,46 @@
+import escapeRegExp from "lodash/escapeRegExp";
 import { InputRule } from "prosemirror-inputrules";
-import { MarkType, Mark } from "prosemirror-model";
-import { EditorState } from "prosemirror-state";
+import type { MarkType } from "prosemirror-model";
+import type { EditorState } from "prosemirror-state";
+import { getMarksBetween } from "../queries/getMarksBetween";
 
-function getMarksBetween(start: number, end: number, state: EditorState) {
-  let marks: { start: number; end: number; mark: Mark }[] = [];
-
-  state.doc.nodesBetween(start, end, (node, pos) => {
-    marks = [
-      ...marks,
-      ...node.marks.map((mark) => ({
-        start: pos,
-        end: pos + node.nodeSize,
-        mark,
-      })),
-    ];
-  });
-
-  return marks;
-}
-
-export default function (
+/**
+ * A factory function for creating a Prosemirror InputRule that automatically apply a mark to text
+ * that matches a given regular expression.
+ *
+ * Assumes the mark is not already applied, and that the regex includes two named capture groups:
+ * `remove` and `text`. The `remove` group is used to determine what text should be removed from
+ * the document before applying the mark, and the `text` group is used to determine what text
+ * should be marked.
+ *
+ * @param regexp The regular expression to match.
+ * @param markType The mark type to apply.
+ * @param getAttrs An optional function that returns the attributes to apply to the new mark.
+ * @returns The input rule
+ */
+export default function markInputRule(
   regexp: RegExp,
   markType: MarkType,
   getAttrs?: (match: string[]) => Record<string, unknown>
 ): InputRule {
   return new InputRule(
     regexp,
-    (state: EditorState, match: string[], start: number, end: number) => {
+    (
+      state: EditorState,
+      match: RegExpMatchArray,
+      start: number,
+      end: number
+    ) => {
       const attrs = getAttrs instanceof Function ? getAttrs(match) : getAttrs;
       const { tr } = state;
-      const m = match.length - 1;
-      let markEnd = end;
-      let markStart = start;
+      const captureGroup = match.groups?.text ?? match[match.length - 1];
+      const removalGroup = match.groups?.remove ?? match[match.length - 2];
+      const fullMatch = match[0];
 
-      if (match[m]) {
-        const matchStart = start + match[0].indexOf(match[m - 1]);
-        const matchEnd = matchStart + match[m - 1].length - 1;
-        const textStart = matchStart + match[m - 1].lastIndexOf(match[m]);
-        const textEnd = textStart + match[m].length;
+      if (captureGroup) {
+        const matchStart = start + fullMatch.lastIndexOf(removalGroup);
+        const textStart = start + fullMatch.lastIndexOf(captureGroup);
+        const textEnd = textStart + captureGroup.length;
 
         const excludedMarks = getMarksBetween(start, end, state)
           .filter((item) => item.mark.type.excludes(markType))
@@ -47,19 +50,45 @@ export default function (
           return null;
         }
 
-        if (textEnd < matchEnd) {
-          tr.delete(textEnd, matchEnd);
+        if (textEnd < end) {
+          tr.delete(textEnd, end);
         }
-        if (textStart > matchStart) {
+        if (textStart > start) {
           tr.delete(matchStart, textStart);
         }
-        markStart = matchStart;
-        markEnd = markStart + match[m].length;
+
+        start = matchStart;
+        end = start + captureGroup.length;
       }
 
-      tr.addMark(markStart, markEnd, markType.create(attrs));
+      tr.addMark(start, end, markType.create(attrs));
       tr.removeStoredMark(markType);
       return tr;
     }
+  );
+}
+
+/**
+ * A factory function for creating a Prosemirror InputRule that automatically applies a mark to
+ * text that is surrounded by a given pattern.
+ *
+ * @param pattern The pattern to match.
+ * @param markType The mark type to apply.
+ * @param getAttrs An optional function that returns the attributes to apply to the new mark.
+ * @returns The input rule
+ */
+export function markInputRuleForPattern(
+  pattern: string,
+  markType: MarkType,
+  getAttrs?: (match: string[]) => Record<string, unknown>
+): InputRule {
+  const escapedPattern = escapeRegExp(pattern);
+
+  return markInputRule(
+    new RegExp(
+      `(?:^|[\\s\\[\\{\\(])(?<remove>${escapedPattern}(?<text>[^${escapedPattern}]+)${escapedPattern})$`
+    ),
+    markType,
+    getAttrs
   );
 }

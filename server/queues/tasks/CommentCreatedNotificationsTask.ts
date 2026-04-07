@@ -1,11 +1,18 @@
-import { NotificationEventType } from "@shared/types";
+import {
+  MentionType,
+  NotificationEventType,
+  SubscriptionType,
+} from "@shared/types";
 import subscriptionCreator from "@server/commands/subscriptionCreator";
-import { Comment, Document, Notification, User } from "@server/models";
+import { createContext } from "@server/context";
+import { Comment, Document, Group, Notification, User } from "@server/models";
 import NotificationHelper from "@server/models/helpers/NotificationHelper";
-import ProsemirrorHelper from "@server/models/helpers/ProsemirrorHelper";
+import { ProsemirrorHelper } from "@server/models/helpers/ProsemirrorHelper";
 import { sequelize } from "@server/storage/database";
-import { CommentEvent } from "@server/types";
-import BaseTask, { TaskPriority } from "./BaseTask";
+import type { CommentEvent } from "@server/types";
+import { canUserAccessDocument } from "@server/utils/permissions";
+import { BaseTask, TaskPriority } from "./base/BaseTask";
+import GroupMentionedInCommentNotificationsTask from "./GroupMentionedInCommentNotificationsTask";
 
 export default class CommentCreatedNotificationsTask extends BaseTask<CommentEvent> {
   public async perform(event: CommentEvent) {
@@ -25,17 +32,21 @@ export default class CommentCreatedNotificationsTask extends BaseTask<CommentEve
     // if they haven't previously had one.
     await sequelize.transaction(async (transaction) => {
       await subscriptionCreator({
-        user: comment.createdBy,
+        ctx: createContext({
+          user: comment.createdBy,
+          authType: event.authType,
+          ip: event.ip,
+          transaction,
+        }),
         documentId: document.id,
-        event: "documents.update",
+        event: SubscriptionType.Document,
         resubscribe: false,
-        transaction,
-        ip: event.ip,
       });
     });
 
     const mentions = ProsemirrorHelper.parseMentions(
-      ProsemirrorHelper.toProsemirror(comment.data)
+      ProsemirrorHelper.toProsemirror(comment.data),
+      { type: MentionType.User }
     );
     const userIdsMentioned: string[] = [];
 
@@ -47,11 +58,13 @@ export default class CommentCreatedNotificationsTask extends BaseTask<CommentEve
       const recipient = await User.findByPk(mention.modelId);
 
       if (
+        mention.actorId &&
         recipient &&
         recipient.id !== mention.actorId &&
         recipient.subscribedToEventType(
           NotificationEventType.MentionedInComment
-        )
+        ) &&
+        (await canUserAccessDocument(recipient, document.id))
       ) {
         await Notification.create({
           event: NotificationEventType.MentionedInComment,
@@ -65,6 +78,38 @@ export default class CommentCreatedNotificationsTask extends BaseTask<CommentEve
       }
     }
 
+    // send notifications to users in mentioned groups
+    const groupMentions = ProsemirrorHelper.parseMentions(
+      ProsemirrorHelper.toProsemirror(comment.data),
+      {
+        type: MentionType.Group,
+      }
+    );
+
+    const mentionedGroup: string[] = [];
+    for (const group of groupMentions) {
+      if (mentionedGroup.includes(group.modelId)) {
+        continue;
+      }
+
+      // Check if the group has mentions disabled
+      const groupModel = await Group.findByPk(group.modelId);
+      if (groupModel?.disableMentions) {
+        continue;
+      }
+
+      // Schedule a separate task to handle group member notifications
+      await new GroupMentionedInCommentNotificationsTask().schedule({
+        ...event,
+        data: {
+          groupId: group.modelId,
+          actorId: group.actorId ?? event.actorId,
+        },
+      });
+
+      mentionedGroup.push(group.modelId);
+    }
+
     const recipients = (
       await NotificationHelper.getCommentNotificationRecipients(
         document,
@@ -73,16 +118,21 @@ export default class CommentCreatedNotificationsTask extends BaseTask<CommentEve
       )
     ).filter((recipient) => !userIdsMentioned.includes(recipient.id));
 
-    for (const recipient of recipients) {
-      await Notification.create({
-        event: NotificationEventType.CreateComment,
-        userId: recipient.id,
-        actorId: comment.createdById,
-        teamId: document.teamId,
-        commentId: comment.id,
-        documentId: document.id,
-      });
-    }
+    await sequelize.transaction(async (transaction) => {
+      for (const recipient of recipients) {
+        await Notification.create(
+          {
+            event: NotificationEventType.CreateComment,
+            userId: recipient.id,
+            actorId: comment.createdById,
+            teamId: document.teamId,
+            commentId: comment.id,
+            documentId: document.id,
+          },
+          { transaction }
+        );
+      }
+    });
   }
 
   public get options() {

@@ -1,9 +1,13 @@
 import { wrappingInputRule } from "prosemirror-inputrules";
-import { NodeSpec, Node as ProsemirrorNode, NodeType } from "prosemirror-model";
-import { Command } from "prosemirror-state";
+import type {
+  NodeSpec,
+  Node as ProsemirrorNode,
+  NodeType,
+} from "prosemirror-model";
+import type { Command } from "prosemirror-state";
 import toggleWrap from "../commands/toggleWrap";
-import { MarkdownSerializerState } from "../lib/markdown/serializer";
-import isNodeActive from "../queries/isNodeActive";
+import type { MarkdownSerializerState } from "../lib/markdown/serializer";
+import { isNodeActive } from "../queries/isNodeActive";
 import Node from "./Node";
 
 export default class Blockquote extends Node {

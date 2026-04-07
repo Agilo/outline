@@ -1,30 +1,53 @@
-import chalk from "chalk";
+import { styleText } from "node:util";
 import isEmpty from "lodash/isEmpty";
 import env from "@server/env";
 import Logger from "@server/logging/Logger";
 import AuthenticationProvider from "@server/models/AuthenticationProvider";
 import Team from "@server/models/Team";
 import { migrations } from "@server/storage/database";
+import { getArg } from "./args";
+import { MutexLock } from "./MutexLock";
+import { Minute } from "@shared/utils/time";
 
 export async function checkPendingMigrations() {
+  let lock;
   try {
+    lock = await MutexLock.acquire("migrations", 10 * Minute.ms, {
+      releaseOnShutdown: true,
+    });
+
     const pending = await migrations.pending();
     if (!isEmpty(pending)) {
-      Logger.info("database", "Running migrations…");
-      await migrations.up();
+      if (getArg("no-migrate")) {
+        Logger.fatal(
+          styleText(
+            "red",
+            `Database migrations are pending and were not ran because --no-migrate flag was passed.\nRun the migrations with "yarn db:migrate".`
+          ),
+          new Error("Migrations pending")
+        );
+      } else {
+        Logger.info("database", "Running migrations…");
+        await migrations.up();
+      }
     }
     await checkDataMigrations();
   } catch (err) {
     if (err.message.includes("ECONNREFUSED")) {
-      Logger.warn(
-        chalk.red(
+      Logger.fatal(
+        styleText(
+          "red",
           `Could not connect to the database. Please check your connection settings.`
-        )
+        ),
+        err
       );
     } else {
-      Logger.warn(chalk.red(err.message));
+      Logger.fatal(styleText("red", err.message), err);
     }
-    process.exit(1);
+  } finally {
+    if (lock) {
+      await MutexLock.release(lock);
+    }
   }
 }
 
@@ -33,47 +56,46 @@ export async function checkDataMigrations() {
     return;
   }
 
-  const isProduction = env.ENVIRONMENT === "production";
-  const teams = await Team.count();
-  const providers = await AuthenticationProvider.count();
+  const team = await Team.findOne();
+  const provider = await AuthenticationProvider.findOne();
 
-  if (isProduction && teams && !providers) {
-    Logger.warn(`
+  if (
+    env.isProduction &&
+    team &&
+    team.createdAt < new Date("2024-01-01") &&
+    !provider
+  ) {
+    Logger.fatal(
+      `
 This version of Outline cannot start until a data migration is complete.
 Backup your database, run the database migrations and the following script:
 (Note: script run needed only when upgrading to any version between 0.54.0 and 0.61.1, including both)
 
 $ node ./build/server/scripts/20210226232041-migrate-authentication.js
-`);
-    process.exit(1);
+`,
+      new Error("Data migration required")
+    );
   }
 }
 
-export async function checkEnv() {
-  await env.validate().then((errors) => {
-    if (errors.length > 0) {
-      Logger.warn(
-        "Environment configuration is invalid, please check the following:\n\n"
-      );
-      for (const error of errors) {
-        Logger.warn("- " + Object.values(error.constraints ?? {}).join(", "));
-      }
-      process.exit(1);
-    }
-  });
-
-  if (env.ENVIRONMENT === "production") {
+export async function printEnv() {
+  if (env.isProduction) {
     Logger.info(
       "lifecycle",
-      chalk.green(`
+      styleText(
+        "green",
+        `
 Is your team enjoying Outline? Consider supporting future development by sponsoring the project:\n\nhttps://github.com/sponsors/outline
-`)
+`
+      )
     );
-  } else if (env.ENVIRONMENT === "development") {
+  } else if (env.isDevelopment) {
     Logger.warn(
-      `Running Outline in ${chalk.bold(
+      `Running Outline in ${styleText(
+        "bold",
         "development mode"
-      )}. To run Outline in production mode set the ${chalk.bold(
+      )}. To run Outline in production mode set the ${styleText(
+        "bold",
         "NODE_ENV"
       )} env variable to "production"`
     );

@@ -1,16 +1,55 @@
 import invariant from "invariant";
 import { action, runInAction, computed } from "mobx";
 import Pin from "~/models/Pin";
-import { PaginationParams } from "~/types";
+import type { PaginationParams } from "~/types";
 import { client } from "~/utils/ApiClient";
-import BaseStore from "./BaseStore";
-import RootStore from "./RootStore";
+import { AuthorizationError, NotFoundError } from "~/utils/errors";
+import type RootStore from "./RootStore";
+import Store from "./base/Store";
 
 type FetchParams = PaginationParams & { collectionId?: string };
 
-export default class PinsStore extends BaseStore<Pin> {
+export default class PinsStore extends Store<Pin> {
   constructor(rootStore: RootStore) {
     super(rootStore, Pin);
+  }
+
+  @action
+  async fetchOne({
+    documentId,
+    collectionId,
+  }: {
+    documentId: string;
+    collectionId: string | null;
+  }) {
+    const pin = this.orderedData.find(
+      (p) => p.documentId === documentId && p.collectionId === collectionId
+    );
+
+    if (pin) {
+      return pin;
+    }
+
+    this.isFetching = true;
+
+    try {
+      const res = await client.post(`/${this.apiEndpoint}.info`, {
+        documentId,
+        collectionId,
+      });
+      if (!res) {
+        return;
+      }
+      invariant(res?.data, "Data should be available");
+      return this.add(res.data);
+    } catch (err) {
+      if (err instanceof AuthorizationError || err instanceof NotFoundError) {
+        return;
+      }
+      throw err;
+    } finally {
+      this.isFetching = false;
+    }
   }
 
   @action
@@ -36,9 +75,7 @@ export default class PinsStore extends BaseStore<Pin> {
   };
 
   inCollection = (collectionId: string) =>
-    computed(() => this.orderedData)
-      .get()
-      .filter((pin) => pin.collectionId === collectionId);
+    this.orderedData.filter((pin) => pin.collectionId === collectionId);
 
   @computed
   get home() {

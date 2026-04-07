@@ -1,92 +1,45 @@
 import { observer } from "mobx-react";
-import { DocumentIcon } from "outline-icons";
-import * as React from "react";
+import { ShapesIcon } from "outline-icons";
 import { useTranslation } from "react-i18next";
-import { MenuButton, useMenuState } from "reakit/Menu";
-import styled from "styled-components";
-import { ellipsis } from "@shared/styles";
-import Document from "~/models/Document";
+import type Document from "~/models/Document";
+import type Template from "~/models/Template";
 import Button from "~/components/Button";
-import ContextMenu from "~/components/ContextMenu";
-import MenuItem from "~/components/ContextMenu/MenuItem";
-import Separator from "~/components/ContextMenu/Separator";
-import useCurrentUser from "~/hooks/useCurrentUser";
-import useStores from "~/hooks/useStores";
-import { replaceTitleVariables } from "~/utils/date";
+import { DropdownMenu } from "~/components/Menu/DropdownMenu";
+import { useMenuAction } from "~/hooks/useMenuAction";
+import { useTemplateMenuActions } from "~/hooks/useTemplateMenuActions";
 
 type Props = {
+  /** The document to which the templates will be applied */
   document: Document;
-  onSelectTemplate: (template: Document) => void;
+  /** Whether to render the button as a compact icon */
+  isCompact?: boolean;
+  /** Callback to handle when a template is selected */
+  onSelectTemplate: (template: Template) => void;
 };
 
-function TemplatesMenu({ onSelectTemplate, document }: Props) {
-  const menu = useMenuState({
-    modal: true,
-  });
-  const user = useCurrentUser();
-  const { documents } = useStores();
+function TemplatesMenu({ isCompact, onSelectTemplate, document }: Props) {
   const { t } = useTranslation();
-  const templates = documents.templates;
+  const allActions = useTemplateMenuActions({
+    onSelectTemplate,
+    documentId: document.id,
+  });
+  const rootAction = useMenuAction(allActions);
 
-  if (!templates.length) {
+  if (!allActions.length) {
     return null;
   }
 
-  const templatesInCollection = templates.filter(
-    (t) => t.collectionId === document.collectionId
-  );
-  const otherTemplates = templates.filter(
-    (t) => t.collectionId !== document.collectionId
-  );
-
-  const renderTemplate = (template: Document) => (
-    <MenuItem
-      key={template.id}
-      onClick={() => onSelectTemplate(template)}
-      icon={<DocumentIcon />}
-      {...menu}
-    >
-      <TemplateItem>
-        <strong>
-          {replaceTitleVariables(template.titleWithDefault, user)}
-        </strong>
-        <br />
-        <Author>
-          {t("By {{ author }}", {
-            author: template.createdBy.name,
-          })}
-        </Author>
-      </TemplateItem>
-    </MenuItem>
-  );
-
   return (
-    <>
-      <MenuButton {...menu}>
-        {(props) => (
-          <Button {...props} disclosure neutral>
-            {t("Templates")}
-          </Button>
-        )}
-      </MenuButton>
-      <ContextMenu {...menu} aria-label={t("Templates")}>
-        {templatesInCollection.map(renderTemplate)}
-        {otherTemplates.length && templatesInCollection.length ? (
-          <Separator />
-        ) : undefined}
-        {otherTemplates.map(renderTemplate)}
-      </ContextMenu>
-    </>
+    <DropdownMenu action={rootAction} align="start" ariaLabel={t("Templates")}>
+      <Button
+        icon={isCompact ? <ShapesIcon /> : undefined}
+        disclosure={!isCompact}
+        neutral
+      >
+        {isCompact ? undefined : t("Templates")}
+      </Button>
+    </DropdownMenu>
   );
 }
-
-const TemplateItem = styled.div`
-  text-align: left;
-  ${ellipsis()}
-`;
-
-const Author = styled.div`
-  font-size: 13px;
-`;
 
 export default observer(TemplatesMenu);

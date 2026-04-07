@@ -1,14 +1,16 @@
 import teamCreator from "@server/commands/teamCreator";
+import { createContext } from "@server/context";
 import env from "@server/env";
 import {
   DomainNotAllowedError,
   InvalidAuthenticationError,
-  MaximumTeamsError,
   TeamPendingDeletionError,
 } from "@server/errors";
+import Logger from "@server/logging/Logger";
 import { traceFunction } from "@server/logging/tracing";
 import { Team, AuthenticationProvider } from "@server/models";
 import { sequelize } from "@server/storage/database";
+import type { APIContext } from "@server/types";
 
 type TeamProvisionerResult = {
   team: Team;
@@ -37,19 +39,12 @@ type Props = {
     /** External identifier of the authentication provider */
     providerId: string;
   };
-  /** The IP address of the incoming request */
-  ip: string;
 };
 
-async function teamProvisioner({
-  teamId,
-  name,
-  domain,
-  subdomain,
-  avatarUrl,
-  authenticationProvider,
-  ip,
-}: Props): Promise<TeamProvisionerResult> {
+async function teamProvisioner(
+  ctx: APIContext,
+  { teamId, name, domain, subdomain, avatarUrl, authenticationProvider }: Props
+): Promise<TeamProvisionerResult> {
   let authP = await AuthenticationProvider.findOne({
     where: teamId
       ? { ...authenticationProvider, teamId }
@@ -61,6 +56,10 @@ async function teamProvisioner({
         required: true,
         paranoid: false,
       },
+    ],
+    order: [
+      [Team, "deletedAt", "DESC"],
+      ["enabled", "DESC"],
     ],
   });
 
@@ -79,48 +78,47 @@ async function teamProvisioner({
   } else if (teamId) {
     // The user is attempting to log into a team with an unfamiliar SSO provider
     if (env.isCloudHosted) {
-      throw InvalidAuthenticationError();
+      const err = InvalidAuthenticationError();
+      Logger.error("Authentication provider does not exist for team", err, {
+        authenticationProvider,
+        teamId,
+      });
+      throw err;
     }
 
-    // This team has never been seen before, if self hosted the logic is different
-    // to the multi-tenant version, we want to restrict to a single team that MAY
-    // have multiple authentication providers
-    const team = await Team.findOne();
+    // This team + auth provider combination has not been seen before in self hosted
+    const existingTeam = await Team.findByPk(teamId, {
+      rejectOnEmpty: true,
+    });
 
     // If the self-hosted installation has a single team and the domain for the
     // new team is allowed then assign the authentication provider to the
     // existing team
-    if (team && domain) {
-      if (await team.isDomainAllowed(domain)) {
-        authP = await team.$create<AuthenticationProvider>(
+    if (domain) {
+      if (await existingTeam.isDomainAllowed(domain)) {
+        authP = await existingTeam.$create<AuthenticationProvider>(
           "authenticationProvider",
           authenticationProvider
         );
         return {
           authenticationProvider: authP,
-          team,
+          team: existingTeam,
           isNewTeam: false,
         };
-      } else {
-        throw DomainNotAllowedError();
       }
+      throw DomainNotAllowedError();
     }
-
-    if (team) {
-      throw MaximumTeamsError();
-    }
+    throw InvalidAuthenticationError();
   }
 
   // We cannot find an existing team, so we create a new one
   const team = await sequelize.transaction((transaction) =>
-    teamCreator({
+    teamCreator(createContext({ transaction }), {
       name,
       domain,
       subdomain,
       avatarUrl,
       authenticationProviders: [authenticationProvider],
-      ip,
-      transaction,
     })
   );
 

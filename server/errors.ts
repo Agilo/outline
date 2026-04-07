@@ -3,34 +3,43 @@ import httpErrors from "http-errors";
 export function InternalError(message = "Internal error") {
   return httpErrors(500, message, {
     id: "internal_error",
+    isReportable: true,
   });
 }
 
 export function AuthenticationError(
   message = "Authentication required",
-  redirectUrl = "/"
+  redirectPath = "/"
 ) {
   return httpErrors(401, message, {
-    redirectUrl,
+    redirectPath,
     id: "authentication_required",
+    isReportable: false,
   });
 }
 
 export function InvalidAuthenticationError(
   message = "Invalid authentication",
-  redirectUrl = "/"
+  redirectPath = "/"
 ) {
   return httpErrors(401, message, {
-    redirectUrl,
+    redirectPath,
     id: "invalid_authentication",
+    isReportable: false,
   });
 }
 
-export function AuthorizationError(
-  message = "You do not have permission to access this resource"
-) {
+export function AuthorizationError(message = "Authorization error") {
   return httpErrors(403, message, {
-    id: "permission_required",
+    id: "authorization_error",
+    isReportable: false,
+  });
+}
+
+export function CSRFError(message = "Authorization error") {
+  return httpErrors(403, message, {
+    id: "csrf_error",
+    isReportable: false,
   });
 }
 
@@ -39,6 +48,7 @@ export function RateLimitExceededError(
 ) {
   return httpErrors(429, message, {
     id: "rate_limit_exceeded",
+    isReportable: false,
   });
 }
 
@@ -47,14 +57,16 @@ export function InviteRequiredError(
 ) {
   return httpErrors(403, message, {
     id: "invite_required",
+    isReportable: false,
   });
 }
 
 export function DomainNotAllowedError(
-  message = "The domain is not allowed for this team"
+  message = "The domain is not allowed for this workspace"
 ) {
   return httpErrors(403, message, {
     id: "domain_not_allowed",
+    isReportable: false,
   });
 }
 
@@ -63,6 +75,7 @@ export function AdminRequiredError(
 ) {
   return httpErrors(403, message, {
     id: "admin_required",
+    isReportable: false,
   });
 }
 
@@ -71,35 +84,51 @@ export function UserSuspendedError({
 }: {
   adminEmail: string | undefined;
 }) {
-  return httpErrors(403, "Your access has been suspended by the team admin", {
-    id: "user_suspended",
-    errorData: {
-      adminEmail,
-    },
-  });
+  return httpErrors(
+    403,
+    "Your access has been suspended by a workspace admin",
+    {
+      id: "user_suspended",
+      errorData: {
+        adminEmail,
+      },
+      isReportable: false,
+    }
+  );
 }
 
 export function InvalidRequestError(message = "Request invalid") {
   return httpErrors(400, message, {
     id: "invalid_request",
+    isReportable: false,
+  });
+}
+
+export function PaymentRequiredError(message = "Payment required") {
+  return httpErrors(402, message, {
+    id: "payment_required",
+    isReportable: false,
   });
 }
 
 export function NotFoundError(message = "Resource not found") {
   return httpErrors(404, message, {
     id: "not_found",
+    isReportable: false,
   });
 }
 
 export function ParamRequiredError(message = "Required parameter missing") {
   return httpErrors(400, message, {
     id: "param_required",
+    isReportable: false,
   });
 }
 
 export function ValidationError(message = "Validation failed") {
   return httpErrors(400, message, {
     id: "validation_error",
+    isReportable: false,
   });
 }
 
@@ -108,6 +137,7 @@ export function IncorrectEditionError(
 ) {
   return httpErrors(402, message, {
     id: "incorrect_edition",
+    isReportable: false,
   });
 }
 
@@ -116,12 +146,14 @@ export function EditorUpdateError(
 ) {
   return httpErrors(400, message, {
     id: "editor_update_required",
+    isReportable: false,
   });
 }
 
 export function FileImportError(message = "The file could not be imported") {
   return httpErrors(400, message, {
     id: "import_error",
+    isReportable: false,
   });
 }
 
@@ -130,14 +162,7 @@ export function OAuthStateMismatchError(
 ) {
   return httpErrors(400, message, {
     id: "state_mismatch",
-  });
-}
-
-export function MaximumTeamsError(
-  message = "The maximum number of workspaces has been reached"
-) {
-  return httpErrors(400, message, {
-    id: "maximum_reached",
+    isReportable: false,
   });
 }
 
@@ -146,16 +171,18 @@ export function TeamPendingDeletionError(
 ) {
   return httpErrors(403, message, {
     id: "pending_deletion",
+    isReportable: false,
   });
 }
 
 export function EmailAuthenticationRequiredError(
   message = "User must authenticate with email",
-  redirectUrl = "/"
+  redirectPath = "/"
 ) {
   return httpErrors(400, message, {
-    redirectUrl,
+    redirectPath,
     id: "email_auth_required",
+    isReportable: false,
   });
 }
 
@@ -164,6 +191,7 @@ export function MicrosoftGraphError(
 ) {
   return httpErrors(400, message, {
     id: "graph_error",
+    isReportable: false,
   });
 }
 
@@ -172,6 +200,7 @@ export function TeamDomainRequiredError(
 ) {
   return httpErrors(400, message, {
     id: "domain_required",
+    isReportable: false,
   });
 }
 
@@ -180,6 +209,7 @@ export function GmailAccountCreationError(
 ) {
   return httpErrors(400, message, {
     id: "gmail_account_creation",
+    isReportable: false,
   });
 }
 
@@ -188,15 +218,35 @@ export function OIDCMalformedUserInfoError(
 ) {
   return httpErrors(400, message, {
     id: "malformed_user_info",
+    isReportable: false,
   });
 }
 
 export function AuthenticationProviderDisabledError(
   message = "Authentication method has been disabled by an admin",
-  redirectUrl = "/"
+  redirectPath = "/"
 ) {
   return httpErrors(400, message, {
-    redirectUrl,
+    redirectPath,
     id: "authentication_provider_disabled",
+    isReportable: false,
+  });
+}
+
+export function UnprocessableEntityError(
+  message = "Cannot process the request"
+) {
+  return httpErrors(422, message, {
+    id: "unprocessable_entity",
+    isReportable: false,
+  });
+}
+
+export function ClientClosedRequestError(
+  message = "Client closed request before response was received"
+) {
+  return httpErrors(499, message, {
+    id: "client_closed_request",
+    isReportable: false,
   });
 }

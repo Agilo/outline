@@ -2,6 +2,10 @@ import retry from "fetch-retry";
 import trim from "lodash/trim";
 import queryString from "query-string";
 import EDITOR_VERSION from "@shared/editor/version";
+import type { JSONObject } from "@shared/types";
+import { Scope } from "@shared/types";
+import { version } from "../../package.json";
+import env from "~/env";
 import stores from "~/stores";
 import Logger from "./Logger";
 import download from "./download";
@@ -12,78 +16,119 @@ import {
   NetworkError,
   NotFoundError,
   OfflineError,
+  PaymentRequiredError,
   RateLimitExceededError,
   RequestError,
   ServiceUnavailableError,
+  UnprocessableEntityError,
   UpdateRequiredError,
 } from "./errors";
+import { getCookie } from "tiny-cookie";
+import { CSRF } from "@shared/constants";
+import AuthenticationHelper from "@shared/helpers/AuthenticationHelper";
 
 type Options = {
   baseUrl?: string;
 };
 
-type FetchOptions = {
+interface FetchOptions {
   download?: boolean;
+  retry?: boolean;
   credentials?: "omit" | "same-origin" | "include";
   headers?: Record<string, string>;
-};
+  baseUrl?: string;
+}
 
 const fetchWithRetry = retry(fetch);
 
 class ApiClient {
   baseUrl: string;
 
+  shareId?: string;
+
+  /** Map of in-flight POST requests for deduplication, keyed by path + body. */
+  private inflightRequests = new Map<string, Promise<any>>();
+
   constructor(options: Options = {}) {
     this.baseUrl = options.baseUrl || "/api";
   }
 
-  fetch = async (
+  setShareId = (shareId: string | undefined) => {
+    this.shareId = shareId;
+  };
+
+  fetch = async <T = any>(
     path: string,
     method: string,
-    data: Record<string, any> | FormData | undefined,
+    data: JSONObject | FormData | undefined,
     options: FetchOptions = {}
-  ) => {
+  ): Promise<T> => {
     let body: string | FormData | undefined;
     let modifiedPath;
     let urlToFetch;
     let isJson;
 
+    if (this.shareId) {
+      // add to data
+      data = {
+        ...(data || {}),
+        shareId: this.shareId,
+      };
+    }
+
     if (method === "GET") {
       if (data) {
-        modifiedPath = `${path}?${data && queryString.stringify(data)}`;
+        modifiedPath = `${path}?${queryString.stringify(data)}`;
       } else {
         modifiedPath = path;
       }
     } else if (method === "POST" || method === "PUT") {
       if (data instanceof FormData || typeof data === "string") {
         body = data;
-      }
-
-      // Only stringify data if its a normal object and
-      // not if it's [object FormData], in addition to
-      // toggling Content-Type to application/json
-      if (
-        typeof data === "object" &&
-        (data || "").toString() === "[object Object]"
-      ) {
+      } else {
         isJson = true;
-        body = JSON.stringify(data);
+
+        // Only stringify data if its a normal object and
+        // not if it's [object FormData], in addition to
+        // toggling Content-Type to application/json
+        if (
+          typeof data === "object" &&
+          (data || "").toString() === "[object Object]"
+        ) {
+          body = JSON.stringify(data);
+        }
       }
     }
 
     if (path.match(/^http/)) {
       urlToFetch = modifiedPath || path;
     } else {
-      urlToFetch = this.baseUrl + (modifiedPath || path);
+      urlToFetch = (options.baseUrl ?? this.baseUrl) + (modifiedPath || path);
     }
 
     const headerOptions: Record<string, string> = {
       Accept: "application/json",
       "cache-control": "no-cache",
       "x-editor-version": EDITOR_VERSION,
+      "x-api-version": "4",
+      "x-client-version": env.VERSION ? `${version}-${env.VERSION}` : version,
       pragma: "no-cache",
       ...options?.headers,
     };
+
+    // Add CSRF token to headers for mutating requests
+    const isModifyingRequest = ["POST", "PUT", "PATCH", "DELETE"].includes(
+      method
+    );
+    const canAccessWithReadOnly = AuthenticationHelper.canAccess(path, [
+      Scope.Read,
+    ]);
+    if (isModifyingRequest && !canAccessWithReadOnly) {
+      const csrfToken = getCookie(CSRF.cookieName);
+      if (csrfToken) {
+        headerOptions[CSRF.headerName] = csrfToken;
+      }
+    }
 
     // for multipart forms or other non JSON requests fetch
     // populates the Content-Type without needing to explicitly
@@ -97,15 +142,18 @@ class ApiClient {
     let response;
 
     try {
-      response = await fetchWithRetry(urlToFetch, {
-        method,
-        body,
-        headers,
-        redirect: "follow",
-        credentials: "same-origin",
-        cache: "no-cache",
-      });
-    } catch (err) {
+      response = await (options?.retry === false ? fetch : fetchWithRetry)(
+        urlToFetch,
+        {
+          method,
+          body,
+          headers,
+          redirect: "follow",
+          credentials: "same-origin",
+          cache: "no-cache",
+        }
+      );
+    } catch (_err) {
       if (window.navigator.onLine) {
         throw new NetworkError("A network error occurred, try again?");
       } else {
@@ -122,17 +170,36 @@ class ApiClient {
         response.headers.get("content-disposition") || ""
       ).split("filename=")[1];
       download(blob, trim(fileName, '"'));
-      return;
+      return undefined as T;
     } else if (success && response.status === 204) {
-      return;
+      return undefined as T;
     } else if (success) {
       return response.json();
     }
 
     // Handle 401, log out user
     if (response.status === 401) {
-      await stores.auth.logout(false, false);
-      return;
+      if (!this.shareId) {
+        await stores.auth.logout({
+          savePath: true,
+          clearCache: false,
+          revokeToken: false,
+        });
+      }
+      throw new AuthorizationError();
+    }
+
+    if (response.status === 502) {
+      const text = await response.text();
+      const err = new BadGatewayError(text);
+
+      Logger.error("BadGatewayError", err, {
+        url: urlToFetch,
+        requestTime: Math.round(timeEnd - timeStart),
+        responseText: text,
+        responseHeaders: Object.fromEntries(response.headers.entries()),
+      });
+      throw err;
     }
 
     // Handle failed responses
@@ -160,10 +227,22 @@ class ApiClient {
       throw new BadRequestError(error.message);
     }
 
+    if (response.status === 402) {
+      throw new PaymentRequiredError(error.message);
+    }
+
     if (response.status === 403) {
       if (error.error === "user_suspended") {
-        await stores.auth.logout(false, false);
-        return;
+        await stores.auth.logout({
+          savePath: false,
+          revokeToken: false,
+        });
+      }
+
+      if (error.error === "csrf_error") {
+        throw new AuthorizationError(
+          "CSRF token invalid, please try reloading."
+        );
       }
 
       throw new AuthorizationError(error.message);
@@ -177,15 +256,13 @@ class ApiClient {
       throw new ServiceUnavailableError(error.message);
     }
 
+    if (response.status === 422) {
+      throw new UnprocessableEntityError(error.message);
+    }
+
     if (response.status === 429) {
       throw new RateLimitExceededError(
         `Too many requests, try again in a minute.`
-      );
-    }
-
-    if (response.status === 502) {
-      throw new BadGatewayError(
-        `Request to ${urlToFetch} failed in ${timeEnd - timeStart}ms.`
       );
     }
 
@@ -199,17 +276,33 @@ class ApiClient {
     throw err;
   };
 
-  get = (
+  get = <T = any>(
     path: string,
-    data: Record<string, any> | undefined,
+    data: JSONObject | undefined,
     options?: FetchOptions
-  ) => this.fetch(path, "GET", data, options);
+  ) => this.fetch<T>(path, "GET", data, options);
 
-  post = (
+  post = <T = any>(
     path: string,
-    data?: Record<string, any> | undefined,
+    data?: JSONObject | FormData | undefined,
     options?: FetchOptions
-  ) => this.fetch(path, "POST", data, options);
+  ): Promise<T> => {
+    if (data instanceof FormData) {
+      return this.fetch<T>(path, "POST", data, options);
+    }
+
+    const key = `${path}:${JSON.stringify(data)}:${JSON.stringify(options)}`;
+    const inflight = this.inflightRequests.get(key);
+    if (inflight) {
+      return inflight;
+    }
+
+    const promise = this.fetch<T>(path, "POST", data, options).finally(() => {
+      this.inflightRequests.delete(key);
+    });
+    this.inflightRequests.set(key, promise);
+    return promise;
+  };
 }
 
 export const client = new ApiClient();

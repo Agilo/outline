@@ -1,9 +1,10 @@
 import * as React from "react";
-import { NavigationNode } from "@shared/types";
+import Icon from "@shared/components/Icon";
+import type { NavigationNode } from "@shared/types";
 import Breadcrumb from "~/components/Breadcrumb";
-import EmojiIcon from "~/components/Icons/EmojiIcon";
-import { MenuInternalLink } from "~/types";
-import { sharedDocumentPath } from "~/utils/routeHelpers";
+import { sharedModelPath } from "~/utils/routeHelpers";
+import { createInternalLinkAction } from "~/actions";
+import { ActiveDocumentSection } from "~/actions/sections";
 
 type Props = {
   children?: React.ReactNode;
@@ -47,26 +48,24 @@ const PublicBreadcrumb: React.FC<Props> = ({
   sharedTree,
   children,
 }: Props) => {
-  const items: MenuInternalLink[] = React.useMemo(
+  const actions = React.useMemo(
     () =>
       pathToDocument(sharedTree, documentId)
-        .slice(0, -1)
-        .map((item) => ({
-          ...item,
-          title: item.emoji ? (
-            <>
-              <EmojiIcon emoji={item.emoji} /> {item.title}
-            </>
-          ) : (
-            item.title
-          ),
-          type: "route",
-          to: sharedDocumentPath(shareId, item.url),
-        })),
+        .slice(1, -1)
+        .map((item) =>
+          createInternalLinkAction({
+            name: item.title,
+            section: ActiveDocumentSection,
+            icon: item.icon ? (
+              <Icon value={item.icon} initial={item.title} color={item.color} />
+            ) : undefined,
+            to: sharedModelPath(shareId, item.url),
+          })
+        ),
     [sharedTree, shareId, documentId]
   );
 
-  return <Breadcrumb items={items}>{children}</Breadcrumb>;
+  return <Breadcrumb actions={actions}>{children}</Breadcrumb>;
 };
 
 export default PublicBreadcrumb;

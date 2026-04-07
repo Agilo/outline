@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { AttachmentPreset, CollectionPermission } from "@shared/types";
-import { CollectionUser } from "@server/models";
+import { UserMembership } from "@server/models";
 import Attachment from "@server/models/Attachment";
 import {
   buildUser,
@@ -14,6 +15,120 @@ import { getTestServer } from "@server/test/support";
 jest.mock("@server/storage/files");
 
 const server = getTestServer();
+
+describe("#attachments.list", () => {
+  it("should return attachments for user", async () => {
+    const user = await buildUser();
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+    const attachment = await buildAttachment({
+      teamId: user.teamId,
+      userId: user.id,
+      documentId: document.id,
+    });
+    const attachment2 = await buildAttachment({
+      teamId: user.teamId,
+      userId: user.id,
+    });
+
+    const res = await server.post("/api/attachments.list", {
+      body: {
+        token: user.getJwtToken(),
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.pagination.total).toEqual(2);
+    expect(body.data.length).toEqual(2);
+    expect(body.data[0].id).toEqual(attachment.id);
+    expect(body.data[1].id).toEqual(attachment2.id);
+  });
+
+  it("should allow filtering by userId when user is an admin", async () => {
+    const admin = await buildAdmin();
+    const user = await buildUser({ teamId: admin.teamId });
+    // Attachments for user
+    const attachment1 = await buildAttachment({
+      teamId: admin.teamId,
+      userId: user.id,
+    });
+    // Attachment for admin
+    await buildAttachment({
+      teamId: admin.teamId,
+      userId: admin.id,
+    });
+
+    const res = await server.post("/api/attachments.list", {
+      body: {
+        userId: user.id,
+        token: admin.getJwtToken(),
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.length).toEqual(1);
+    expect(body.data[0].id).toEqual(attachment1.id);
+  });
+
+  it("should filter by documentId", async () => {
+    const user = await buildUser();
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+    const attachment = await buildAttachment({
+      teamId: user.teamId,
+      userId: user.id,
+      documentId: document.id,
+    });
+    await buildAttachment({
+      teamId: user.teamId,
+      userId: user.id,
+    });
+
+    const res = await server.post("/api/attachments.list", {
+      body: {
+        documentId: document.id,
+        token: user.getJwtToken(),
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.length).toEqual(1);
+    expect(body.data[0].id).toEqual(attachment.id);
+  });
+
+  it("should not return attachments created by other users", async () => {
+    const user = await buildUser();
+    const anotherUser = await buildUser({
+      teamId: user.teamId,
+    });
+    await buildAttachment({
+      teamId: user.teamId,
+      userId: anotherUser.id,
+    });
+
+    const res = await server.post("/api/attachments.list", {
+      body: {
+        token: user.getJwtToken(),
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.length).toEqual(0);
+  });
+
+  it("should require authentication", async () => {
+    const res = await server.post("/api/attachments.list");
+    expect(res.status).toEqual(401);
+  });
+});
 
 describe("#attachments.create", () => {
   it("should require authentication", async () => {
@@ -36,13 +151,18 @@ describe("#attachments.create", () => {
       expect(res.status).toEqual(200);
 
       const body = await res.json();
-      const attachment = await Attachment.findByPk(body.data.attachment.id);
-      expect(attachment!.expiresAt).toBeNull();
+      const attachment = await Attachment.findByPk(body.data.attachment.id, {
+        rejectOnEmpty: true,
+      });
+      expect(attachment.expiresAt).toBeNull();
     });
 
     it("should allow attachment creation for documents", async () => {
       const user = await buildUser();
-      const document = await buildDocument({ teamId: user.teamId });
+      const document = await buildDocument({
+        teamId: user.teamId,
+        userId: user.id,
+      });
 
       const res = await server.post("/api/attachments.create", {
         body: {
@@ -64,15 +184,17 @@ describe("#attachments.create", () => {
           name: "test.zip",
           contentType: "application/zip",
           size: 10000,
-          preset: AttachmentPreset.Import,
+          preset: AttachmentPreset.WorkspaceImport,
           token: user.getJwtToken(),
         },
       });
       expect(res.status).toEqual(200);
 
       const body = await res.json();
-      const attachment = await Attachment.findByPk(body.data.attachment.id);
-      expect(attachment!.expiresAt).toBeTruthy();
+      const attachment = await Attachment.findByPk(body.data.attachment.id, {
+        rejectOnEmpty: true,
+      });
+      expect(attachment.expiresAt).toBeTruthy();
     });
 
     it("should not allow attachment creation for other documents", async () => {
@@ -119,7 +241,7 @@ describe("#attachments.create", () => {
         collectionId: collection.id,
       });
 
-      await CollectionUser.create({
+      await UserMembership.create({
         createdById: user.id,
         collectionId: collection.id,
         userId: user.id,
@@ -191,7 +313,13 @@ describe("#attachments.delete", () => {
       },
     });
     expect(res.status).toEqual(200);
-    expect(await Attachment.count()).toEqual(0);
+    expect(
+      await Attachment.count({
+        where: {
+          teamId: user.teamId,
+        },
+      })
+    ).toEqual(0);
   });
 
   it("should allow deleting an attachment without a document created by user", async () => {
@@ -209,7 +337,13 @@ describe("#attachments.delete", () => {
       },
     });
     expect(res.status).toEqual(200);
-    expect(await Attachment.count()).toEqual(0);
+    expect(
+      await Attachment.count({
+        where: {
+          teamId: user.teamId,
+        },
+      })
+    ).toEqual(0);
   });
 
   it("should allow deleting an attachment without a document if admin", async () => {
@@ -226,7 +360,13 @@ describe("#attachments.delete", () => {
       },
     });
     expect(res.status).toEqual(200);
-    expect(await Attachment.count()).toEqual(0);
+    expect(
+      await Attachment.count({
+        where: {
+          teamId: user.teamId,
+        },
+      })
+    ).toEqual(0);
   });
 
   it("should not allow deleting an attachment in another team", async () => {
@@ -286,11 +426,6 @@ describe("#attachments.delete", () => {
 });
 
 describe("#attachments.redirect", () => {
-  it("should require authentication", async () => {
-    const res = await server.post("/api/attachments.redirect");
-    expect(res.status).toEqual(401);
-  });
-
   it("should return a redirect for an attachment belonging to a document user has access to", async () => {
     const user = await buildUser();
     const attachment = await buildAttachment({
@@ -377,6 +512,35 @@ describe("#attachments.redirect", () => {
       redirect: "manual",
     });
     expect(res.status).toEqual(302);
+  });
+
+  it("should return a redirect for an attachment in a public bucket without authentication", async () => {
+    const attachment = await buildAttachment({
+      key: `public/${randomUUID()}/test.png`,
+      acl: "public-read",
+    });
+    const res = await server.post("/api/attachments.redirect", {
+      body: {
+        id: attachment.id,
+      },
+      redirect: "manual",
+    });
+    expect(res.status).toEqual(302);
+    expect(res.headers.get("location")).toContain(attachment.canonicalUrl);
+  });
+
+  it("should return a redirect for a public-read attachment without authentication (not in public bucket)", async () => {
+    const attachment = await buildAttachment({
+      acl: "public-read",
+    });
+    const res = await server.post("/api/attachments.redirect", {
+      body: {
+        id: attachment.id,
+      },
+      redirect: "manual",
+    });
+    expect(res.status).toEqual(302);
+    expect(res.headers.get("location")).toContain(await attachment.signedUrl);
   });
 
   it("should not return a redirect for a private attachment belonging to a document user does not have access to", async () => {

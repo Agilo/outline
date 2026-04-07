@@ -1,34 +1,41 @@
 import JSZip from "jszip";
 import omit from "lodash/omit";
-import { NavigationNode } from "@shared/types";
-import { parser } from "@server/editor";
+import type { NavigationNode } from "@shared/types";
 import env from "@server/env";
 import Logger from "@server/logging/Logger";
-import {
-  Attachment,
-  Collection,
-  Document,
-  FileOperation,
-} from "@server/models";
-import DocumentHelper from "@server/models/helpers/DocumentHelper";
+import type { Collection, FileOperation } from "@server/models";
+import { Attachment, Document } from "@server/models";
+import { DocumentHelper } from "@server/models/helpers/DocumentHelper";
+import { ProsemirrorHelper } from "@server/models/helpers/ProsemirrorHelper";
 import { presentAttachment, presentCollection } from "@server/presenters";
-import { CollectionJSONExport, JSONExportMetadata } from "@server/types";
+import type { CollectionJSONExport, JSONExportMetadata } from "@server/types";
 import ZipHelper from "@server/utils/ZipHelper";
 import { serializeFilename } from "@server/utils/fs";
-import parseAttachmentIds from "@server/utils/parseAttachmentIds";
 import packageJson from "../../../package.json";
 import ExportTask from "./ExportTask";
 
 export default class ExportJSONTask extends ExportTask {
-  public async export(collections: Collection[], fileOperation: FileOperation) {
+  public async exportCollections(
+    collections: Collection[],
+    fileOperation: FileOperation
+  ) {
     const zip = new JSZip();
+    const usedFilenames = new Set<string>();
 
     // serial to avoid overloading, slow and steady wins the race
     for (const collection of collections) {
+      let filename = serializeFilename(collection.name);
+      let i = 0;
+      while (usedFilenames.has(filename)) {
+        filename = `${serializeFilename(collection.name)} (${++i})`;
+      }
+      usedFilenames.add(filename);
+
       await this.addCollectionToArchive(
         zip,
         collection,
-        fileOperation.includeAttachments
+        fileOperation.options?.includeAttachments ?? true,
+        filename
       );
     }
 
@@ -50,7 +57,7 @@ export default class ExportJSONTask extends ExportTask {
 
     zip.file(
       `metadata.json`,
-      env.ENVIRONMENT === "development"
+      env.isDevelopment
         ? JSON.stringify(metadata, null, 2)
         : JSON.stringify(metadata)
     );
@@ -59,19 +66,49 @@ export default class ExportJSONTask extends ExportTask {
   private async addCollectionToArchive(
     zip: JSZip,
     collection: Collection,
-    includeAttachments: boolean
+    includeAttachments: boolean,
+    filename: string
   ) {
     const output: CollectionJSONExport = {
       collection: {
-        ...omit(presentCollection(collection), ["url"]),
-        description: collection.description
-          ? parser.parse(collection.description)
-          : null,
+        ...(omit(await presentCollection(undefined, collection), [
+          "url",
+          "description",
+        ]) as CollectionJSONExport["collection"]),
         documentStructure: collection.documentStructure,
       },
       documents: {},
       attachments: {},
     };
+
+    async function addAttachments(attachments: Attachment[]) {
+      await Promise.all(
+        attachments.map(async (attachment) => {
+          zip.file(
+            attachment.key,
+            new Promise<Buffer>((resolve) => {
+              attachment.buffer.then(resolve).catch((err) => {
+                Logger.warn(`Failed to read attachment from storage`, {
+                  attachmentId: attachment.id,
+                  teamId: attachment.teamId,
+                  error: err.message,
+                });
+                resolve(Buffer.from(""));
+              });
+            }),
+            {
+              date: attachment.updatedAt,
+              createFolders: true,
+            }
+          );
+
+          output.attachments[attachment.id] = {
+            ...omit(presentAttachment(attachment), "url"),
+            key: attachment.key,
+          };
+        })
+      );
+    }
 
     async function addDocumentTree(nodes: NavigationNode[]) {
       for (const node of nodes) {
@@ -83,42 +120,28 @@ export default class ExportJSONTask extends ExportTask {
           continue;
         }
 
-        const attachments = includeAttachments
+        const documentAttachments = includeAttachments
           ? await Attachment.findAll({
               where: {
                 teamId: document.teamId,
-                id: parseAttachmentIds(document.text),
+                id: ProsemirrorHelper.parseAttachmentIds(
+                  DocumentHelper.toProsemirror(document)
+                ),
               },
             })
           : [];
 
-        await Promise.all(
-          attachments.map(async (attachment) => {
-            try {
-              zip.file(attachment.key, attachment.buffer, {
-                date: attachment.updatedAt,
-                createFolders: true,
-              });
-
-              output.attachments[attachment.id] = {
-                ...omit(presentAttachment(attachment), "url"),
-                key: attachment.key,
-              };
-            } catch (err) {
-              Logger.error(
-                `Failed to add attachment to archive: ${attachment.key}`,
-                err
-              );
-            }
-          })
-        );
+        await addAttachments(documentAttachments);
 
         output.documents[document.id] = {
           id: document.id,
           urlId: document.urlId,
           title: document.title,
-          data: DocumentHelper.toProsemirror(document),
+          icon: document.icon,
+          color: document.color,
+          data: DocumentHelper.toProsemirror(document).toJSON(),
           createdById: document.createdById,
+          createdByName: document.createdBy.name,
           createdByEmail: document.createdBy.email,
           createdAt: document.createdAt.toISOString(),
           updatedAt: document.updatedAt.toISOString(),
@@ -126,7 +149,6 @@ export default class ExportJSONTask extends ExportTask {
             ? document.publishedAt.toISOString()
             : null,
           fullWidth: document.fullWidth,
-          template: document.template,
           parentDocumentId: document.parentDocumentId,
         };
 
@@ -136,15 +158,32 @@ export default class ExportJSONTask extends ExportTask {
       }
     }
 
+    const collectionAttachments = includeAttachments
+      ? await Attachment.findAll({
+          where: {
+            teamId: collection.teamId,
+            id: ProsemirrorHelper.parseAttachmentIds(
+              DocumentHelper.toProsemirror(collection)
+            ),
+          },
+        })
+      : [];
+
+    await addAttachments(collectionAttachments);
+
     if (collection.documentStructure) {
       await addDocumentTree(collection.documentStructure);
     }
 
     zip.file(
-      `${serializeFilename(collection.name)}.json`,
-      env.ENVIRONMENT === "development"
+      `${filename}.json`,
+      env.isDevelopment
         ? JSON.stringify(output, null, 2)
         : JSON.stringify(output)
     );
+  }
+
+  public async exportDocument(): Promise<string> {
+    throw new Error("JSON export unsupported for individual document.");
   }
 }

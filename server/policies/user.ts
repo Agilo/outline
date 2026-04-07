@@ -1,113 +1,105 @@
+import { TeamPreference, EmailDisplay } from "@shared/types";
 import { User, Team } from "@server/models";
-import { AdminRequiredError } from "../errors";
 import { allow } from "./cancan";
+import {
+  and,
+  isTeamAdmin,
+  isTeamMember,
+  isTeamModel,
+  isTeamMutable,
+  or,
+} from "./utils";
 
-allow(
-  User,
-  "read",
-  User,
-  (actor, user) => user && user.teamId === actor.teamId
+allow(User, "read", User, isTeamModel);
+
+allow(User, "listUsers", Team, (actor, team) =>
+  and(
+    //
+    isTeamModel(actor, team),
+    !actor.isGuest
+  )
 );
 
-allow(User, "inviteUser", Team, (actor, team) => {
-  if (!team || actor.teamId !== team.id) {
-    return false;
-  }
-  if (actor.isAdmin) {
-    return true;
+allow(User, "inviteUser", Team, (actor, team) =>
+  and(
+    isTeamModel(actor, team),
+    isTeamMutable(actor),
+    !actor.isGuest,
+    !actor.isViewer,
+    actor.isAdmin || !!team?.getPreference(TeamPreference.MembersCanInvite)
+  )
+);
+
+allow(User, ["update", "readDetails", "listApiKeys"], User, (actor, user) =>
+  or(
+    //
+    isTeamAdmin(actor, user),
+    actor.id === user?.id
+  )
+);
+
+allow(User, "readEmail", User, (actor, user) => {
+  const emailDisplay =
+    actor.team?.getPreference(TeamPreference.EmailDisplay) ??
+    EmailDisplay.Members;
+
+  if (emailDisplay === EmailDisplay.None) {
+    return or(isTeamAdmin(actor, user), actor.id === user?.id);
   }
 
-  throw AdminRequiredError();
+  if (emailDisplay === EmailDisplay.Members) {
+    return or(
+      isTeamAdmin(actor, user),
+      isTeamMember(actor, user),
+      actor.id === user?.id
+    );
+  }
+
+  // EmailDisplay.Everyone
+  return or(
+    //
+    isTeamModel(actor, user),
+    actor.id === user?.id
+  );
 });
 
-allow(User, "update", User, (actor, user) => {
-  if (!user || user.teamId !== actor.teamId) {
-    return false;
-  }
-  if (user.id === actor.id) {
-    return true;
-  }
+allow(User, "delete", User, (actor, user) =>
+  or(
+    isTeamAdmin(actor, user),
+    and(
+      actor.id === user?.id,
+      !!actor.team.getPreference(TeamPreference.MembersCanDeleteAccount)
+    )
+  )
+);
 
-  if (actor.isAdmin) {
-    return true;
-  }
+allow(User, ["activate", "suspend"], User, (actor, user) =>
+  and(isTeamAdmin(actor, user), user?.id !== actor.id)
+);
 
-  return false;
-});
+allow(User, "promote", User, (actor, user) =>
+  and(
+    //
+    isTeamAdmin(actor, user),
+    !user?.isAdmin,
+    !user?.isSuspended,
+    user?.id !== actor.id
+  )
+);
 
-allow(User, "delete", User, (actor, user) => {
-  if (!user || user.teamId !== actor.teamId) {
-    return false;
-  }
-  if (user.id === actor.id) {
-    return true;
-  }
-  if (actor.isAdmin) {
-    return true;
-  }
+allow(User, "demote", User, (actor, user) =>
+  and(
+    //
+    isTeamAdmin(actor, user),
+    !user?.isSuspended,
+    user?.id !== actor.id
+  )
+);
 
-  throw AdminRequiredError();
-});
-
-allow(User, ["activate", "suspend"], User, (actor, user) => {
-  if (!user || user.teamId !== actor.teamId) {
-    return false;
-  }
-  if (actor.isAdmin) {
-    return true;
-  }
-
-  throw AdminRequiredError();
-});
-
-allow(User, "readDetails", User, (actor, user) => {
-  if (!user || user.teamId !== actor.teamId) {
-    return false;
-  }
-  if (user === actor) {
-    return true;
-  }
-  return actor.isAdmin;
-});
-
-allow(User, "promote", User, (actor, user) => {
-  if (!user || user.teamId !== actor.teamId) {
-    return false;
-  }
-  if (user.isAdmin || user.isSuspended) {
-    return false;
-  }
-  if (actor.isAdmin) {
-    return true;
-  }
-
-  throw AdminRequiredError();
-});
-
-allow(User, "resendInvite", User, (actor, user) => {
-  if (!user || user.teamId !== actor.teamId) {
-    return false;
-  }
-  if (!user.isInvited) {
-    return false;
-  }
-  if (actor.isAdmin) {
-    return true;
-  }
-
-  throw AdminRequiredError();
-});
-
-allow(User, "demote", User, (actor, user) => {
-  if (!user || user.teamId !== actor.teamId) {
-    return false;
-  }
-  if (user.isSuspended) {
-    return false;
-  }
-  if (actor.isAdmin) {
-    return true;
-  }
-
-  throw AdminRequiredError();
-});
+allow(User, "resendInvite", User, (actor, user) =>
+  and(
+    //
+    isTeamAdmin(actor, user),
+    !!user?.isInvited
+  )
+);

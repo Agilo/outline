@@ -1,66 +1,62 @@
-import WelcomeEmail from "@server/emails/templates/WelcomeEmail";
+import { faker } from "@faker-js/faker";
+import { randomUUID } from "node:crypto";
 import { TeamDomain } from "@server/models";
 import Collection from "@server/models/Collection";
 import UserAuthentication from "@server/models/UserAuthentication";
-import { buildUser, buildTeam } from "@server/test/factories";
-import {
-  setupTestDatabase,
-  seed,
-  setCloudHosted,
-  setSelfHosted,
-} from "@server/test/support";
+import { buildUser, buildTeam, buildAdmin } from "@server/test/factories";
+import { setSelfHosted } from "@server/test/support";
 import accountProvisioner from "./accountProvisioner";
-
-setupTestDatabase();
+import { createContext } from "@server/context";
 
 describe("accountProvisioner", () => {
-  const ip = "127.0.0.1";
+  const ip = faker.internet.ip();
+  const ctx = createContext({ ip });
 
   describe("hosted", () => {
-    beforeEach(setCloudHosted);
-
     it("should create a new user and team", async () => {
-      const spy = jest.spyOn(WelcomeEmail.prototype, "schedule");
-      const { user, team, isNewTeam, isNewUser } = await accountProvisioner({
-        ip,
-        user: {
-          name: "Jenny Tester",
-          email: "jenny@example-company.com",
-          avatarUrl: "https://example.com/avatar.png",
-        },
-        team: {
-          name: "New workspace",
-          avatarUrl: "https://example.com/avatar.png",
-          subdomain: "example",
-        },
-        authenticationProvider: {
-          name: "google",
-          providerId: "example-company.com",
-        },
-        authentication: {
-          providerId: "123456789",
-          accessToken: "123",
-          scopes: ["read"],
-        },
-      });
+      const email = faker.internet.email();
+      const { user, team, isNewTeam, isNewUser } = await accountProvisioner(
+        ctx,
+        {
+          user: {
+            name: "Jenny Tester",
+            email,
+            avatarUrl: faker.image.avatar(),
+          },
+          team: {
+            name: "New workspace",
+            avatarUrl: faker.image.avatar(),
+            subdomain: faker.internet.domainWord(),
+          },
+          authenticationProvider: {
+            name: "google",
+            providerId: faker.internet.domainName(),
+          },
+          authentication: {
+            providerId: randomUUID(),
+            accessToken: "123",
+            scopes: ["read"],
+          },
+        }
+      );
       const authentications = await user.$get("authentications");
       const auth = authentications[0];
       expect(auth.accessToken).toEqual("123");
       expect(auth.scopes.length).toEqual(1);
       expect(auth.scopes[0]).toEqual("read");
       expect(team.name).toEqual("New workspace");
-      expect(user.email).toEqual("jenny@example-company.com");
+      expect(user.email).toEqual(email);
       expect(isNewUser).toEqual(true);
       expect(isNewTeam).toEqual(true);
-      expect(spy).toHaveBeenCalled();
-      const collectionCount = await Collection.count();
+      const collectionCount = await Collection.count({
+        where: {
+          teamId: team.id,
+        },
+      });
       expect(collectionCount).toEqual(1);
-
-      spy.mockRestore();
     });
 
-    it("should update exising user and authentication", async () => {
-      const spy = jest.spyOn(WelcomeEmail.prototype, "schedule");
+    it("should update existing user and authentication", async () => {
       const existingTeam = await buildTeam();
       const providers = await existingTeam.$get("authenticationProviders");
       const authenticationProvider = providers[0];
@@ -69,9 +65,8 @@ describe("accountProvisioner", () => {
       });
       const authentications = await existing.$get("authentications");
       const authentication = authentications[0];
-      const newEmail = "test@example-company.com";
-      const { user, isNewUser, isNewTeam } = await accountProvisioner({
-        ip,
+      const newEmail = faker.internet.email();
+      const { user, isNewUser, isNewTeam } = await accountProvisioner(ctx, {
         user: {
           name: existing.name,
           email: newEmail,
@@ -80,7 +75,7 @@ describe("accountProvisioner", () => {
         team: {
           name: existingTeam.name,
           avatarUrl: existingTeam.avatarUrl,
-          subdomain: "example",
+          subdomain: faker.internet.domainWord(),
         },
         authenticationProvider: {
           name: authenticationProvider.name,
@@ -99,41 +94,41 @@ describe("accountProvisioner", () => {
       expect(user.email).toEqual(newEmail);
       expect(isNewTeam).toEqual(false);
       expect(isNewUser).toEqual(false);
-      expect(spy).not.toHaveBeenCalled();
-      const collectionCount = await Collection.count();
-      expect(collectionCount).toEqual(0);
-
-      spy.mockRestore();
     });
 
     it("should allow authentication by email matching", async () => {
-      const existingTeam = await buildTeam();
+      const subdomain = faker.internet.domainWord();
+      const existingTeam = await buildTeam({
+        subdomain,
+      });
+
       const providers = await existingTeam.$get("authenticationProviders");
       const authenticationProvider = providers[0];
+      const email = faker.internet.email();
       const userWithoutAuth = await buildUser({
-        email: "email@example.com",
+        email,
         teamId: existingTeam.id,
         authentications: [],
       });
 
-      const { user, isNewUser, isNewTeam } = await accountProvisioner({
-        ip,
+      const { user, isNewUser, isNewTeam } = await accountProvisioner(ctx, {
         user: {
           name: userWithoutAuth.name,
-          email: "email@example.com",
+          email,
           avatarUrl: userWithoutAuth.avatarUrl,
         },
         team: {
+          teamId: existingTeam.id,
           name: existingTeam.name,
           avatarUrl: existingTeam.avatarUrl,
-          subdomain: "example",
+          subdomain,
         },
         authenticationProvider: {
           name: authenticationProvider.name,
           providerId: authenticationProvider.providerId,
         },
         authentication: {
-          providerId: "anything",
+          providerId: randomUUID(),
           accessToken: "123",
           scopes: ["read"],
         },
@@ -141,7 +136,6 @@ describe("accountProvisioner", () => {
       expect(user.id).toEqual(userWithoutAuth.id);
       expect(isNewTeam).toEqual(false);
       expect(isNewUser).toEqual(false);
-      expect(user.authentications.length).toEqual(0);
     });
 
     it("should throw an error when authentication provider is disabled", async () => {
@@ -159,8 +153,7 @@ describe("accountProvisioner", () => {
       let error;
 
       try {
-        await accountProvisioner({
-          ip,
+        await accountProvisioner(ctx, {
           user: {
             name: existing.name,
             email: existing.email!,
@@ -169,7 +162,7 @@ describe("accountProvisioner", () => {
           team: {
             name: existingTeam.name,
             avatarUrl: existingTeam.avatarUrl,
-            subdomain: "example",
+            subdomain: faker.internet.domainWord(),
           },
           authenticationProvider: {
             name: authenticationProvider.name,
@@ -188,10 +181,61 @@ describe("accountProvisioner", () => {
       expect(error).toBeTruthy();
     });
 
+    it("should prioritize enabled authentication provider", async () => {
+      const existingTeam = await buildTeam();
+      const existingProviders = await existingTeam.$get(
+        "authenticationProviders"
+      );
+
+      const team2 = await buildTeam();
+
+      const providers = await team2.$get("authenticationProviders");
+      const authenticationProvider = providers[0];
+      await authenticationProvider.update({
+        enabled: false,
+        providerId: existingProviders[0].providerId,
+      });
+
+      const existing = await buildUser({
+        teamId: existingTeam.id,
+      });
+      const authentications = await existing.$get("authentications");
+      const authentication = authentications[0];
+      const { isNewUser, isNewTeam } = await accountProvisioner(ctx, {
+        user: {
+          name: existing.name,
+          email: existing.email!,
+          avatarUrl: existing.avatarUrl,
+        },
+        team: {
+          name: existingTeam.name,
+          avatarUrl: existingTeam.avatarUrl,
+          subdomain: faker.internet.domainWord(),
+        },
+        authenticationProvider: {
+          name: authenticationProvider.name,
+          providerId: authenticationProvider.providerId,
+        },
+        authentication: {
+          providerId: authentication.providerId,
+          accessToken: "123",
+          scopes: ["read"],
+        },
+      });
+      const auth = await UserAuthentication.findByPk(authentication.id);
+      expect(auth?.accessToken).toEqual("123");
+      expect(auth?.scopes.length).toEqual(1);
+      expect(auth?.scopes[0]).toEqual("read");
+      expect(isNewTeam).toEqual(false);
+      expect(isNewUser).toEqual(false);
+    });
+
     it("should throw an error when the domain is not allowed", async () => {
-      const { admin, team: existingTeam } = await seed();
+      const existingTeam = await buildTeam();
+      const admin = await buildAdmin({ teamId: existingTeam.id });
       const providers = await existingTeam.$get("authenticationProviders");
       const authenticationProvider = providers[0];
+      const email = faker.internet.email();
 
       await TeamDomain.create({
         teamId: existingTeam.id,
@@ -202,24 +246,22 @@ describe("accountProvisioner", () => {
       let error;
 
       try {
-        await accountProvisioner({
-          ip,
+        await accountProvisioner(ctx, {
           user: {
             name: "Jenny Tester",
-            email: "jenny@example-company.com",
-            avatarUrl: "https://example.com/avatar.png",
+            email,
+            avatarUrl: faker.image.avatar(),
           },
           team: {
-            name: existingTeam.name,
             avatarUrl: existingTeam.avatarUrl,
-            subdomain: "example",
+            subdomain: faker.internet.domainWord(),
           },
           authenticationProvider: {
             name: authenticationProvider.name,
             providerId: authenticationProvider.providerId,
           },
           authentication: {
-            providerId: "123456789",
+            providerId: randomUUID(),
             accessToken: "123",
             scopes: ["read"],
           },
@@ -232,36 +274,35 @@ describe("accountProvisioner", () => {
     });
 
     it("should create a new user in an existing team when the domain is allowed", async () => {
-      const spy = jest.spyOn(WelcomeEmail.prototype, "schedule");
-      const { admin, team } = await seed();
+      const team = await buildTeam();
+      const admin = await buildAdmin({ teamId: team.id });
       const authenticationProviders = await team.$get(
         "authenticationProviders"
       );
       const authenticationProvider = authenticationProviders[0];
+      const domain = faker.internet.domainName();
       await TeamDomain.create({
         teamId: team.id,
-        name: "example-company.com",
+        name: domain,
         createdById: admin.id,
       });
-
-      const { user, isNewUser } = await accountProvisioner({
-        ip,
+      const email = faker.internet.email({ provider: domain });
+      const { user, isNewUser } = await accountProvisioner(ctx, {
         user: {
           name: "Jenny Tester",
-          email: "jenny@example-company.com",
-          avatarUrl: "https://example.com/avatar.png",
+          email,
+          avatarUrl: faker.image.avatar(),
         },
         team: {
-          name: team.name,
           avatarUrl: team.avatarUrl,
-          subdomain: "example",
+          subdomain: faker.internet.domainWord(),
         },
         authenticationProvider: {
           name: authenticationProvider.name,
           providerId: authenticationProvider.providerId,
         },
         authentication: {
-          providerId: "123456789",
+          providerId: randomUUID(),
           accessToken: "123",
           scopes: ["read"],
         },
@@ -271,41 +312,41 @@ describe("accountProvisioner", () => {
       expect(auth.accessToken).toEqual("123");
       expect(auth.scopes.length).toEqual(1);
       expect(auth.scopes[0]).toEqual("read");
-      expect(user.email).toEqual("jenny@example-company.com");
+      expect(user.email).toEqual(email);
       expect(isNewUser).toEqual(true);
-      expect(spy).toHaveBeenCalled();
       // should provision welcome collection
-      const collectionCount = await Collection.count();
+      const collectionCount = await Collection.count({
+        where: {
+          teamId: team.id,
+        },
+      });
       expect(collectionCount).toEqual(1);
-
-      spy.mockRestore();
     });
 
     it("should create a new user in an existing team", async () => {
-      const spy = jest.spyOn(WelcomeEmail.prototype, "schedule");
       const team = await buildTeam();
       const authenticationProviders = await team.$get(
         "authenticationProviders"
       );
       const authenticationProvider = authenticationProviders[0];
-      const { user, isNewUser } = await accountProvisioner({
-        ip,
+      const email = faker.internet.email();
+      const { user, isNewUser } = await accountProvisioner(ctx, {
         user: {
           name: "Jenny Tester",
-          email: "jenny@example-company.com",
-          avatarUrl: "https://example.com/avatar.png",
+          email,
+          avatarUrl: faker.image.avatar(),
         },
         team: {
           name: team.name,
           avatarUrl: team.avatarUrl,
-          subdomain: "example",
+          subdomain: faker.internet.domainWord(),
         },
         authenticationProvider: {
           name: authenticationProvider.name,
           providerId: authenticationProvider.providerId,
         },
         authentication: {
-          providerId: "123456789",
+          providerId: randomUUID(),
           accessToken: "123",
           scopes: ["read"],
         },
@@ -315,14 +356,95 @@ describe("accountProvisioner", () => {
       expect(auth.accessToken).toEqual("123");
       expect(auth.scopes.length).toEqual(1);
       expect(auth.scopes[0]).toEqual("read");
-      expect(user.email).toEqual("jenny@example-company.com");
+      expect(user.email).toEqual(email);
       expect(isNewUser).toEqual(true);
-      expect(spy).toHaveBeenCalled();
       // should provision welcome collection
-      const collectionCount = await Collection.count();
+      const collectionCount = await Collection.count({
+        where: {
+          teamId: team.id,
+        },
+      });
       expect(collectionCount).toEqual(1);
+    });
 
-      spy.mockRestore();
+    it("should handle emails with capital letters correctly", async () => {
+      const email = "Jenny.Tester@EXAMPLE.COM";
+
+      const params = {
+        user: {
+          name: "Jenny Tester",
+          email,
+          avatarUrl: faker.image.avatar(),
+        },
+        team: {
+          name: "New workspace",
+          avatarUrl: faker.image.avatar(),
+          subdomain: faker.internet.domainWord(),
+        },
+        authenticationProvider: {
+          name: "google",
+          providerId: faker.internet.domainName(),
+        },
+        authentication: {
+          providerId: randomUUID(),
+          accessToken: "123",
+          scopes: ["read"],
+        },
+      };
+
+      const { user, isNewTeam, isNewUser } = await accountProvisioner(
+        ctx,
+        params
+      );
+
+      expect(user.email).toEqual(email);
+      expect(isNewUser).toEqual(true);
+      expect(isNewTeam).toEqual(true);
+
+      // Test that we can find the user again
+      const existing = await accountProvisioner(ctx, params);
+
+      expect(user.email).toEqual(email);
+      expect(existing.isNewTeam).toEqual(false);
+      expect(existing.isNewUser).toEqual(false);
+      expect(existing.user.id).toEqual(user.id);
+    });
+
+    it("should allow connecting a new authentication provider while logged in", async () => {
+      const admin = await buildAdmin();
+      const team = admin.team;
+      const ctxWithAdmin = createContext({ ip, user: admin });
+
+      const providerId = faker.internet.domainName();
+      const { user, isNewTeam, isNewUser } = await accountProvisioner(
+        ctxWithAdmin,
+        {
+          user: {
+            name: admin.name,
+            email: admin.email!,
+          },
+          team: {
+            teamId: team.id,
+            subdomain: team.subdomain!,
+          },
+          authenticationProvider: {
+            name: "google",
+            providerId,
+          },
+          authentication: {
+            providerId: randomUUID(),
+            accessToken: "456",
+            scopes: ["read"],
+          },
+        }
+      );
+
+      expect(user.id).toEqual(admin.id);
+      expect(isNewUser).toEqual(false);
+      expect(isNewTeam).toEqual(false);
+
+      const providers = await team.$get("authenticationProviders");
+      expect(providers.find((p) => p.name === "google")).toBeTruthy();
     });
   });
 
@@ -334,25 +456,24 @@ describe("accountProvisioner", () => {
       const team = await buildTeam();
 
       try {
-        await accountProvisioner({
-          ip,
+        await accountProvisioner(ctx, {
           user: {
             name: "Jenny Tester",
-            email: "jenny@example-company.com",
-            avatarUrl: "https://example.com/avatar.png",
+            email: faker.internet.email(),
+            avatarUrl: faker.image.avatar(),
           },
           team: {
             teamId: team.id,
             name: team.name,
             avatarUrl: team.avatarUrl,
-            subdomain: "example",
+            subdomain: faker.internet.domainWord(),
           },
           authenticationProvider: {
             name: "google",
-            providerId: "example-company.com",
+            providerId: faker.internet.domainName(),
           },
           authentication: {
-            providerId: "123456789",
+            providerId: randomUUID(),
             accessToken: "123",
             scopes: ["read"],
           },
@@ -361,33 +482,31 @@ describe("accountProvisioner", () => {
         error = err;
       }
 
-      expect(error.message).toEqual(
-        "The maximum number of workspaces has been reached"
-      );
+      expect(error.message).toEqual("Invalid authentication");
     });
 
     it("should always use existing team if self-hosted", async () => {
       const team = await buildTeam();
-      const { user, isNewUser } = await accountProvisioner({
-        ip,
+      const domain = faker.internet.domainName();
+      const { user, isNewUser } = await accountProvisioner(ctx, {
         user: {
           name: "Jenny Tester",
-          email: "jenny@example-company.com",
-          avatarUrl: "https://example.com/avatar.png",
+          email: faker.internet.email(),
+          avatarUrl: faker.image.avatar(),
         },
         team: {
           teamId: team.id,
           name: team.name,
           avatarUrl: team.avatarUrl,
-          subdomain: "example",
-          domain: "allowed-domain.com",
+          subdomain: faker.internet.domainWord(),
+          domain,
         },
         authenticationProvider: {
           name: "google",
-          providerId: "allowed-domain.com",
+          providerId: domain,
         },
         authentication: {
-          providerId: "123456789",
+          providerId: randomUUID(),
           accessToken: "123",
           scopes: ["read"],
         },

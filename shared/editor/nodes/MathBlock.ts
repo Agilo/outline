@@ -2,10 +2,15 @@ import {
   makeBlockMathInputRule,
   mathSchemaSpec,
 } from "@benrbray/prosemirror-math";
-import { PluginSimple } from "markdown-it";
-import { NodeSpec, NodeType, Node as ProsemirrorNode } from "prosemirror-model";
-import { Command, TextSelection } from "prosemirror-state";
-import { MarkdownSerializerState } from "../lib/markdown/serializer";
+import type { PluginSimple } from "markdown-it";
+import type {
+  NodeSpec,
+  NodeType,
+  Node as ProsemirrorNode,
+} from "prosemirror-model";
+import type { Command } from "prosemirror-state";
+import { TextSelection } from "prosemirror-state";
+import type { MarkdownSerializerState } from "../lib/markdown/serializer";
 import mathRule, { REGEX_BLOCK_MATH_DOLLARS } from "../rules/math";
 import Node from "./Node";
 
@@ -41,10 +46,10 @@ export default class MathBlock extends Node {
   }
 
   toMarkdown(state: MarkdownSerializerState, node: ProsemirrorNode) {
-    state.write("$$$\n");
+    state.write("$$\n");
     state.text(node.textContent, false);
     state.ensureNewLine();
-    state.write("$$$");
+    state.write("$$");
     state.closeBlock(node);
   }
 

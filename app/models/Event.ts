@@ -1,34 +1,44 @@
-import BaseModel from "./BaseModel";
+import Collection from "./Collection";
+import Document from "./Document";
 import User from "./User";
+import Model from "./base/Model";
+import Relation from "./decorators/Relation";
 
-class Event extends BaseModel {
-  id: string;
+class Event<T extends Model> extends Model {
+  static modelName = "Event";
 
   name: string;
 
-  modelId: string | null | undefined;
-
-  actorId: string;
+  modelId: string | undefined;
 
   actorIpAddress: string | null | undefined;
 
-  documentId: string;
+  @Relation(() => Document)
+  document: Document;
 
-  collectionId: string | null | undefined;
+  documentId: string | undefined;
+
+  @Relation(() => Collection)
+  collection: Collection;
+
+  collectionId: string | undefined;
+
+  @Relation(() => User)
+  user: User;
 
   userId: string;
 
-  createdAt: string;
-
+  @Relation(() => User)
   actor: User;
 
-  data: {
-    name: string;
-    email: string;
-    title: string;
-    published: boolean;
-    templateId: string;
-  };
+  actorId: string;
+
+  data: Partial<T> | null;
+
+  changes: {
+    attributes: Partial<T>;
+    previous: Partial<T>;
+  } | null;
 }
 
 export default Event;

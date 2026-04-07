@@ -1,25 +1,31 @@
-import { v4 as uuidv4 } from "uuid";
-import { TeamDomain } from "@server/models";
-import { buildUser, buildTeam, buildInvite } from "@server/test/factories";
-import { setupTestDatabase, seed } from "@server/test/support";
+import { faker } from "@faker-js/faker";
+import { randomUUID } from "node:crypto";
+import { UserRole } from "@shared/types";
+import { AuthenticationProvider, TeamDomain } from "@server/models";
+import { randomString } from "@shared/random";
+import {
+  buildUser,
+  buildTeam,
+  buildInvite,
+  buildAdmin,
+} from "@server/test/factories";
 import userProvisioner from "./userProvisioner";
-
-setupTestDatabase();
+import { createContext } from "@server/context";
 
 describe("userProvisioner", () => {
-  const ip = "127.0.0.1";
+  const ip = faker.internet.ip();
+  const ctx = createContext({ ip });
 
   it("should update existing user and authentication", async () => {
     const existing = await buildUser();
     const authentications = await existing.$get("authentications");
     const existingAuth = authentications[0];
     const newEmail = "test@example.com";
-    const result = await userProvisioner({
+    const result = await userProvisioner(ctx, {
       name: existing.name,
       email: newEmail,
       avatarUrl: existing.avatarUrl,
       teamId: existing.teamId,
-      ip,
       authentication: {
         authenticationProviderId: existingAuth.authenticationProviderId,
         providerId: existingAuth.providerId,
@@ -48,15 +54,14 @@ describe("userProvisioner", () => {
       authentications: [],
     });
 
-    const result = await userProvisioner({
+    const result = await userProvisioner(ctx, {
       name: existing.name,
       email,
       avatarUrl: existing.avatarUrl,
       teamId: existing.teamId,
-      ip,
       authentication: {
         authenticationProviderId: authenticationProvider.id,
-        providerId: uuidv4(),
+        providerId: randomUUID(),
         accessToken: "123",
         scopes: ["read"],
       },
@@ -83,15 +88,14 @@ describe("userProvisioner", () => {
       teamId: team.id,
     });
 
-    const result = await userProvisioner({
+    const result = await userProvisioner(ctx, {
       name: existing.name,
       email,
       avatarUrl: existing.avatarUrl,
       teamId: existing.teamId,
-      ip,
       authentication: {
         authenticationProviderId: authenticationProvider.id,
-        providerId: uuidv4(),
+        providerId: randomUUID(),
         accessToken: "123",
         scopes: ["read"],
       },
@@ -112,12 +116,11 @@ describe("userProvisioner", () => {
     const authentications = await existing.$get("authentications");
     const existingAuth = authentications[0];
     const newEmail = "test@example.com";
-    await existing.destroy();
-    const result = await userProvisioner({
+    await existing.destroy({ hooks: false });
+    const result = await userProvisioner(ctx, {
       name: "Test Name",
       email: "test@example.com",
       teamId: existing.teamId,
-      ip,
       authentication: {
         authenticationProviderId: existingAuth.authenticationProviderId,
         providerId: existingAuth.providerId,
@@ -134,41 +137,49 @@ describe("userProvisioner", () => {
     expect(isNewUser).toEqual(true);
   });
 
-  it("should handle duplicate providerId for different iDP", async () => {
+  it("should migrate user to new authentication provider when provider changes", async () => {
     const existing = await buildUser();
     const authentications = await existing.$get("authentications");
     const existingAuth = authentications[0];
-    let error;
 
-    try {
-      await userProvisioner({
-        name: "Test Name",
-        email: "test@example.com",
-        teamId: existing.teamId,
-        ip,
-        authentication: {
-          authenticationProviderId: uuidv4(),
-          providerId: existingAuth.providerId,
-          accessToken: "123",
-          scopes: ["read"],
-        },
-      });
-    } catch (err) {
-      error = err;
-    }
+    // Create a new authentication provider for the same team (simulates
+    // changing DISCORD_SERVER_ID or moving Google domains)
+    const newAuthProvider = await AuthenticationProvider.create({
+      name: "slack",
+      providerId: randomString(32),
+      teamId: existing.teamId,
+    });
 
-    expect(error && error.toString()).toContain("already exists for");
+    const result = await userProvisioner(ctx, {
+      name: "Test Name",
+      email: "test@example.com",
+      teamId: existing.teamId,
+      authentication: {
+        authenticationProviderId: newAuthProvider.id,
+        providerId: existingAuth.providerId,
+        accessToken: "123",
+        scopes: ["read"],
+      },
+    });
+
+    const { user, authentication, isNewUser } = result;
+    expect(user.id).toEqual(existing.id);
+    expect(authentication).toBeDefined();
+    expect(authentication?.authenticationProviderId).toEqual(
+      newAuthProvider.id
+    );
+    expect(authentication?.accessToken).toEqual("123");
+    expect(isNewUser).toEqual(false);
   });
 
   it("should create a new user", async () => {
     const team = await buildTeam();
     const authenticationProviders = await team.$get("authenticationProviders");
     const authenticationProvider = authenticationProviders[0];
-    const result = await userProvisioner({
+    const result = await userProvisioner(ctx, {
       name: "Test Name",
       email: "test@example.com",
       teamId: team.id,
-      ip,
       authentication: {
         authenticationProviderId: authenticationProvider.id,
         providerId: "fake-service-id",
@@ -182,23 +193,21 @@ describe("userProvisioner", () => {
     expect(authentication?.scopes.length).toEqual(1);
     expect(authentication?.scopes[0]).toEqual("read");
     expect(user.email).toEqual("test@example.com");
-    expect(user.isAdmin).toEqual(false);
-    expect(user.isViewer).toEqual(false);
+    expect(user.role).toEqual(UserRole.Member);
     expect(isNewUser).toEqual(true);
   });
 
-  it("should prefer isAdmin argument over defaultUserRole", async () => {
+  it("should prefer role argument over defaultUserRole", async () => {
     const team = await buildTeam({
-      defaultUserRole: "viewer",
+      defaultUserRole: UserRole.Viewer,
     });
     const authenticationProviders = await team.$get("authenticationProviders");
     const authenticationProvider = authenticationProviders[0];
-    const result = await userProvisioner({
+    const result = await userProvisioner(ctx, {
       name: "Test Name",
       email: "test@example.com",
       teamId: team.id,
-      isAdmin: true,
-      ip,
+      role: UserRole.Admin,
       authentication: {
         authenticationProviderId: authenticationProvider.id,
         providerId: "fake-service-id",
@@ -207,20 +216,19 @@ describe("userProvisioner", () => {
       },
     });
     const { user } = result;
-    expect(user.isAdmin).toEqual(true);
+    expect(user.role).toEqual(UserRole.Admin);
   });
 
-  it("should prefer defaultUserRole when isAdmin is undefined or false", async () => {
+  it("should prefer defaultUserRole when role is undefined or false", async () => {
     const team = await buildTeam({
-      defaultUserRole: "viewer",
+      defaultUserRole: UserRole.Viewer,
     });
     const authenticationProviders = await team.$get("authenticationProviders");
     const authenticationProvider = authenticationProviders[0];
-    const result = await userProvisioner({
+    const result = await userProvisioner(ctx, {
       name: "Test Name",
       email: "test@example.com",
       teamId: team.id,
-      ip,
       authentication: {
         authenticationProviderId: authenticationProvider.id,
         providerId: "fake-service-id",
@@ -229,14 +237,11 @@ describe("userProvisioner", () => {
       },
     });
     const { user: tname } = result;
-    expect(tname.isAdmin).toEqual(false);
-    expect(tname.isViewer).toEqual(true);
-    const tname2Result = await userProvisioner({
+    expect(tname.role).toEqual(UserRole.Viewer);
+    const tname2Result = await userProvisioner(ctx, {
       name: "Test2 Name",
       email: "tes2@example.com",
       teamId: team.id,
-      isAdmin: false,
-      ip,
       authentication: {
         authenticationProviderId: authenticationProvider.id,
         providerId: "fake-service-id",
@@ -245,8 +250,7 @@ describe("userProvisioner", () => {
       },
     });
     const { user: tname2 } = tname2Result;
-    expect(tname2.isAdmin).toEqual(false);
-    expect(tname2.isViewer).toEqual(true);
+    expect(tname2.role).toEqual(UserRole.Viewer);
   });
 
   it("should create a user from an invited user", async () => {
@@ -257,11 +261,10 @@ describe("userProvisioner", () => {
     });
     const authenticationProviders = await team.$get("authenticationProviders");
     const authenticationProvider = authenticationProviders[0];
-    const result = await userProvisioner({
+    const result = await userProvisioner(ctx, {
       name: invite.name,
       email: "invite@ExamPle.com",
       teamId: invite.teamId,
-      ip,
       authentication: {
         authenticationProviderId: authenticationProvider.id,
         providerId: "fake-service-id",
@@ -289,11 +292,10 @@ describe("userProvisioner", () => {
       email: externalUser.email,
     });
 
-    const result = await userProvisioner({
+    const result = await userProvisioner(ctx, {
       name: invite.name,
       email: "external@ExamPle.com", // ensure that email is case insensistive
       teamId: invite.teamId,
-      ip,
     });
     const { user, authentication, isNewUser } = result;
     expect(authentication).toEqual(null);
@@ -309,11 +311,10 @@ describe("userProvisioner", () => {
     let error;
 
     try {
-      await userProvisioner({
+      await userProvisioner(ctx, {
         name: "Uninvited User",
         email: "invite@ExamPle.com",
         teamId: team.id,
-        ip,
         authentication: {
           authenticationProviderId: authenticationProvider.id,
           providerId: "fake-service-id",
@@ -331,20 +332,22 @@ describe("userProvisioner", () => {
   });
 
   it("should create a user from allowed domain", async () => {
-    const { admin, team } = await seed();
+    const team = await buildTeam();
+    const admin = await buildAdmin({ teamId: team.id });
+    const domain = faker.internet.domainName();
     await TeamDomain.create({
       teamId: team.id,
-      name: "example-company.com",
+      name: domain,
       createdById: admin.id,
     });
 
     const authenticationProviders = await team.$get("authenticationProviders");
     const authenticationProvider = authenticationProviders[0];
-    const result = await userProvisioner({
-      name: "Test Name",
-      email: "user@example-company.com",
+    const email = faker.internet.email({ provider: domain });
+    const result = await userProvisioner(ctx, {
+      name: faker.person.fullName(),
+      email,
       teamId: team.id,
-      ip,
       authentication: {
         authenticationProviderId: authenticationProvider.id,
         providerId: "fake-service-id",
@@ -357,40 +360,42 @@ describe("userProvisioner", () => {
     expect(authentication?.accessToken).toEqual("123");
     expect(authentication?.scopes.length).toEqual(1);
     expect(authentication?.scopes[0]).toEqual("read");
-    expect(user.email).toEqual("user@example-company.com");
+    expect(user.email).toEqual(email);
     expect(isNewUser).toEqual(true);
   });
 
   it("should create a user from allowed domain with emailMatchOnly", async () => {
-    const { admin, team } = await seed();
+    const team = await buildTeam();
+    const admin = await buildAdmin({ teamId: team.id });
+    const domain = faker.internet.domainName();
+    const email = faker.internet.email({ provider: domain });
+
     await TeamDomain.create({
       teamId: team.id,
-      name: "example-company.com",
+      name: domain,
       createdById: admin.id,
     });
 
-    const result = await userProvisioner({
+    const result = await userProvisioner(ctx, {
       name: "Test Name",
-      email: "user@example-company.com",
+      email,
       teamId: team.id,
-      ip,
     });
     const { user, authentication, isNewUser } = result;
     expect(authentication).toBeUndefined();
-    expect(user.email).toEqual("user@example-company.com");
+    expect(user.email).toEqual(email);
     expect(isNewUser).toEqual(true);
   });
 
   it("should not create a user with emailMatchOnly when no allowed domains are set", async () => {
-    const { team } = await seed();
+    const team = await buildTeam();
     let error;
 
     try {
-      await userProvisioner({
+      await userProvisioner(ctx, {
         name: "Test Name",
-        email: "user@example-company.com",
+        email: faker.internet.email(),
         teamId: team.id,
-        ip,
       });
     } catch (err) {
       error = err;
@@ -400,10 +405,11 @@ describe("userProvisioner", () => {
   });
 
   it("should reject an user when the domain is not allowed", async () => {
-    const { admin, team } = await seed();
+    const team = await buildTeam();
+    const admin = await buildAdmin({ teamId: team.id });
     await TeamDomain.create({
       teamId: team.id,
-      name: "other.com",
+      name: faker.internet.domainName(),
       createdById: admin.id,
     });
 
@@ -412,11 +418,10 @@ describe("userProvisioner", () => {
     let error;
 
     try {
-      await userProvisioner({
+      await userProvisioner(ctx, {
         name: "Bad Domain User",
-        email: "user@example.com",
+        email: faker.internet.email(),
         teamId: team.id,
-        ip,
         authentication: {
           authenticationProviderId: authenticationProvider.id,
           providerId: "fake-service-id",
@@ -429,7 +434,7 @@ describe("userProvisioner", () => {
     }
 
     expect(error && error.toString()).toContain(
-      "The domain is not allowed for this team"
+      "The domain is not allowed for this workspace"
     );
   });
 });

@@ -1,5 +1,11 @@
-import { Op, SaveOptions } from "sequelize";
+import type {
+  InferAttributes,
+  InferCreationAttributes,
+  Transaction,
+} from "sequelize";
+import { Op } from "sequelize";
 import {
+  BeforeDestroy,
   BelongsTo,
   Column,
   CreatedAt,
@@ -8,27 +14,50 @@ import {
   ForeignKey,
   HasMany,
   Table,
-  Model,
   IsUUID,
   PrimaryKey,
+  Scopes,
 } from "sequelize-typescript";
-import env from "@server/env";
-import AzureClient from "@server/utils/azure";
-import GoogleClient from "@server/utils/google";
-import OIDCClient from "@server/utils/oidc";
+import type { AuthenticationProviderSettings } from "@shared/types";
+import AuthenticationHelper from "@server/models/helpers/AuthenticationHelper";
+import Model from "@server/models/base/Model";
 import { ValidationError } from "../errors";
 import Team from "./Team";
 import UserAuthentication from "./UserAuthentication";
 import Fix from "./decorators/Fix";
 import Length from "./validators/Length";
 
+// TODO: Avoid this hardcoding of plugins
+import AzureClient from "plugins/azure/server/azure";
+import GoogleClient from "plugins/google/server/google";
+import OIDCClient from "plugins/oidc/server/oidc";
+import type { APIContext } from "@server/types";
+import type { DestroyOptions } from "sequelize";
+
+@Scopes(() => ({
+  withUserAuthentication: (userId: string) => ({
+    include: [
+      {
+        model: UserAuthentication,
+        as: "userAuthentications",
+        required: true,
+        where: {
+          userId,
+        },
+      },
+    ],
+  }),
+}))
 @Table({
   tableName: "authentication_providers",
   modelName: "authentication_provider",
   updatedAt: false,
 })
 @Fix
-class AuthenticationProvider extends Model {
+class AuthenticationProvider extends Model<
+  InferAttributes<AuthenticationProvider>,
+  Partial<InferCreationAttributes<AuthenticationProvider>>
+> {
   @IsUUID(4)
   @PrimaryKey
   @Default(DataType.UUIDV4)
@@ -53,6 +82,10 @@ class AuthenticationProvider extends Model {
   @Column
   providerId: string;
 
+  /** Provider-specific settings such as group sync configuration. */
+  @Column(DataType.JSONB)
+  settings: AuthenticationProviderSettings | null;
+
   @CreatedAt
   createdAt: Date;
 
@@ -65,10 +98,21 @@ class AuthenticationProvider extends Model {
   @Column(DataType.UUID)
   teamId: string;
 
-  @HasMany(() => UserAuthentication, "providerId")
+  @HasMany(() => UserAuthentication, "authenticationProviderId")
   userAuthentications: UserAuthentication[];
 
   // instance methods
+
+  /**
+   * The human-readable display name for this provider, resolved from the
+   * plugin registry. Falls back to the raw provider name.
+   */
+  get displayName(): string {
+    return (
+      AuthenticationHelper.providers.find((p) => p.value.id === this.name)
+        ?.name ?? this.name
+    );
+  }
 
   /**
    * Create an OAuthClient for this provider, if possible.
@@ -78,30 +122,40 @@ class AuthenticationProvider extends Model {
   get oauthClient() {
     switch (this.name) {
       case "google":
-        return new GoogleClient(
-          env.GOOGLE_CLIENT_ID || "",
-          env.GOOGLE_CLIENT_SECRET || ""
-        );
+        return new GoogleClient();
       case "azure":
-        return new AzureClient(
-          env.AZURE_CLIENT_ID || "",
-          env.AZURE_CLIENT_SECRET || ""
-        );
+        return new AzureClient();
       case "oidc":
-        return new OIDCClient(
-          env.OIDC_CLIENT_ID || "",
-          env.OIDC_CLIENT_SECRET || ""
-        );
+        return new OIDCClient();
       default:
         return undefined;
     }
   }
 
-  disable = async (options?: SaveOptions<AuthenticationProvider>) => {
-    const res = await (
+  /**
+   * Check if this provider can be disabled or destroyed.
+   * Throws an error if this is the last enabled authentication provider.
+   *
+   * @param transaction - Database transaction to use for the check.
+   * @throws ValidationError if disabling is not allowed.
+   */
+  private async checkCanBeDisabled(
+    transaction?: Transaction | null
+  ): Promise<void> {
+    // Check if email sign-in is enabled for the team first
+    const team = await Team.findByPk(this.teamId, {
+      transaction,
+      lock: transaction?.LOCK.SHARE,
+    });
+    if (team?.emailSigninEnabled) {
+      return;
+    }
+
+    const otherEnabledProviders = await (
       this.constructor as typeof AuthenticationProvider
-    ).findAndCountAll({
-      ...options,
+    ).findAll({
+      transaction,
+      lock: transaction?.LOCK.SHARE,
       where: {
         teamId: this.teamId,
         enabled: true,
@@ -112,25 +166,49 @@ class AuthenticationProvider extends Model {
       limit: 1,
     });
 
-    if (res.count >= 1) {
-      return this.update(
-        {
-          enabled: false,
-        },
-        options
-      );
-    } else {
+    if (otherEnabledProviders.length === 0) {
       throw ValidationError("At least one authentication provider is required");
     }
+  }
+
+  @BeforeDestroy
+  static async checkBeforeDestroy(
+    instance: AuthenticationProvider,
+    options: DestroyOptions
+  ) {
+    if (instance.enabled) {
+      await instance.checkCanBeDisabled(options.transaction);
+    }
+  }
+
+  /**
+   * Disable this authentication provider after ensuring it's allowed.
+   *
+   * @param ctx - API context containing the transaction.
+   * @returns The updated AuthenticationProvider instance.
+   * @throws ValidationError if disabling is not allowed.
+   */
+  disable: (ctx: APIContext) => Promise<AuthenticationProvider> = async (
+    ctx
+  ) => {
+    const { transaction } = ctx.state;
+    await this.checkCanBeDisabled(transaction);
+
+    return this.updateWithCtx(ctx, {
+      enabled: false,
+    });
   };
 
-  enable = (options?: SaveOptions<AuthenticationProvider>) =>
-    this.update(
-      {
-        enabled: true,
-      },
-      options
-    );
+  /**
+   * Enable this authentication provider.
+   *
+   * @param ctx - API context containing the transaction.
+   * @returns The updated AuthenticationProvider instance.
+   */
+  enable: (ctx: APIContext) => Promise<AuthenticationProvider> = async (ctx) =>
+    this.updateWithCtx(ctx, {
+      enabled: true,
+    });
 }
 
 export default AuthenticationProvider;

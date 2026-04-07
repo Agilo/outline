@@ -1,14 +1,16 @@
+import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import invariant from "invariant";
 import { observer } from "mobx-react";
-import * as React from "react";
+import { useCallback, useState } from "react";
 import Dropzone from "react-dropzone";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import styled, { css } from "styled-components";
 import LoadingIndicator from "~/components/LoadingIndicator";
+import useEventListener from "~/hooks/useEventListener";
 import useImportDocument from "~/hooks/useImportDocument";
 import usePolicy from "~/hooks/usePolicy";
 import useStores from "~/hooks/useStores";
-import useToasts from "~/hooks/useToasts";
 
 type Props = {
   children: JSX.Element;
@@ -21,7 +23,7 @@ type Props = {
 function DropToImport({ disabled, children, collectionId, documentId }: Props) {
   const { t } = useTranslation();
   const { documents } = useStores();
-  const { showToast } = useToasts();
+  const [prerender, setPreRendered] = useState(false);
   const { handleFiles, isImporting } = useImportDocument(
     collectionId,
     documentId
@@ -30,21 +32,20 @@ function DropToImport({ disabled, children, collectionId, documentId }: Props) {
     collectionId || documentId,
     "Must provide either collectionId or documentId"
   );
+  useEventListener("dragenter", () => setPreRendered(true));
 
   const canCollection = usePolicy(collectionId);
   const canDocument = usePolicy(documentId);
 
-  const handleRejection = React.useCallback(() => {
-    showToast(
-      t("Document not supported – try Markdown, Plain text, HTML, or Word"),
-      {
-        type: "error",
-      }
+  const handleRejection = useCallback(() => {
+    toast.error(
+      t("Document not supported – try Markdown, Plain text, HTML, or Word")
     );
-  }, [t, showToast]);
+  }, [t]);
 
   if (
     disabled ||
+    !prerender ||
     (collectionId && !canCollection.createDocument) ||
     (documentId && !canDocument.createChildDocument)
   ) {
@@ -53,7 +54,7 @@ function DropToImport({ disabled, children, collectionId, documentId }: Props) {
 
   return (
     <Dropzone
-      accept={documents.importFileTypes.join(", ")}
+      accept={documents.importFileTypesString}
       onDropAccepted={handleFiles}
       onDropRejected={handleRejection}
       noClick
@@ -65,7 +66,12 @@ function DropToImport({ disabled, children, collectionId, documentId }: Props) {
           $isDragActive={isDragActive}
           tabIndex={-1}
         >
-          <input {...getInputProps()} />
+          <VisuallyHidden>
+            <label>
+              {t("Import files")}
+              <input {...getInputProps()} />
+            </label>
+          </VisuallyHidden>
           {isImporting && <LoadingIndicator />}
           {children}
         </DropzoneContainer>
@@ -80,8 +86,9 @@ const DropzoneContainer = styled.div<{ $isDragActive: boolean }>`
   ${({ $isDragActive, theme }) =>
     $isDragActive &&
     css`
-      background: ${theme.slateDark};
-      a {
+      a,
+      a + * {
+        background: ${theme.slateDark} !important;
         color: ${theme.white} !important;
       }
       svg {

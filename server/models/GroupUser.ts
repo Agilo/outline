@@ -1,5 +1,5 @@
+import type { InferAttributes, InferCreationAttributes } from "sequelize";
 import {
-  DefaultScope,
   BelongsTo,
   ForeignKey,
   Column,
@@ -7,18 +7,12 @@ import {
   DataType,
   Scopes,
 } from "sequelize-typescript";
+import { GroupPermission } from "@shared/types";
 import Group from "./Group";
 import User from "./User";
-import BaseModel from "./base/BaseModel";
+import Model from "./base/Model";
 import Fix from "./decorators/Fix";
 
-@DefaultScope(() => ({
-  include: [
-    {
-      association: "user",
-    },
-  ],
-}))
 @Scopes(() => ({
   withGroup: {
     include: [
@@ -35,9 +29,14 @@ import Fix from "./decorators/Fix";
     ],
   },
 }))
-@Table({ tableName: "group_users", modelName: "group_user", paranoid: true })
+@Table({ tableName: "group_users", modelName: "group_user" })
 @Fix
-class GroupUser extends BaseModel {
+class GroupUser extends Model<
+  InferAttributes<GroupUser>,
+  Partial<InferCreationAttributes<GroupUser>>
+> {
+  static eventNamespace = "groups";
+
   @BelongsTo(() => User, "userId")
   user: User;
 
@@ -58,6 +57,13 @@ class GroupUser extends BaseModel {
   @ForeignKey(() => User)
   @Column(DataType.UUID)
   createdById: string;
+
+  @Column(DataType.ENUM(...Object.values(GroupPermission)))
+  permission: GroupPermission;
+
+  get modelId() {
+    return this.groupId;
+  }
 }
 
 export default GroupUser;

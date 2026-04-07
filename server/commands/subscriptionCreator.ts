@@ -1,20 +1,22 @@
-import { Transaction } from "sequelize";
-import { Subscription, Event, User, Document } from "@server/models";
+import { QueryTypes } from "sequelize";
+import { SubscriptionType } from "@shared/types";
+import { createContext } from "@server/context";
+import type { Document } from "@server/models";
+import { Subscription, Event } from "@server/models";
 import { sequelize } from "@server/storage/database";
-import { DocumentEvent, RevisionEvent } from "@server/types";
+import type { APIContext, DocumentEvent, RevisionEvent } from "@server/types";
 
 type Props = {
-  /** The user creating the subscription */
-  user: User;
+  /** The request context, which also contains the user creating the subscription */
+  ctx: APIContext;
   /** The document to subscribe to */
   documentId?: string;
+  /** The collection to subscribe to */
+  collectionId?: string;
   /** Event to subscribe to */
-  event: string;
-  /** The IP address of the incoming request */
-  ip: string;
+  event: SubscriptionType;
   /** Whether the subscription should be restored if it exists in a deleted state  */
   resubscribe?: boolean;
-  transaction: Transaction;
 };
 
 /**
@@ -23,53 +25,81 @@ type Props = {
  * @returns The subscription that was created
  */
 export default async function subscriptionCreator({
-  user,
+  ctx,
   documentId,
+  collectionId,
   event,
-  ip,
   resubscribe = true,
-  transaction,
 }: Props): Promise<Subscription> {
-  const [subscription, created] = await Subscription.findOrCreate({
-    where: {
-      userId: user.id,
-      documentId,
-      event,
-    },
-    transaction,
-    // Previous subscriptions are soft-deleted, we want to know about them here
-    paranoid: false,
+  const { user } = ctx.state.auth;
+
+  let rows;
+  const now = new Date();
+  if (documentId) {
+    rows = await sequelize.query(
+      `INSERT INTO subscriptions ("id", "userId", "documentId", "event", "createdAt", "updatedAt")
+       VALUES (gen_random_uuid(), :userId, :documentId, :event, :now, :now)
+       ON CONFLICT ("userId", "documentId", "event")
+       DO UPDATE SET "updatedAt" = EXCLUDED."updatedAt"
+       RETURNING *`,
+      {
+        replacements: {
+          userId: user.id,
+          documentId,
+          event,
+          now,
+        },
+        type: QueryTypes.SELECT,
+        transaction: ctx.state.transaction,
+      }
+    );
+  } else if (collectionId) {
+    rows = await sequelize.query(
+      `INSERT INTO subscriptions ("id", "userId", "collectionId", "event", "createdAt", "updatedAt")
+       VALUES (gen_random_uuid(), :userId, :collectionId, :event, :now, :now)
+       ON CONFLICT ("userId", "collectionId", "event")
+       DO UPDATE SET "updatedAt" = EXCLUDED."updatedAt"
+       RETURNING *`,
+      {
+        replacements: {
+          userId: user.id,
+          collectionId,
+          event,
+          now,
+        },
+        type: QueryTypes.SELECT,
+        transaction: ctx.state.transaction,
+      }
+    );
+  } else {
+    throw new Error("Either documentId or collectionId must be provided");
+  }
+
+  if (!rows || rows.length === 0) {
+    throw new Error("Failed to create or find subscription");
+  }
+
+  // Build subscription instance from the returned row
+  const subscription = Subscription.build(rows[0], {
+    isNewRecord: false,
+    include: [],
+    raw: true,
   });
+
+  const isNew = subscription.createdAt.getTime() === now.getTime();
+  if (isNew) {
+    await Event.createFromContext(ctx, {
+      name: "subscriptions.create",
+      modelId: subscription.id,
+      userId: subscription.userId,
+      collectionId: subscription.collectionId,
+      documentId: subscription.documentId,
+    });
+  }
 
   // If the subscription was deleted, then just restore the existing row.
   if (subscription.deletedAt && resubscribe) {
-    await subscription.restore({ transaction });
-
-    await Event.create(
-      {
-        name: "subscriptions.create",
-        modelId: subscription.id,
-        actorId: user.id,
-        userId: user.id,
-        documentId,
-        ip,
-      },
-      { transaction }
-    );
-  }
-
-  if (created) {
-    await Event.create(
-      {
-        name: "subscriptions.create",
-        modelId: subscription.id,
-        actorId: user.id,
-        userId: user.id,
-        documentId,
-        ip,
-      },
-      { transaction }
-    );
+    await subscription.restoreWithCtx(ctx);
   }
 
   return subscription;
@@ -88,18 +118,21 @@ export const createSubscriptionsForDocument = async (
   document: Document,
   event: DocumentEvent | RevisionEvent
 ): Promise<void> => {
-  await sequelize.transaction(async (transaction) => {
-    const users = await document.collaborators({ transaction });
+  const users = await document.collaborators();
 
-    for (const user of users) {
+  for (const user of users) {
+    await sequelize.transaction(async (transaction) => {
       await subscriptionCreator({
-        user,
+        ctx: createContext({
+          user,
+          authType: event.authType,
+          ip: event.ip,
+          transaction,
+        }),
         documentId: document.id,
-        event: "documents.update",
+        event: SubscriptionType.Document,
         resubscribe: false,
-        transaction,
-        ip: event.ip,
       });
-    }
-  });
+    });
+  }
 };

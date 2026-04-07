@@ -1,14 +1,15 @@
 import Router from "koa-router";
-import { WhereOptions } from "sequelize";
-import fileOperationDeleter from "@server/commands/fileOperationDeleter";
+import type { WhereOptions } from "sequelize";
+import { UserRole } from "@shared/types";
 import { ValidationError } from "@server/errors";
 import auth from "@server/middlewares/authentication";
+import { transaction } from "@server/middlewares/transaction";
 import validate from "@server/middlewares/validate";
 import { FileOperation, Team } from "@server/models";
 import { authorize } from "@server/policies";
-import { presentFileOperation } from "@server/presenters";
+import { presentFileOperation, presentPolicies } from "@server/presenters";
 import FileStorage from "@server/storage/files";
-import { APIContext } from "@server/types";
+import type { APIContext } from "@server/types";
 import pagination from "../middlewares/pagination";
 import * as T from "./schema";
 
@@ -16,7 +17,7 @@ const router = new Router();
 
 router.post(
   "fileOperations.info",
-  auth({ admin: true }),
+  auth(),
   validate(T.FileOperationsInfoSchema),
   async (ctx: APIContext<T.FileOperationsInfoReq>) => {
     const { id } = ctx.input.body;
@@ -36,7 +37,7 @@ router.post(
 
 router.post(
   "fileOperations.list",
-  auth({ admin: true }),
+  auth({ role: UserRole.Admin }),
   pagination(),
   validate(T.FileOperationsListSchema),
   async (ctx: APIContext<T.FileOperationsListReq>) => {
@@ -50,7 +51,7 @@ router.post(
     const team = await Team.findByPk(user.teamId);
     authorize(user, "update", team);
 
-    const [exports, total] = await Promise.all([
+    const [fileOperations, total] = await Promise.all([
       FileOperation.findAll({
         where,
         order: [[sort, direction]],
@@ -64,7 +65,8 @@ router.post(
 
     ctx.body = {
       pagination: { ...ctx.state.pagination, total },
-      data: exports.map(presentFileOperation),
+      data: fileOperations.map(presentFileOperation),
+      policies: presentPolicies(user, fileOperations),
     };
   }
 );
@@ -90,31 +92,35 @@ const handleFileOperationsRedirect = async (
 
 router.get(
   "fileOperations.redirect",
-  auth({ admin: true }),
+  auth(),
   validate(T.FileOperationsRedirectSchema),
   handleFileOperationsRedirect
 );
 router.post(
   "fileOperations.redirect",
-  auth({ admin: true }),
+  auth(),
   validate(T.FileOperationsRedirectSchema),
   handleFileOperationsRedirect
 );
 
 router.post(
   "fileOperations.delete",
-  auth({ admin: true }),
+  auth({ role: UserRole.Admin }),
   validate(T.FileOperationsDeleteSchema),
+  transaction(),
   async (ctx: APIContext<T.FileOperationsDeleteReq>) => {
     const { id } = ctx.input.body;
     const { user } = ctx.state.auth;
+    const { transaction } = ctx.state;
 
     const fileOperation = await FileOperation.unscoped().findByPk(id, {
       rejectOnEmpty: true,
+      transaction,
+      lock: transaction.LOCK.UPDATE,
     });
     authorize(user, "delete", fileOperation);
 
-    await fileOperationDeleter(fileOperation, user, ctx.request.ip);
+    await fileOperation.destroyWithCtx(ctx);
 
     ctx.body = {
       success: true,

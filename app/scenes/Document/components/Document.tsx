@@ -1,56 +1,51 @@
+import cloneDeep from "lodash/cloneDeep";
 import debounce from "lodash/debounce";
+import isEqual from "lodash/isEqual";
 import { action, observable } from "mobx";
 import { observer } from "mobx-react";
-import { AllSelection } from "prosemirror-state";
+import { Node } from "prosemirror-model";
+import type { Selection } from "prosemirror-state";
+import { AllSelection, TextSelection } from "prosemirror-state";
 import * as React from "react";
-import { WithTranslation, withTranslation } from "react-i18next";
-import {
-  Prompt,
-  RouteComponentProps,
-  StaticContext,
-  withRouter,
-  Redirect,
-} from "react-router";
+import type { WithTranslation } from "react-i18next";
+import { withTranslation } from "react-i18next";
+import type { RouteComponentProps, StaticContext } from "react-router";
+import { Prompt, withRouter } from "react-router";
+import { toast } from "sonner";
 import styled from "styled-components";
 import breakpoint from "styled-components-breakpoint";
+import { EditorStyleHelper } from "@shared/editor/styles/EditorStyleHelper";
 import { s } from "@shared/styles";
-import { NavigationNode } from "@shared/types";
-import { Heading } from "@shared/utils/ProsemirrorHelper";
-import { parseDomain } from "@shared/utils/domains";
-import getTasks from "@shared/utils/getTasks";
-import RootStore from "~/stores/RootStore";
-import Document from "~/models/Document";
-import Revision from "~/models/Revision";
-import DocumentMove from "~/scenes/DocumentMove";
+import type { NavigationNode } from "@shared/types";
+import { IconType, TOCPosition, TeamPreference } from "@shared/types";
+import { ProsemirrorHelper } from "@shared/utils/ProsemirrorHelper";
+import { TextHelper } from "@shared/utils/TextHelper";
+import { determineIconType } from "@shared/utils/icon";
+import { isModKey } from "@shared/utils/keyboard";
+import type RootStore from "~/stores/RootStore";
+import type Document from "~/models/Document";
+import Template from "~/models/Template";
+import type Revision from "~/models/Revision";
+import DocumentMove from "~/components/DocumentExplorer/DocumentMove";
 import DocumentPublish from "~/scenes/DocumentPublish";
-import Branding from "~/components/Branding";
-import ConnectionStatus from "~/components/ConnectionStatus";
 import ErrorBoundary from "~/components/ErrorBoundary";
-import Flex from "~/components/Flex";
 import LoadingIndicator from "~/components/LoadingIndicator";
 import PageTitle from "~/components/PageTitle";
 import PlaceholderDocument from "~/components/PlaceholderDocument";
 import RegisterKeyDown from "~/components/RegisterKeyDown";
+import type { SidebarContextType } from "~/components/Sidebar/components/SidebarContext";
 import withStores from "~/components/withStores";
+import { MeasuredContainer } from "~/components/MeasuredContainer";
 import type { Editor as TEditor } from "~/editor";
+import type { Properties } from "~/types";
 import { client } from "~/utils/ApiClient";
-import { replaceTitleVariables } from "~/utils/date";
 import { emojiToUrl } from "~/utils/emoji";
-import { isModKey } from "~/utils/keyboard";
-
-import {
-  documentHistoryPath,
-  documentEditPath,
-  updateDocumentPath,
-} from "~/utils/routeHelpers";
+import { documentHistoryPath, documentEditPath } from "~/utils/routeHelpers";
 import Container from "./Container";
 import Contents from "./Contents";
 import Editor from "./Editor";
 import Header from "./Header";
-import KeyboardShortcutsButton from "./KeyboardShortcutsButton";
-import MarkAsViewed from "./MarkAsViewed";
 import Notices from "./Notices";
-import PublicReferences from "./PublicReferences";
 import References from "./References";
 import RevisionViewer from "./RevisionViewer";
 
@@ -66,19 +61,23 @@ type LocationState = {
   title?: string;
   restore?: boolean;
   revisionId?: string;
+  sidebarContext?: SidebarContextType;
 };
 
 type Props = WithTranslation &
   RootStore &
   RouteComponentProps<Params, StaticContext, LocationState> & {
     sharedTree?: NavigationNode;
-    abilities: Record<string, any>;
+    abilities: Record<string, boolean>;
     document: Document;
     revision?: Revision;
     readOnly: boolean;
     shareId?: string;
-    onCreateLink?: (title: string) => Promise<string>;
-    onSearchLink?: (term: string) => any;
+    tocPosition?: TOCPosition | false;
+    onCreateLink?: (
+      params: Properties<Document>,
+      nested?: boolean
+    ) => Promise<string>;
   };
 
 @observer
@@ -104,11 +103,6 @@ class DocumentScene extends React.Component<Props> {
   @observable
   title: string = this.props.document.title;
 
-  @observable
-  headings: Heading[] = [];
-
-  getEditorText: () => string = () => this.props.document.text;
-
   componentDidMount() {
     this.updateIsDirty();
   }
@@ -122,50 +116,71 @@ class DocumentScene extends React.Component<Props> {
   componentWillUnmount() {
     if (
       this.isEmpty &&
-      this.props.document.createdBy.id === this.props.auth.user?.id &&
+      this.props.document.createdBy?.id === this.props.auth.user?.id &&
       this.props.document.isDraft &&
       this.props.document.isActive &&
       this.props.document.hasEmptyTitle &&
       this.props.document.isPersistedOnce
     ) {
       void this.props.document.delete();
+    } else if (this.props.document.isDirty()) {
+      void this.props.document.save(undefined, {
+        autosave: true,
+      });
     }
   }
 
-  replaceDocument = (template: Document | Revision) => {
+  /**
+   * Replaces the given selection with a template, if no selection is provided
+   * then the template is inserted at the beginning of the document.
+   *
+   * @param template The template to use
+   * @param selection The selection to replace, if any
+   */
+  replaceSelection = (template: Template | Revision, selection?: Selection) => {
     const editorRef = this.editor.current;
 
     if (!editorRef) {
       return;
     }
 
-    const { view, parser } = editorRef;
-    const doc = parser.parse(template.text);
+    const { view, schema } = editorRef;
+    const sel = selection ?? TextSelection.near(view.state.doc.resolve(0));
+    const doc = Node.fromJSON(
+      schema,
+      ProsemirrorHelper.replaceTemplateVariables(
+        template.data,
+        this.props.auth.user!
+      )
+    );
 
     if (doc) {
-      view.dispatch(
-        view.state.tr
-          .setSelection(new AllSelection(view.state.doc))
-          .replaceSelectionWith(doc)
-      );
+      view.dispatch(view.state.tr.setSelection(sel).replaceSelectionWith(doc));
     }
 
     this.isEditorDirty = true;
 
-    if (template instanceof Document) {
+    if (template instanceof Template) {
       this.props.document.templateId = template.id;
+      this.props.document.fullWidth = template.fullWidth;
     }
 
     if (!this.title) {
-      const title = replaceTitleVariables(
+      const title = TextHelper.replaceTemplateVariables(
         template.title,
-        this.props.auth.user || undefined
+        this.props.auth.user!
       );
       this.title = title;
       this.props.document.title = title;
     }
+    if (template.icon) {
+      this.props.document.icon = template.icon;
+    }
+    if (template.color) {
+      this.props.document.color = template.color;
+    }
 
-    this.props.document.text = template.text;
+    this.props.document.data = cloneDeep(template.data);
     this.updateIsDirty();
 
     return this.onSave({
@@ -176,12 +191,23 @@ class DocumentScene extends React.Component<Props> {
   };
 
   onSynced = async () => {
-    const { toasts, history, location, t } = this.props;
+    const { history, location, t } = this.props;
     const restore = location.state?.restore;
     const revisionId = location.state?.revisionId;
     const editorRef = this.editor.current;
 
-    if (!editorRef || !restore) {
+    if (!editorRef) {
+      return;
+    }
+
+    // Highlight search term when navigating from search results
+    const params = new URLSearchParams(location.search);
+    const searchTerm = params.get("q");
+    if (searchTerm) {
+      editorRef.commands.find({ text: searchTerm });
+    }
+
+    if (!restore) {
       return;
     }
 
@@ -190,9 +216,28 @@ class DocumentScene extends React.Component<Props> {
     });
 
     if (response) {
-      await this.replaceDocument(response.data);
-      toasts.showToast(t("Document restored"));
+      await this.replaceSelection(
+        response.data,
+        new AllSelection(editorRef.view.state.doc)
+      );
+      toast.success(t("Document restored"));
       history.replace(this.props.document.url, history.location.state);
+    }
+  };
+
+  onUndoRedo = (event: KeyboardEvent) => {
+    if (isModKey(event)) {
+      event.preventDefault();
+
+      if (event.shiftKey) {
+        if (!this.props.readOnly) {
+          this.editor.current?.commands.redo();
+        }
+      } else {
+        if (!this.props.readOnly) {
+          this.editor.current?.commands.undo();
+        }
+      }
     }
   };
 
@@ -202,21 +247,25 @@ class DocumentScene extends React.Component<Props> {
     if (abilities.move) {
       dialogs.openModal({
         title: t("Move document"),
-        isCentered: true,
         content: <DocumentMove document={document} />,
       });
     }
   };
 
   goToEdit = (ev: KeyboardEvent) => {
-    if (!this.props.readOnly) {
-      return;
-    }
-    ev.preventDefault();
-    const { document, abilities } = this.props;
+    if (this.props.readOnly) {
+      ev.preventDefault();
+      const { document, abilities } = this.props;
 
-    if (abilities.update) {
-      this.props.history.push(documentEditPath(document));
+      if (abilities.update) {
+        this.props.history.push({
+          pathname: documentEditPath(document),
+          state: { sidebarContext: this.props.location.state?.sidebarContext },
+        });
+      }
+    } else if (this.editor.current?.isBlurred) {
+      ev.preventDefault();
+      this.editor.current?.focus();
     }
   };
 
@@ -231,14 +280,22 @@ class DocumentScene extends React.Component<Props> {
     const { document, location } = this.props;
 
     if (location.pathname.endsWith("history")) {
-      this.props.history.push(document.url);
+      this.props.history.push({
+        pathname: document.url,
+        state: { sidebarContext: this.props.location.state?.sidebarContext },
+      });
     } else {
-      this.props.history.push(documentHistoryPath(document));
+      this.props.history.push({
+        pathname: documentHistoryPath(document),
+        state: { sidebarContext: this.props.location.state?.sidebarContext },
+      });
     }
   };
 
   onPublish = (ev: React.MouseEvent | KeyboardEvent) => {
     ev.preventDefault();
+    ev.stopPropagation();
+
     const { document, dialogs, t } = this.props;
     if (document.publishedAt) {
       return;
@@ -252,23 +309,8 @@ class DocumentScene extends React.Component<Props> {
     } else {
       dialogs.openModal({
         title: t("Publish document"),
-        isCentered: true,
         content: <DocumentPublish document={document} />,
       });
-    }
-  };
-
-  onToggleTableOfContents = (ev: KeyboardEvent) => {
-    if (!this.props.readOnly) {
-      return;
-    }
-    ev.preventDefault();
-    const { ui } = this.props;
-
-    if (ui.tocVisible) {
-      ui.hideTableOfContents();
-    } else {
-      ui.showTableOfContents();
     }
   };
 
@@ -286,15 +328,18 @@ class DocumentScene extends React.Component<Props> {
     }
 
     // get the latest version of the editor text value
-    const text = this.getEditorText ? this.getEditorText() : document.text;
-
-    // prevent save before anything has been written (single hash is empty doc)
-    if (text.trim() === "" && document.title.trim() === "") {
+    const doc = this.editor.current?.view.state.doc;
+    if (!doc) {
       return;
     }
 
-    document.text = text;
-    document.tasks = getTasks(document.text);
+    // prevent save before anything has been written (single hash is empty doc)
+    if (ProsemirrorHelper.isEmpty(doc) && document.title.trim() === "") {
+      return;
+    }
+
+    document.data = doc.toJSON();
+    document.tasks = ProsemirrorHelper.getTasksSummary(doc);
 
     // prevent autosave if nothing has changed
     if (options.autosave && !this.isEditorDirty && !document.isDirty()) {
@@ -309,16 +354,20 @@ class DocumentScene extends React.Component<Props> {
       this.isEditorDirty = false;
 
       if (options.done) {
-        this.props.history.push(savedDocument.url);
+        this.props.history.push({
+          pathname: savedDocument.url,
+          state: { sidebarContext: this.props.location.state?.sidebarContext },
+        });
         this.props.ui.setActiveDocument(savedDocument);
       } else if (document.isNew) {
-        this.props.history.push(documentEditPath(savedDocument));
+        this.props.history.push({
+          pathname: documentEditPath(savedDocument),
+          state: { sidebarContext: this.props.location.state?.sidebarContext },
+        });
         this.props.ui.setActiveDocument(savedDocument);
       }
     } catch (err) {
-      this.props.toasts.showToast(err.message, {
-        type: "error",
-      });
+      toast.error(err.message);
     } finally {
       this.isSaving = false;
       this.isPublishing = false;
@@ -334,40 +383,23 @@ class DocumentScene extends React.Component<Props> {
     AUTOSAVE_DELAY
   );
 
-  updateIsDirty = () => {
+  updateIsDirty = action(() => {
     const { document } = this.props;
-    const editorText = this.getEditorText().trim();
-    this.isEditorDirty = editorText !== document.text.trim();
+    const doc = this.editor.current?.view.state.doc;
 
-    // a single hash is a doc with just an empty title
-    this.isEmpty =
-      (!editorText || editorText === "#" || editorText === "\\") && !this.title;
-  };
+    this.isEditorDirty = !isEqual(doc?.toJSON(), document.data);
+    this.isEmpty = (!doc || ProsemirrorHelper.isEmpty(doc)) && !this.title;
+  });
 
   updateIsDirtyDebounced = debounce(this.updateIsDirty, 500);
 
-  onFileUploadStart = () => {
+  onFileUploadStart = action(() => {
     this.isUploading = true;
-  };
+  });
 
-  onFileUploadStop = () => {
+  onFileUploadStop = action(() => {
     this.isUploading = false;
-  };
-
-  handleChange = (getEditorText: () => string) => {
-    const { document } = this.props;
-    this.getEditorText = getEditorText;
-
-    // Keep derived task list in sync
-    const tasks = this.editor.current?.getTasks();
-    const total = tasks?.length ?? 0;
-    const completed = tasks?.filter((t) => t.completed).length ?? 0;
-    document.updateTasks(total, completed);
-  };
-
-  onHeadingsChange = (headings: Heading[]) => {
-    this.headings = headings;
-  };
+  });
 
   handleChangeTitle = action((value: string) => {
     this.title = value;
@@ -376,79 +408,108 @@ class DocumentScene extends React.Component<Props> {
     void this.autosave();
   });
 
-  handleChangeEmoji = action((value: string) => {
-    this.props.document.emoji = value;
-    this.updateIsDirty();
-    void this.autosave();
+  handleChangeIcon = action((icon: string | null, color: string | null) => {
+    this.props.document.icon = icon;
+    this.props.document.color = color;
+    void this.onSave();
   });
+
+  handleSelectTemplate = async (template: Template | Revision) => {
+    const editorRef = this.editor.current;
+    if (!editorRef) {
+      return;
+    }
+
+    const { view } = editorRef;
+    const doc = view.state.doc;
+
+    return this.replaceSelection(
+      template,
+      ProsemirrorHelper.isEmpty(doc)
+        ? new AllSelection(doc)
+        : view.state.selection
+    );
+  };
 
   goBack = () => {
     if (!this.props.readOnly) {
-      this.props.history.push(this.props.document.url);
+      this.props.history.push({
+        pathname: this.props.document.url,
+        state: { sidebarContext: this.props.location.state?.sidebarContext },
+      });
     }
   };
 
   render() {
-    const { document, revision, readOnly, abilities, auth, ui, shareId, t } =
-      this.props;
+    const {
+      children,
+      document,
+      revision,
+      readOnly,
+      abilities,
+      auth,
+      ui,
+      shareId,
+      tocPosition,
+      t,
+    } = this.props;
     const { team, user } = auth;
     const isShare = !!shareId;
     const embedsDisabled =
       (team && team.documentEmbeds === false) || document.embedsDisabled;
 
-    const hasHeadings = this.headings.length > 0;
+    const tocPos =
+      tocPosition ??
+      ((team?.getPreference(TeamPreference.TocPosition) as TOCPosition) ||
+        TOCPosition.Left);
     const showContents =
-      ui.tocVisible && ((readOnly && hasHeadings) || !readOnly);
+      tocPos && (isShare ? ui.tocVisible !== false : ui.tocVisible === true);
+    const tocOffset =
+      tocPos === TOCPosition.Left
+        ? EditorStyleHelper.tocWidth / -2
+        : EditorStyleHelper.tocWidth / 2;
+
     const multiplayerEditor =
       !document.isArchived && !document.isDeleted && !revision && !isShare;
 
-    const canonicalUrl = shareId
-      ? this.props.match.url
-      : updateDocumentPath(this.props.match.url, document);
+    const hasEmojiInTitle = determineIconType(document.icon) === IconType.Emoji;
+    const title = hasEmojiInTitle
+      ? document.titleWithDefault.replace(document.icon!, "")
+      : document.titleWithDefault;
+    const favicon = hasEmojiInTitle ? emojiToUrl(document.icon!) : undefined;
+
+    const fullWidthTransformOffsetStyle = {
+      ["--full-width-transform-offset"]: `${document.fullWidth && showContents ? tocOffset : 0}px`,
+    } as React.CSSProperties;
 
     return (
       <ErrorBoundary showTitle>
-        {this.props.location.pathname !== canonicalUrl && (
-          <Redirect
-            to={{
-              pathname: canonicalUrl,
-              state: this.props.location.state,
-              hash: this.props.location.hash,
-            }}
-          />
-        )}
         <RegisterKeyDown trigger="m" handler={this.onMove} />
+        <RegisterKeyDown trigger="z" handler={this.onUndoRedo} />
         <RegisterKeyDown trigger="e" handler={this.goToEdit} />
         <RegisterKeyDown trigger="Escape" handler={this.goBack} />
         <RegisterKeyDown trigger="h" handler={this.goToHistory} />
         <RegisterKeyDown
           trigger="p"
+          options={{
+            allowInInput: true,
+          }}
           handler={(event) => {
             if (isModKey(event) && event.shiftKey) {
               this.onPublish(event);
             }
           }}
         />
-        <RegisterKeyDown
-          trigger="h"
-          handler={(event) => {
-            if (event.ctrlKey && event.altKey) {
-              this.onToggleTableOfContents(event);
-            }
-          }}
-        />
-        <Background
-          id="full-width-container"
+        <MeasuredContainer
+          as={Background}
+          name="container"
           key={revision ? revision.id : document.id}
           column
           auto
         >
-          <PageTitle
-            title={document.titleWithDefault.replace(document.emoji || "", "")}
-            favicon={document.emoji ? emojiToUrl(document.emoji) : undefined}
-          />
+          <PageTitle title={title} favicon={favicon} />
           {(this.isUploading || this.isSaving) && <LoadingIndicator />}
-          <Container justify="center" column auto>
+          <Container column>
             {!readOnly && (
               <Prompt
                 when={this.isUploading && !this.isEditorDirty}
@@ -458,10 +519,9 @@ class DocumentScene extends React.Component<Props> {
               />
             )}
             <Header
+              editorRef={this.editor}
               document={document}
-              documentHasHeadings={hasHeadings}
               revision={revision}
-              shareId={shareId}
               isDraft={document.isDraft}
               isEditing={!readOnly && !!user?.separateEditMode}
               isSaving={this.isSaving}
@@ -470,156 +530,207 @@ class DocumentScene extends React.Component<Props> {
                 document.isSaving || this.isPublishing || this.isEmpty
               }
               savingIsDisabled={document.isSaving || this.isEmpty}
-              sharedTree={this.props.sharedTree}
-              onSelectTemplate={this.replaceDocument}
+              onSelectTemplate={this.handleSelectTemplate}
               onSave={this.onSave}
-              headings={this.headings}
             />
-            <MaxWidth
-              archived={document.isArchived}
-              showContents={showContents}
-              isEditing={!readOnly}
-              isFullWidth={document.fullWidth}
-              column
-              auto
+            <Main
+              fullWidth={document.fullWidth}
+              tocPosition={tocPos}
+              style={fullWidthTransformOffsetStyle}
             >
-              <Notices document={document} readOnly={readOnly} />
-              <React.Suspense fallback={<PlaceholderDocument />}>
-                <Flex auto={!readOnly} reverse>
+              <React.Suspense
+                fallback={
+                  <EditorContainer
+                    docFullWidth={document.fullWidth}
+                    showContents={showContents}
+                    tocPosition={tocPos}
+                  >
+                    <PlaceholderDocument />
+                  </EditorContainer>
+                }
+              >
+                <MeasuredContainer
+                  name="document"
+                  as={EditorContainer}
+                  docFullWidth={document.fullWidth}
+                  showContents={showContents}
+                  tocPosition={tocPos}
+                >
                   {revision ? (
                     <RevisionViewer
+                      ref={this.editor}
                       document={document}
                       revision={revision}
                       id={revision.id}
                     />
                   ) : (
                     <>
+                      <Notices document={document} readOnly={readOnly} />
+
+                      {showContents && (
+                        <PrintContentsContainer>
+                          <Contents />
+                        </PrintContentsContainer>
+                      )}
                       <Editor
                         id={document.id}
                         key={embedsDisabled ? "disabled" : "enabled"}
                         ref={this.editor}
                         multiplayer={multiplayerEditor}
-                        shareId={shareId}
                         isDraft={document.isDraft}
-                        template={document.isTemplate}
                         document={document}
-                        value={readOnly ? document.text : undefined}
-                        defaultValue={document.text}
+                        value={readOnly ? document.data : undefined}
+                        defaultValue={document.data}
                         embedsDisabled={embedsDisabled}
                         onSynced={this.onSynced}
                         onFileUploadStart={this.onFileUploadStart}
                         onFileUploadStop={this.onFileUploadStop}
-                        onSearchLink={this.props.onSearchLink}
                         onCreateLink={this.props.onCreateLink}
                         onChangeTitle={this.handleChangeTitle}
-                        onChangeEmoji={this.handleChangeEmoji}
-                        onChange={this.handleChange}
-                        onHeadingsChange={this.onHeadingsChange}
+                        onChangeIcon={this.handleChangeIcon}
                         onSave={this.onSave}
                         onPublish={this.onPublish}
                         onCancel={this.goBack}
                         readOnly={readOnly}
                         canUpdate={abilities.update}
                         canComment={abilities.comment}
+                        autoFocus={document.createdAt === document.updatedAt}
                       >
-                        {shareId && (
-                          <ReferencesWrapper>
-                            <PublicReferences
-                              shareId={shareId}
-                              documentId={document.id}
-                              sharedTree={this.props.sharedTree}
-                            />
-                          </ReferencesWrapper>
-                        )}
-                        {!isShare && !revision && (
-                          <>
-                            <MarkAsViewed document={document} />
-                            <ReferencesWrapper>
-                              <References document={document} />
-                            </ReferencesWrapper>
-                          </>
-                        )}
+                        <ReferencesWrapper>
+                          <References document={document} />
+                        </ReferencesWrapper>
                       </Editor>
-
-                      {showContents && (
-                        <Contents
-                          headings={this.headings}
-                          isFullWidth={document.fullWidth}
-                        />
-                      )}
                     </>
                   )}
-                </Flex>
+                </MeasuredContainer>
+                {showContents && (
+                  <ContentsContainer
+                    docFullWidth={document.fullWidth}
+                    position={tocPos}
+                  >
+                    <Contents />
+                  </ContentsContainer>
+                )}
               </React.Suspense>
-            </MaxWidth>
-            {isShare &&
-              !parseDomain(window.location.origin).custom &&
-              !auth.user && (
-                <Branding href="//www.getoutline.com?ref=sharelink" />
-              )}
+            </Main>
+            {children}
           </Container>
-          {!isShare && (
-            <Footer>
-              <KeyboardShortcutsButton />
-              <ConnectionStatus />
-            </Footer>
-          )}
-        </Background>
+        </MeasuredContainer>
       </ErrorBoundary>
     );
   }
 }
 
-const Footer = styled.div`
-  position: absolute;
-  width: 100%;
-  text-align: right;
-  display: flex;
-  justify-content: flex-end;
+type MainProps = {
+  fullWidth: boolean;
+  tocPosition: TOCPosition | false;
+};
+
+const Main = styled.div<MainProps>`
+  margin-top: 4px;
+
+  ${breakpoint("tablet")`
+    display: grid;
+    grid-template-columns: ${({ fullWidth, tocPosition }: MainProps) =>
+      fullWidth
+        ? tocPosition === TOCPosition.Left
+          ? `${EditorStyleHelper.tocWidth}px minmax(0, 1fr)`
+          : `minmax(0, 1fr) ${EditorStyleHelper.tocWidth}px`
+        : `1fr minmax(0, ${`calc(46em + ${EditorStyleHelper.documentGutter})`}) 1fr`};
+  `};
+
+  ${breakpoint("desktopLarge")`
+    grid-template-columns: ${({ fullWidth, tocPosition }: MainProps) =>
+      fullWidth
+        ? tocPosition === TOCPosition.Left
+          ? `${EditorStyleHelper.tocWidth}px minmax(0, 1fr)`
+          : `minmax(0, 1fr) ${EditorStyleHelper.tocWidth}px`
+        : `1fr minmax(0, ${`calc(${EditorStyleHelper.documentWidth} + ${EditorStyleHelper.documentGutter})`}) 1fr`};
+  `};
+
+  @media print {
+    display: block;
+    max-width: ${({ fullWidth }: MainProps) =>
+      fullWidth
+        ? `100%`
+        : `calc(${EditorStyleHelper.documentWidth} + ${EditorStyleHelper.documentGutter})`};
+  }
 `;
 
-const Background = styled(Container)`
-  position: relative;
-  background: ${s("background")};
-  transition: ${s("backgroundTransition")};
-`;
+type ContentsContainerProps = {
+  docFullWidth: boolean;
+  position: TOCPosition | false;
+};
 
-const ReferencesWrapper = styled.div`
-  margin-top: 16px;
+const ContentsContainer = styled.div<ContentsContainerProps>`
+  ${breakpoint("tablet")`
+    margin-top: calc(44px + 6vh);
+
+    grid-row: 1;
+    grid-column: ${({ docFullWidth, position }: ContentsContainerProps) =>
+      position === TOCPosition.Left ? 1 : docFullWidth ? 2 : 3};
+    justify-self: ${({ position }: ContentsContainerProps) =>
+      position === TOCPosition.Left ? "end" : "start"};
+  `};
 
   @media print {
     display: none;
   }
 `;
 
-type MaxWidthProps = {
-  isEditing?: boolean;
-  isFullWidth?: boolean;
-  archived?: boolean;
-  showContents?: boolean;
+const PrintContentsContainer = styled.div`
+  display: none;
+  margin: 0 -12px;
+
+  @media print {
+    display: block;
+  }
+`;
+
+type EditorContainerProps = {
+  docFullWidth: boolean;
+  showContents: boolean;
+  tocPosition: TOCPosition | false;
 };
 
-const MaxWidth = styled(Flex)<MaxWidthProps>`
-  // Adds space to the gutter to make room for heading annotations
-  padding: 0 32px;
-  transition: padding 100ms;
-  max-width: 100vw;
-  width: 100%;
-
-  padding-bottom: 16px;
+const EditorContainer = styled.div<EditorContainerProps>`
+  // Adds space to the gutter to make room for icon & heading annotations
+  padding: 0 44px;
 
   ${breakpoint("tablet")`
-    margin: 4px auto 12px;
-    max-width: ${(props: MaxWidthProps) =>
-      props.isFullWidth
-        ? "100vw"
-        : `calc(64px + 46em + ${props.showContents ? "256px" : "0px"});`}
-  `};
+    grid-row: 1;
 
-  ${breakpoint("desktopLarge")`
-    max-width: ${(props: MaxWidthProps) =>
-      props.isFullWidth ? "100vw" : `calc(64px + 52em);`}
+    // Decides the editor column position & span
+    grid-column: ${({
+      docFullWidth,
+      showContents,
+      tocPosition,
+    }: EditorContainerProps) =>
+      docFullWidth
+        ? showContents
+          ? tocPosition === TOCPosition.Left
+            ? 2
+            : 1
+          : "1 / -1"
+        : 2};
   `};
+`;
+
+const Background = styled(Container)`
+  position: relative;
+  background: ${s("background")};
+`;
+
+const ReferencesWrapper = styled.div`
+  margin: 12px 0 60px;
+
+  ${breakpoint("tablet")`
+    margin-bottom: 12px;
+  `}
+
+  @media print {
+    display: none;
+  }
 `;
 
 export default withTranslation()(withStores(withRouter(DocumentScene)));

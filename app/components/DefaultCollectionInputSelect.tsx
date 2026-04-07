@@ -1,104 +1,130 @@
-import { HomeIcon } from "outline-icons";
+import {
+  CollectionIcon as CollectionIconComponent,
+  HomeIcon,
+  PrivateCollectionIcon,
+} from "outline-icons";
+import { observer } from "mobx-react";
+import { getLuminance } from "polished";
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Optional } from "utility-types";
-import Flex from "~/components/Flex";
-import CollectionIcon from "~/components/Icons/CollectionIcon";
-import InputSelect from "~/components/InputSelect";
-import { IconWrapper } from "~/components/Sidebar/components/SidebarLink";
+import { toast } from "sonner";
+import Icon from "@shared/components/Icon";
+import { colorPalette } from "@shared/utils/collections";
+import type { Option } from "~/components/InputSelect";
+import { InputSelect } from "~/components/InputSelect";
 import useStores from "~/hooks/useStores";
-import useToasts from "~/hooks/useToasts";
 
-type DefaultCollectionInputSelectProps = Optional<
-  React.ComponentProps<typeof InputSelect>
-> & {
+type DefaultCollectionInputSelectProps = {
   onSelectCollection: (collection: string) => void;
   defaultCollectionId: string | null;
 };
 
-const DefaultCollectionInputSelect = ({
-  onSelectCollection,
-  defaultCollectionId,
-  ...rest
-}: DefaultCollectionInputSelectProps) => {
-  const { t } = useTranslation();
-  const { collections } = useStores();
-  const [fetching, setFetching] = useState(false);
-  const [fetchError, setFetchError] = useState();
-  const { showToast } = useToasts();
+const DefaultCollectionInputSelect = observer(
+  ({
+    onSelectCollection,
+    defaultCollectionId,
+  }: DefaultCollectionInputSelectProps) => {
+    const { t } = useTranslation();
+    const { collections, ui } = useStores();
+    const [fetching, setFetching] = useState(false);
+    const [fetchError, setFetchError] = useState();
 
-  React.useEffect(() => {
-    async function fetchData() {
-      if (!collections.isLoaded && !fetching && !fetchError) {
-        try {
-          setFetching(true);
-          await collections.fetchPage({
-            limit: 100,
-          });
-        } catch (error) {
-          showToast(
-            t("Collections could not be loaded, please reload the app"),
-            {
-              type: "error",
-            }
-          );
-          setFetchError(error);
-        } finally {
-          setFetching(false);
+    React.useEffect(() => {
+      async function fetchData() {
+        if (!collections.isLoaded && !fetching && !fetchError) {
+          try {
+            setFetching(true);
+            await collections.fetchPage({
+              limit: 100,
+            });
+          } catch (error) {
+            toast.error(
+              t("Collections could not be loaded, please reload the app")
+            );
+            setFetchError(error);
+          } finally {
+            setFetching(false);
+          }
         }
       }
-    }
-    void fetchData();
-  }, [showToast, fetchError, t, fetching, collections]);
+      void fetchData();
+    }, [fetchError, t, fetching, collections]);
 
-  const options = React.useMemo(
-    () =>
-      collections.publicCollections.reduce(
-        (acc, collection) => [
+    if (fetching) {
+      return null;
+    }
+
+    const isDark = ui.resolvedTheme === "dark";
+
+    // Eagerly resolve collection icon properties within this observer context
+    // to avoid MobX warnings when Radix Select clones elements for the trigger.
+    const options: Option[] = collections.nonPrivate.reduce(
+      (acc, collection) => {
+        const collectionIcon = collection.icon;
+        const rawColor = collection.color ?? colorPalette[0];
+
+        let icon: React.ReactElement;
+        if (!collectionIcon || collectionIcon === "collection") {
+          const color =
+            isDark && rawColor !== "currentColor"
+              ? getLuminance(rawColor) > 0.09
+                ? rawColor
+                : "currentColor"
+              : rawColor;
+          const Component = collection.isPrivate
+            ? PrivateCollectionIcon
+            : CollectionIconComponent;
+          icon = <Component color={color} />;
+        } else {
+          let color = rawColor;
+          if (color !== "currentColor") {
+            if (isDark) {
+              color = getLuminance(color) > 0.09 ? color : "currentColor";
+            } else {
+              color = getLuminance(color) < 0.9 ? color : "currentColor";
+            }
+          }
+          icon = (
+            <Icon
+              value={collectionIcon}
+              color={color}
+              initial={collection.initial}
+              forceColor
+            />
+          );
+        }
+
+        return [
           ...acc,
           {
-            label: (
-              <Flex align="center">
-                <IconWrapper>
-                  <CollectionIcon collection={collection} />
-                </IconWrapper>
-                {collection.name}
-              </Flex>
-            ),
+            type: "item" as const,
+            label: collection.name,
             value: collection.id,
+            icon,
           },
-        ],
-        [
-          {
-            label: (
-              <Flex align="center">
-                <IconWrapper>
-                  <HomeIcon />
-                </IconWrapper>
-                {t("Home")}
-              </Flex>
-            ),
-            value: "home",
-          },
-        ]
-      ),
-    [collections.publicCollections, t]
-  );
+        ];
+      },
+      [
+        {
+          type: "item",
+          label: t("Home"),
+          value: "home",
+          icon: <HomeIcon />,
+        },
+      ] satisfies Option[]
+    );
 
-  if (fetching) {
-    return null;
+    return (
+      <InputSelect
+        options={options}
+        value={defaultCollectionId ?? "home"}
+        onChange={onSelectCollection}
+        label={t("Start view")}
+        hideLabel
+        short
+      />
+    );
   }
-
-  return (
-    <InputSelect
-      value={defaultCollectionId ?? "home"}
-      options={options}
-      onChange={onSelectCollection}
-      ariaLabel={t("Default collection")}
-      short
-      {...rest}
-    />
-  );
-};
+);
 
 export default DefaultCollectionInputSelect;

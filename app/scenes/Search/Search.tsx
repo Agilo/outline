@@ -1,21 +1,21 @@
-import isEqual from "lodash/isEqual";
-import { observable, action } from "mobx";
 import { observer } from "mobx-react";
+import { v4 as uuidv4 } from "uuid";
 import queryString from "query-string";
 import * as React from "react";
-import { WithTranslation, withTranslation, Trans } from "react-i18next";
-import { RouteComponentProps, StaticContext, withRouter } from "react-router";
+import { useTranslation } from "react-i18next";
+import { useHistory, useLocation, useRouteMatch } from "react-router-dom";
 import { Waypoint } from "react-waypoint";
 import styled from "styled-components";
 import breakpoint from "styled-components-breakpoint";
-import { v4 as uuidv4 } from "uuid";
-import { DateFilter as TDateFilter } from "@shared/types";
-import { DEFAULT_PAGINATION_LIMIT } from "~/stores/BaseStore";
-import { SearchParams } from "~/stores/DocumentsStore";
-import RootStore from "~/stores/RootStore";
+import { Pagination } from "@shared/constants";
+import type {
+  SortFilter as TSortFilter,
+  DirectionFilter as TDirectionFilter,
+  DateFilter as TDateFilter,
+} from "@shared/types";
+import { StatusFilter as TStatusFilter } from "@shared/types";
 import ArrowKeyNavigation from "~/components/ArrowKeyNavigation";
 import DocumentListItem from "~/components/DocumentListItem";
-import Empty from "~/components/Empty";
 import Fade from "~/components/Fade";
 import Flex from "~/components/Flex";
 import LoadingIndicator from "~/components/LoadingIndicator";
@@ -23,84 +23,182 @@ import RegisterKeyDown from "~/components/RegisterKeyDown";
 import Scene from "~/components/Scene";
 import Switch from "~/components/Switch";
 import Text from "~/components/Text";
-import withStores from "~/components/withStores";
-import { hover } from "~/styles";
-import Logger from "~/utils/Logger";
+import env from "~/env";
+import usePaginatedRequest from "~/hooks/usePaginatedRequest";
+import useQuery from "~/hooks/useQuery";
+import useStores from "~/hooks/useStores";
+import type { PaginationParams, SearchResult } from "~/types";
+import { preventDefault } from "~/utils/events";
 import { searchPath } from "~/utils/routeHelpers";
 import { decodeURIComponentSafe } from "~/utils/urls";
 import CollectionFilter from "./components/CollectionFilter";
 import DateFilter from "./components/DateFilter";
+import { DocumentFilter } from "./components/DocumentFilter";
+import DocumentTypeFilter from "./components/DocumentTypeFilter";
 import RecentSearches from "./components/RecentSearches";
 import SearchInput from "./components/SearchInput";
-import StatusFilter from "./components/StatusFilter";
+import { SortInput } from "./components/SortInput";
 import UserFilter from "./components/UserFilter";
+import { HStack } from "~/components/primitives/HStack";
+import useMobile from "~/hooks/useMobile";
 
-type Props = RouteComponentProps<
-  { term: string },
-  StaticContext,
-  { search: string; fromMenu?: boolean }
-> &
-  WithTranslation &
-  RootStore & {
-    notFound?: boolean;
+function Search() {
+  const { t } = useTranslation();
+  const { documents, searches } = useStores();
+  const isMobile = useMobile();
+
+  // routing
+  const params = useQuery();
+  const location = useLocation();
+  const history = useHistory();
+  const routeMatch = useRouteMatch<{ query: string }>();
+
+  // refs
+  const searchInputRef = React.useRef<HTMLInputElement | null>(null);
+  const resultListRef = React.useRef<HTMLDivElement | null>(null);
+  const recentSearchesRef = React.useRef<HTMLDivElement | null>(null);
+
+  // filters
+  const decodedQuery = decodeURIComponentSafe(
+    routeMatch.params.query ?? params.get("q") ?? params.get("query") ?? ""
+  ).trim();
+  const query = decodedQuery !== "" ? decodedQuery : undefined;
+  const collectionId = params.get("collectionId") ?? "";
+  const userId = params.get("userId") ?? "";
+  const documentId = params.get("documentId") ?? undefined;
+  const dateFilter = (params.get("dateFilter") as TDateFilter) ?? "";
+  const statusFilter = params.getAll("statusFilter")?.length
+    ? (params.getAll("statusFilter") as TStatusFilter[])
+    : [TStatusFilter.Published, TStatusFilter.Draft];
+  const titleFilter = params.get("titleFilter") === "true";
+  const sort = (params.get("sort") as TSortFilter) ?? "";
+  const direction = (params.get("direction") as TDirectionFilter) ?? "";
+
+  const isSearchable = !!(query || collectionId || userId);
+
+  const document = documentId ? documents.get(documentId) : undefined;
+
+  const filterVisibility = {
+    document: !!document,
+    collection: !document,
+    user: !document || !!(document && query),
+    documentType: isSearchable,
+    date: isSearchable,
+    title: !!query && !document,
+    sort: isSearchable,
   };
 
-@observer
-class Search extends React.Component<Props> {
-  compositeRef: HTMLDivElement | null | undefined;
-  searchInputRef: HTMLInputElement | null | undefined;
+  const filters = React.useMemo(
+    () => ({
+      query,
+      statusFilter,
+      collectionId,
+      userId,
+      dateFilter,
+      titleFilter,
+      documentId,
+      sort,
+      direction,
+    }),
+    [
+      query,
+      JSON.stringify(statusFilter),
+      collectionId,
+      userId,
+      dateFilter,
+      titleFilter,
+      documentId,
+      sort,
+      direction,
+    ]
+  );
 
-  lastQuery = "";
-
-  lastParams: SearchParams;
-
-  @observable
-  query: string = decodeURIComponentSafe(this.props.match.params.term || "");
-
-  @observable
-  params: URLSearchParams = new URLSearchParams(this.props.location.search);
-
-  @observable
-  offset = 0;
-
-  @observable
-  allowLoadMore = true;
-
-  @observable
-  isLoading = false;
-
-  componentDidMount() {
-    this.handleTermChange();
-
-    if (this.props.location.search) {
-      this.handleQueryChange();
+  const requestFn = React.useMemo(() => {
+    // Add to the searches store so this search can immediately appear in the recent searches list
+    // without a flash of loading.
+    if (query) {
+      searches.add({
+        id: uuidv4(),
+        query,
+        createdAt: new Date().toISOString(),
+      });
     }
-  }
 
-  componentDidUpdate(prevProps: Props) {
-    if (prevProps.location.search !== this.props.location.search) {
-      this.handleQueryChange();
+    if (isSearchable) {
+      return async (params?: PaginationParams) => {
+        const paginationParams = {
+          offset: params?.offset,
+          limit: params?.limit,
+        };
+        return titleFilter
+          ? await documents.searchTitles({ ...filters, ...paginationParams })
+          : await documents.search({ ...filters, ...paginationParams });
+      };
     }
 
-    if (prevProps.match.params.term !== this.props.match.params.term) {
-      this.handleTermChange();
-    }
-  }
+    return () => Promise.resolve([] as SearchResult[]);
+  }, [query, titleFilter, filters, searches, documents, isSearchable]);
 
-  goBack = () => {
-    this.props.history.goBack();
+  const { data, next, end, error, loading } = usePaginatedRequest(requestFn, {
+    limit: Pagination.defaultLimit,
+  });
+
+  const updateLocation = (query: string) => {
+    // If query came from route params, navigate to base search path
+    const pathname = routeMatch.params.query ? searchPath() : location.pathname;
+
+    history.replace({
+      pathname,
+      search: queryString.stringify(
+        { ...queryString.parse(location.search), q: query },
+        {
+          skipEmptyString: true,
+        }
+      ),
+    });
   };
 
-  handleKeyDown = (ev: React.KeyboardEvent<HTMLInputElement>) => {
+  // All filters go through the query string so that searches are bookmarkable, which neccesitates
+  // some complexity as the query string is the source of truth for the filters.
+  const handleFilterChange = (search: {
+    collectionId?: string | undefined;
+    documentId?: string | undefined;
+    userId?: string | undefined;
+    dateFilter?: TDateFilter;
+    statusFilter?: TStatusFilter[];
+    titleFilter?: boolean | undefined;
+    sort?: string | undefined;
+    direction?: string | undefined;
+  }) => {
+    if (search.sort === "relevance") {
+      search.sort = undefined;
+      search.direction = undefined;
+    }
+
+    history.replace({
+      pathname: location.pathname,
+      search: queryString.stringify(
+        { ...queryString.parse(location.search), ...search },
+        {
+          skipEmptyString: true,
+        }
+      ),
+    });
+  };
+
+  const handleKeyDown = (ev: React.KeyboardEvent<HTMLInputElement>) => {
+    if (ev.nativeEvent.isComposing) {
+      return;
+    }
+
     if (ev.key === "Enter") {
-      this.updateLocation(ev.currentTarget.value);
-      void this.fetchResults();
+      updateLocation(ev.currentTarget.value);
       return;
     }
 
     if (ev.key === "Escape") {
       ev.preventDefault();
-      return this.goBack();
+      return history.goBack();
     }
 
     if (ev.key === "ArrowUp") {
@@ -128,295 +226,158 @@ class Search extends React.Component<Props> {
         }
       }
 
-      if (this.compositeRef) {
-        const linkItems = this.compositeRef.querySelectorAll(
-          "[href]"
-        ) as NodeListOf<HTMLAnchorElement>;
-        linkItems[0]?.focus();
-      }
+      const firstItem = (resultListRef.current?.firstElementChild ??
+        recentSearchesRef.current?.firstElementChild) as HTMLAnchorElement;
+
+      firstItem?.focus();
     }
   };
 
-  handleQueryChange = () => {
-    this.params = new URLSearchParams(this.props.location.search);
-    this.offset = 0;
-    this.allowLoadMore = true;
-    // To prevent "no results" showing before debounce kicks in
-    this.isLoading = true;
-    void this.fetchResults();
-  };
+  const handleEscape = () => searchInputRef.current?.focus();
+  const showEmpty = !loading && query && data?.length === 0;
 
-  handleTermChange = () => {
-    const query = decodeURIComponentSafe(this.props.match.params.term || "");
-    this.query = query ? query : "";
-    this.offset = 0;
-    this.allowLoadMore = true;
-    // To prevent "no results" showing before debounce kicks in
-    this.isLoading = true;
-    void this.fetchResults();
-  };
+  const sortInput = filterVisibility.sort ? (
+    <SortInput
+      sort={sort}
+      direction={direction}
+      onSelect={(sort, direction) => handleFilterChange({ sort, direction })}
+    />
+  ) : null;
 
-  handleFilterChange = (search: {
-    collectionId?: string | undefined;
-    userId?: string | undefined;
-    dateFilter?: TDateFilter;
-    includeArchived?: boolean | undefined;
-    titleFilter?: boolean | undefined;
-  }) => {
-    this.props.history.replace({
-      pathname: this.props.location.pathname,
-      search: queryString.stringify(
-        { ...queryString.parse(this.props.location.search), ...search },
-        {
-          skipEmptyString: true,
-        }
-      ),
-    });
-  };
-
-  handleTitleFilterChange = (ev: React.ChangeEvent<HTMLInputElement>) => {
-    this.handleFilterChange({ titleFilter: ev.target.checked });
-  };
-
-  get includeArchived() {
-    return this.params.get("includeArchived") === "true";
-  }
-
-  get collectionId() {
-    const id = this.params.get("collectionId");
-    return id ? id : undefined;
-  }
-
-  get userId() {
-    const id = this.params.get("userId");
-    return id ? id : undefined;
-  }
-
-  get dateFilter() {
-    const id = this.params.get("dateFilter");
-    return id ? (id as TDateFilter) : undefined;
-  }
-
-  get titleFilter() {
-    return this.params.get("titleFilter") === "true";
-  }
-
-  get isFiltered() {
-    return (
-      this.dateFilter ||
-      this.userId ||
-      this.collectionId ||
-      this.includeArchived ||
-      this.titleFilter
-    );
-  }
-
-  get title() {
-    const query = this.query;
-    const title = this.props.t("Search");
-    if (query) {
-      return `${query} – ${title}`;
-    }
-    return title;
-  }
-
-  @action
-  loadMoreResults = async () => {
-    // Don't paginate if there aren't more results or we’re in the middle of fetching
-    if (!this.allowLoadMore || this.isLoading) {
-      return;
-    }
-
-    // Fetch more results
-    await this.fetchResults();
-  };
-
-  @action
-  fetchResults = async () => {
-    if (this.query.trim()) {
-      const params = {
-        offset: this.offset,
-        limit: DEFAULT_PAGINATION_LIMIT,
-        dateFilter: this.dateFilter,
-        includeArchived: this.includeArchived,
-        includeDrafts: true,
-        collectionId: this.collectionId,
-        userId: this.userId,
-        titleFilter: this.titleFilter,
-      };
-
-      // we just requested this thing – no need to try again
-      if (this.lastQuery === this.query && isEqual(params, this.lastParams)) {
-        this.isLoading = false;
-        return;
-      }
-
-      this.isLoading = true;
-      this.lastQuery = this.query;
-      this.lastParams = params;
-
-      try {
-        const results = this.titleFilter
-          ? await this.props.documents.searchTitles(this.query, params)
-          : await this.props.documents.search(this.query, params);
-
-        // Add to the searches store so this search can immediately appear in
-        // the recent searches list without a flash of load
-        this.props.searches.add({
-          id: uuidv4(),
-          query: this.query,
-          createdAt: new Date().toISOString(),
-        });
-
-        if (results.length === 0 || results.length < DEFAULT_PAGINATION_LIMIT) {
-          this.allowLoadMore = false;
-        } else {
-          this.offset += DEFAULT_PAGINATION_LIMIT;
-        }
-      } catch (error) {
-        Logger.error("Search query failed", error);
-        this.lastQuery = "";
-      } finally {
-        this.isLoading = false;
-      }
-    } else {
-      this.isLoading = false;
-      this.lastQuery = this.query;
-    }
-  };
-
-  updateLocation = (query: string) => {
-    this.props.history.replace({
-      pathname: searchPath(query),
-      search: this.props.location.search,
-    });
-  };
-
-  setCompositeRef = (ref: HTMLDivElement | null) => {
-    this.compositeRef = ref;
-  };
-
-  setSearchInputRef = (ref: HTMLInputElement | null) => {
-    this.searchInputRef = ref;
-  };
-
-  handleEscape = () => {
-    this.searchInputRef?.focus();
-  };
-
-  render() {
-    const { documents, notFound, t } = this.props;
-    const results = documents.searchResults(this.query);
-    const showEmpty = !this.isLoading && this.query && results?.length === 0;
-
-    return (
-      <Scene textTitle={this.title}>
-        <RegisterKeyDown trigger="Escape" handler={this.goBack} />
-        {this.isLoading && <LoadingIndicator />}
-        {notFound && (
-          <div>
-            <h1>{t("Not Found")}</h1>
-            <Empty>
-              {t("We were unable to find the page you’re looking for.")}
-            </Empty>
-          </div>
-        )}
-        <ResultsWrapper column auto>
+  return (
+    <Scene
+      textTitle={query ? `${query} – ${t("Search")}` : t("Search")}
+      actions={isMobile ? sortInput : null}
+    >
+      <RegisterKeyDown trigger="Escape" handler={history.goBack} />
+      {loading && <LoadingIndicator />}
+      <ResultsWrapper column auto>
+        <form method="GET" action={searchPath()} onSubmit={preventDefault}>
           <SearchInput
-            ref={this.setSearchInputRef}
-            placeholder={`${t("Search")}…`}
-            onKeyDown={this.handleKeyDown}
-            defaultValue={this.query}
+            name="query"
+            key={query ? "search" : "recent"}
+            ref={searchInputRef}
+            placeholder={`${
+              documentId
+                ? t("Search in document")
+                : collectionId
+                  ? t("Search in collection")
+                  : t("Search")
+            }…`}
+            onKeyDown={handleKeyDown}
+            defaultValue={query ?? ""}
           />
-
-          {this.query ? (
-            <Filters>
-              <StatusFilter
-                includeArchived={this.includeArchived}
-                onSelect={(includeArchived) =>
-                  this.handleFilterChange({
-                    includeArchived,
-                  })
-                }
-              />
-              <CollectionFilter
-                collectionId={this.collectionId}
-                onSelect={(collectionId) =>
-                  this.handleFilterChange({
-                    collectionId,
-                  })
-                }
-              />
-              <UserFilter
-                userId={this.userId}
-                onSelect={(userId) =>
-                  this.handleFilterChange({
-                    userId,
-                  })
-                }
-              />
-              <DateFilter
-                dateFilter={this.dateFilter}
-                onSelect={(dateFilter) =>
-                  this.handleFilterChange({
-                    dateFilter,
-                  })
-                }
-              />
-              <SearchTitlesFilter
-                width={26}
-                height={14}
-                label={t("Search titles only")}
-                onChange={this.handleTitleFilterChange}
-                checked={this.titleFilter}
-              />
-            </Filters>
-          ) : (
-            <RecentSearches />
-          )}
-          {showEmpty && (
-            <Fade>
-              <Centered column>
-                <Text type="secondary">
-                  <Trans>No documents found for your search filters.</Trans>
-                </Text>
-              </Centered>
-            </Fade>
-          )}
-          <ResultList column>
-            <StyledArrowKeyNavigation
-              ref={this.setCompositeRef}
-              onEscape={this.handleEscape}
-              aria-label={t("Search Results")}
-            >
-              {(compositeProps) =>
-                results?.map((result) => {
-                  const document = documents.data.get(result.document.id);
-                  if (!document) {
-                    return null;
+          <Filters>
+            <Flex align="center" gap={4} wrap>
+              {filterVisibility.document && (
+                <DocumentFilter
+                  document={document!}
+                  onClick={() => {
+                    handleFilterChange({ documentId: undefined });
+                  }}
+                />
+              )}
+              {filterVisibility.collection && (
+                <CollectionFilter
+                  collectionId={collectionId}
+                  onSelect={(collectionId) =>
+                    handleFilterChange({ collectionId })
                   }
-                  return (
-                    <DocumentListItem
-                      key={document.id}
-                      document={document}
-                      highlight={this.query}
-                      context={result.context}
-                      showCollection
-                      showTemplate
-                      {...compositeProps}
-                    />
-                  );
-                })
-              }
-            </StyledArrowKeyNavigation>
-            {this.allowLoadMore && (
-              <Waypoint key={this.offset} onEnter={this.loadMoreResults} />
-            )}
-          </ResultList>
-        </ResultsWrapper>
-      </Scene>
-    );
-  }
+                />
+              )}
+              {filterVisibility.user && (
+                <UserFilter
+                  userId={userId}
+                  onSelect={(userId) => handleFilterChange({ userId })}
+                />
+              )}
+              {filterVisibility.documentType && (
+                <DocumentTypeFilter
+                  statusFilter={statusFilter}
+                  onSelect={({ statusFilter }) =>
+                    handleFilterChange({ statusFilter })
+                  }
+                />
+              )}
+              {filterVisibility.date && (
+                <DateFilter
+                  dateFilter={dateFilter}
+                  onSelect={(dateFilter) => handleFilterChange({ dateFilter })}
+                />
+              )}
+              {filterVisibility.title && (
+                <SearchTitlesFilter
+                  width={26}
+                  height={14}
+                  label={t("Search titles only")}
+                  onChange={(checked: boolean) => {
+                    handleFilterChange({ titleFilter: checked });
+                  }}
+                  checked={titleFilter}
+                  inForm={false}
+                />
+              )}
+            </Flex>
+            {isMobile ? null : sortInput}
+          </Filters>
+        </form>
+        {isSearchable ? (
+          <>
+            {error ? (
+              <Fade>
+                <Centered column>
+                  <Text as="h1">{t("Something went wrong")}</Text>
+                  <Text as="p" type="secondary">
+                    {t(
+                      "Please try again or contact support if the problem persists"
+                    )}
+                    .
+                  </Text>
+                </Centered>
+              </Fade>
+            ) : showEmpty ? (
+              <Fade>
+                <Centered column>
+                  <Text as="p" type="secondary">
+                    {t("No documents found for your search filters.")}
+                  </Text>
+                </Centered>
+              </Fade>
+            ) : null}
+            <ResultList column>
+              <StyledArrowKeyNavigation
+                ref={resultListRef}
+                onEscape={handleEscape}
+                aria-label={t("Search Results")}
+                items={data ?? []}
+              >
+                {() =>
+                  data?.length && !error
+                    ? data.map((result) => (
+                        <DocumentListItem
+                          key={result.document.id}
+                          document={result.document}
+                          highlight={query}
+                          context={result.context}
+                          showCollection
+                        />
+                      ))
+                    : null
+                }
+              </StyledArrowKeyNavigation>
+              <Waypoint
+                key={data?.length}
+                onEnter={end || loading ? undefined : next}
+                debug={env.ENVIRONMENT === "development"}
+              />
+            </ResultList>
+          </>
+        ) : documentId ? null : (
+          <RecentSearches ref={recentSearchesRef} onEscape={handleEscape} />
+        )}
+      </ResultsWrapper>
+    </Scene>
+  );
 }
 
 const Centered = styled(Flex)`
@@ -442,29 +403,24 @@ const StyledArrowKeyNavigation = styled(ArrowKeyNavigation)`
   flex: 1;
 `;
 
-const Filters = styled(Flex)`
+const Filters = styled(HStack)`
+  flex-wrap: wrap;
+  justify-content: space-between;
   margin-bottom: 12px;
-  opacity: 0.85;
   transition: opacity 100ms ease-in-out;
-  overflow-y: hidden;
-  overflow-x: auto;
   padding: 8px 0;
 
   ${breakpoint("tablet")`
     padding: 0;
   `};
-
-  &: ${hover} {
-    opacity: 1;
-  }
 `;
 
 const SearchTitlesFilter = styled(Switch)`
   white-space: nowrap;
   margin-left: 8px;
-  margin-top: 2px;
   font-size: 14px;
   font-weight: 400;
+  height: 28px;
 `;
 
-export default withTranslation()(withStores(withRouter(Search)));
+export default observer(Search);

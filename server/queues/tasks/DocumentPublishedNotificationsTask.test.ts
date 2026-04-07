@@ -1,16 +1,16 @@
-import { NotificationEventType } from "@shared/types";
+import { v4 as uuidv4 } from "uuid";
+import { MentionType, NotificationEventType } from "@shared/types";
 import { Notification } from "@server/models";
 import {
   buildDocument,
   buildCollection,
+  buildGroup,
+  buildGroupUser,
   buildUser,
 } from "@server/test/factories";
-import { setupTestDatabase } from "@server/test/support";
 import DocumentPublishedNotificationsTask from "./DocumentPublishedNotificationsTask";
 
 const ip = "127.0.0.1";
-
-setupTestDatabase();
 
 beforeEach(async () => {
   jest.resetAllMocks();
@@ -34,9 +34,6 @@ describe("documents.publish", () => {
       collectionId: document.collectionId!,
       teamId: document.teamId,
       actorId: document.createdById,
-      data: {
-        title: document.title,
-      },
       ip,
     });
     expect(spy).not.toHaveBeenCalled();
@@ -58,9 +55,6 @@ describe("documents.publish", () => {
       collectionId: document.collectionId!,
       teamId: document.teamId,
       actorId: document.createdById,
-      data: {
-        title: document.title,
-      },
       ip,
     });
     expect(spy).toHaveBeenCalled();
@@ -98,9 +92,6 @@ describe("documents.publish", () => {
       collectionId: document.collectionId!,
       teamId: document.teamId,
       actorId: document.createdById,
-      data: {
-        title: document.title,
-      },
       ip,
     });
     expect(spy).toHaveBeenCalledTimes(1);
@@ -127,11 +118,61 @@ describe("documents.publish", () => {
       collectionId: document.collectionId!,
       teamId: document.teamId,
       actorId: document.createdById,
-      data: {
-        title: document.title,
-      },
       ip,
     });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  test("should not send a notification for group mentions when disableMentions is true", async () => {
+    const spy = jest.spyOn(Notification, "create");
+    const actor = await buildUser();
+    const group = await buildGroup({
+      teamId: actor.teamId,
+      disableMentions: true,
+    });
+    const member = await buildUser({ teamId: actor.teamId });
+    await buildGroupUser({ groupId: group.id, userId: member.id });
+
+    member.setNotificationEventType(
+      NotificationEventType.GroupMentionedInDocument
+    );
+    await member.save();
+
+    const document = await buildDocument({
+      teamId: actor.teamId,
+      userId: actor.id,
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                type: "mention",
+                attrs: {
+                  id: uuidv4(),
+                  type: MentionType.Group,
+                  label: group.name,
+                  modelId: group.id,
+                  actorId: actor.id,
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const processor = new DocumentPublishedNotificationsTask();
+    await processor.perform({
+      name: "documents.publish",
+      documentId: document.id,
+      collectionId: document.collectionId!,
+      teamId: document.teamId,
+      actorId: actor.id,
+      ip,
+    });
+
     expect(spy).not.toHaveBeenCalled();
   });
 });

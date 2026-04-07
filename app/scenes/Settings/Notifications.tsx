@@ -1,34 +1,36 @@
 import debounce from "lodash/debounce";
+import { runInAction } from "mobx";
 import { observer } from "mobx-react";
 import {
   AcademicCapIcon,
   CheckboxIcon,
   CollectionIcon,
   CommentIcon,
+  DocumentIcon,
+  DoneIcon,
   EditIcon,
   EmailIcon,
   PublishIcon,
+  SmileyIcon,
   StarredIcon,
   UserIcon,
+  GroupIcon,
 } from "outline-icons";
 import * as React from "react";
 import { useTranslation, Trans } from "react-i18next";
+import { toast } from "sonner";
 import { NotificationEventType } from "@shared/types";
-import Flex from "~/components/Flex";
 import Heading from "~/components/Heading";
-import Input from "~/components/Input";
 import Notice from "~/components/Notice";
 import Scene from "~/components/Scene";
 import Switch from "~/components/Switch";
 import Text from "~/components/Text";
-import env from "~/env";
 import useCurrentUser from "~/hooks/useCurrentUser";
-import useToasts from "~/hooks/useToasts";
+import { client } from "~/utils/ApiClient";
 import isCloudHosted from "~/utils/isCloudHosted";
 import SettingRow from "./components/SettingRow";
 
 function Notifications() {
-  const { showToast } = useToasts();
   const user = useCurrentUser();
   const { t } = useTranslation();
 
@@ -66,6 +68,30 @@ function Notifications() {
       ),
     },
     {
+      event: NotificationEventType.GroupMentionedInDocument,
+      icon: <GroupIcon />,
+      title: t("Group mentions"),
+      description: t(
+        "Receive a notification when someone mentions a group you are a member of in a document or comment"
+      ),
+    },
+    {
+      event: NotificationEventType.ResolveComment,
+      icon: <DoneIcon />,
+      title: t("Resolved"),
+      description: t(
+        "Receive a notification when a comment thread you were involved in is resolved"
+      ),
+    },
+    {
+      event: NotificationEventType.ReactionsCreate,
+      icon: <SmileyIcon />,
+      title: t("Reaction added"),
+      description: t(
+        "Receive a notification when someone reacts to your comment"
+      ),
+    },
+    {
       event: NotificationEventType.CreateCollection,
       icon: <CollectionIcon />,
       title: t("Collection created"),
@@ -79,6 +105,22 @@ function Notifications() {
       title: t("Invite accepted"),
       description: t(
         "Receive a notification when someone you invited creates an account"
+      ),
+    },
+    {
+      event: NotificationEventType.AddUserToDocument,
+      icon: <DocumentIcon />,
+      title: t("Invited to document"),
+      description: t(
+        "Receive a notification when a document is shared with you"
+      ),
+    },
+    {
+      event: NotificationEventType.AddUserToCollection,
+      icon: <CollectionIcon />,
+      title: t("Invited to collection"),
+      description: t(
+        "Receive a notification when you are given access to a collection"
       ),
     },
     {
@@ -105,22 +147,43 @@ function Notifications() {
     },
   ];
 
+  const visibleOptions = options.filter((o) => o.visible !== false);
+
   const showSuccessMessage = debounce(() => {
-    showToast(t("Notifications saved"), {
-      type: "success",
-    });
+    toast.success(t("Notifications saved"));
   }, 500);
 
   const handleChange = React.useCallback(
-    async (ev: React.ChangeEvent<HTMLInputElement>) => {
-      await user.setNotificationEventType(
-        ev.target.name as NotificationEventType,
-        ev.target.checked
-      );
+    (eventType: NotificationEventType) => async (checked: boolean) => {
+      await user.setNotificationEventType(eventType, checked);
       showSuccessMessage();
     },
     [user, showSuccessMessage]
   );
+
+  const handleToggleAll = React.useCallback(
+    async (checked: boolean) => {
+      runInAction(() => {
+        const updated = { ...user.notificationSettings };
+        for (const option of visibleOptions) {
+          updated[option.event] = checked;
+        }
+        user.notificationSettings = updated;
+      });
+      await client.post(
+        checked
+          ? `/users.notificationsSubscribe`
+          : `/users.notificationsUnsubscribe`
+      );
+      showSuccessMessage();
+    },
+    [user, visibleOptions, showSuccessMessage]
+  );
+
+  const allEnabled = visibleOptions.every((o) =>
+    user.subscribedToEventType(o.event)
+  );
+
   const showSuccessNotice = window.location.search === "?success";
 
   return (
@@ -134,59 +197,49 @@ function Notifications() {
           </Trans>
         </Notice>
       )}
-      <Text type="secondary">
+      <Text as="p" type="secondary">
         <Trans>Manage when and where you receive email notifications.</Trans>
       </Text>
 
-      {env.EMAIL_ENABLED ? (
-        <>
+      <SettingRow
+        name="allNotifications"
+        label={t("All notifications")}
+        compact
+        border={false}
+      >
+        <Switch
+          id="allNotifications"
+          checked={allEnabled}
+          onChange={handleToggleAll}
+        />
+      </SettingRow>
+
+      {options.map((option) => {
+        const setting = user.subscribedToEventType(option.event);
+
+        return (
           <SettingRow
-            label={t("Email address")}
-            name="email"
-            description={t(
-              "Your email address should be updated in your SSO provider."
-            )}
+            key={option.event}
+            visible={option.visible}
+            label={option.title}
+            name={option.event}
+            description={
+              <Text size="small" type="secondary">
+                {option.description}
+              </Text>
+            }
+            compact
           >
-            <Input type="email" value={user.email} readOnly />
+            <Switch
+              key={option.event}
+              id={option.event}
+              name={option.event}
+              checked={!!setting}
+              onChange={handleChange(option.event)}
+            />
           </SettingRow>
-
-          <h2>{t("Notifications")}</h2>
-
-          {options.map((option) => {
-            const setting = user.subscribedToEventType(option.event);
-
-            return (
-              <SettingRow
-                key={option.event}
-                visible={option.visible}
-                label={
-                  <Flex align="center" gap={4}>
-                    {option.icon} {option.title}
-                  </Flex>
-                }
-                name={option.event}
-                description={option.description}
-              >
-                <Switch
-                  key={option.event}
-                  id={option.event}
-                  name={option.event}
-                  checked={!!setting}
-                  onChange={handleChange}
-                />
-              </SettingRow>
-            );
-          })}
-        </>
-      ) : (
-        <Notice>
-          <Trans>
-            The email integration is currently disabled. Please set the
-            associated environment variables and restart the server to enable
-            notifications.
-          </Trans>
-        </Notice>
-      )}
+        );
+      })}
     </Scene>
   );
 }

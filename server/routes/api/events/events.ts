@@ -1,11 +1,14 @@
 import Router from "koa-router";
-import { Op, WhereOptions } from "sequelize";
+import intersection from "lodash/intersection";
+import type { WhereOptions } from "sequelize";
+import { Op } from "sequelize";
+import { EventHelper } from "@shared/utils/EventHelper";
 import auth from "@server/middlewares/authentication";
 import validate from "@server/middlewares/validate";
-import { Event, User, Collection } from "@server/models";
+import { Event, User, Collection, Document } from "@server/models";
 import { authorize } from "@server/policies";
 import { presentEvent } from "@server/presenters";
-import { APIContext } from "@server/types";
+import type { APIContext } from "@server/types";
 import pagination from "../middlewares/pagination";
 import * as T from "./schema";
 
@@ -19,64 +22,64 @@ router.post(
   async (ctx: APIContext<T.EventsListReq>) => {
     const { user } = ctx.state.auth;
     const {
-      sort,
-      direction,
+      name,
+      events,
+      auditLog,
       actorId,
       documentId,
       collectionId,
-      name,
-      auditLog,
+      sort,
+      direction,
     } = ctx.input.body;
 
     let where: WhereOptions<Event> = {
-      name: Event.ACTIVITY_EVENTS,
       teamId: user.teamId,
+      actorId: { [Op.ne]: null },
     };
-
-    if (actorId) {
-      where = { ...where, actorId };
-    }
-
-    if (documentId) {
-      where = { ...where, documentId };
-    }
 
     if (auditLog) {
       authorize(user, "audit", user.team);
-      where.name = Event.AUDIT_EVENTS;
+      where.name = events
+        ? intersection(EventHelper.AUDIT_EVENTS, events)
+        : EventHelper.AUDIT_EVENTS;
+    } else {
+      where.name = events
+        ? intersection(EventHelper.ACTIVITY_EVENTS, events)
+        : EventHelper.ACTIVITY_EVENTS;
     }
 
     if (name && (where.name as string[]).includes(name)) {
       where.name = name;
     }
 
-    if (collectionId) {
-      where = { ...where, collectionId };
-
-      const collection = await Collection.scope({
-        method: ["withMembership", user.id],
-      }).findByPk(collectionId);
-      authorize(user, "read", collection);
-    } else {
-      const collectionIds = await user.collectionIds({
-        paranoid: false,
-      });
-      where = {
-        ...where,
-        [Op.or]: [
-          {
-            collectionId: collectionIds,
-          },
-          {
-            collectionId: {
-              [Op.is]: null,
-            },
-          },
-        ],
-      };
+    if (actorId) {
+      const actor = await User.findByPk(actorId);
+      authorize(user, "readDetails", actor);
+      where = { ...where, actorId };
     }
 
-    const events = await Event.findAll({
+    // Non-admins must specify either documentId or collectionId to use the read policy
+    if (!user.isAdmin && !documentId && !collectionId) {
+      authorize(user, "listAllEvents", user.team);
+    }
+
+    if (documentId) {
+      const document = await Document.findByPk(documentId, {
+        userId: user.id,
+      });
+      authorize(user, "read", document);
+      where = { ...where, documentId };
+    }
+
+    if (collectionId) {
+      const collection = await Collection.findByPk(collectionId, {
+        userId: user.id,
+      });
+      authorize(user, "read", collection);
+      where = { ...where, collectionId };
+    }
+
+    const loadedEvents = await Event.findAll({
       where,
       order: [[sort, direction]],
       include: [
@@ -93,7 +96,7 @@ router.post(
     ctx.body = {
       pagination: ctx.state.pagination,
       data: await Promise.all(
-        events.map((event) => presentEvent(event, auditLog))
+        loadedEvents.map((event) => presentEvent(event, auditLog))
       ),
     };
   }

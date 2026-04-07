@@ -1,15 +1,24 @@
 import { subHours } from "date-fns";
 import differenceBy from "lodash/differenceBy";
 import { Op } from "sequelize";
-import { NotificationEventType } from "@shared/types";
+import { MentionType, NotificationEventType } from "@shared/types";
 import { createSubscriptionsForDocument } from "@server/commands/subscriptionCreator";
 import env from "@server/env";
 import Logger from "@server/logging/Logger";
-import { Document, Revision, Notification, User, View } from "@server/models";
-import DocumentHelper from "@server/models/helpers/DocumentHelper";
+import {
+  Document,
+  Group,
+  Revision,
+  Notification,
+  User,
+  View,
+  GroupUser,
+} from "@server/models";
+import { DocumentHelper } from "@server/models/helpers/DocumentHelper";
 import NotificationHelper from "@server/models/helpers/NotificationHelper";
-import { RevisionEvent } from "@server/types";
-import BaseTask, { TaskPriority } from "./BaseTask";
+import type { RevisionEvent } from "@server/types";
+import { canUserAccessDocument } from "@server/utils/permissions";
+import { BaseTask, TaskPriority } from "./base/BaseTask";
 
 export default class RevisionCreatedNotificationsTask extends BaseTask<RevisionEvent> {
   public async perform(event: RevisionEvent) {
@@ -24,45 +33,129 @@ export default class RevisionCreatedNotificationsTask extends BaseTask<RevisionE
 
     await createSubscriptionsForDocument(document, event);
 
-    // Send notifications to mentioned users first
-    const before = await revision.previous();
-    const oldMentions = before ? DocumentHelper.parseMentions(before) : [];
-    const newMentions = DocumentHelper.parseMentions(document);
+    const before = await revision.before();
+
+    // Send notifications to mentioned users first – these must be processed
+    // regardless of the change threshold as even a small edit can add a mention.
+    const oldMentions = before
+      ? [...DocumentHelper.parseMentions(before, { type: MentionType.User })]
+      : [];
+    const newMentions = [
+      ...DocumentHelper.parseMentions(document, {
+        type: MentionType.User,
+      }),
+    ];
+
     const mentions = differenceBy(newMentions, oldMentions, "id");
     const userIdsMentioned: string[] = [];
-
     for (const mention of mentions) {
       if (userIdsMentioned.includes(mention.modelId)) {
         continue;
       }
 
       const recipient = await User.findByPk(mention.modelId);
+
       if (
         recipient &&
         recipient.id !== mention.actorId &&
         recipient.subscribedToEventType(
           NotificationEventType.MentionedInDocument
-        )
+        ) &&
+        (await canUserAccessDocument(recipient, document.id))
       ) {
         await Notification.create({
           event: NotificationEventType.MentionedInDocument,
           userId: recipient.id,
           revisionId: event.modelId,
-          actorId: document.updatedBy.id,
+          actorId: mention.actorId,
           teamId: document.teamId,
           documentId: document.id,
         });
+
         userIdsMentioned.push(recipient.id);
       }
     }
 
+    // Send notifications to users in mentioned groups
+    const oldGroupMentions = before
+      ? DocumentHelper.parseMentions(before, { type: MentionType.Group })
+      : [];
+    const newGroupMentions = DocumentHelper.parseMentions(document, {
+      type: MentionType.Group,
+    });
+
+    const groupMentions = differenceBy(
+      newGroupMentions,
+      oldGroupMentions,
+      "id"
+    );
+    const mentionedGroup: string[] = [];
+    for (const group of groupMentions) {
+      if (mentionedGroup.includes(group.modelId)) {
+        continue;
+      }
+
+      // Check if the group has mentions disabled
+      const groupModel = await Group.findByPk(group.modelId);
+      if (groupModel?.disableMentions) {
+        continue;
+      }
+
+      const usersFromMentionedGroup = await GroupUser.findAll({
+        where: {
+          groupId: group.modelId,
+        },
+        order: [["permission", "ASC"]],
+      });
+
+      const mentionedUser: string[] = [];
+      for (const user of usersFromMentionedGroup) {
+        if (mentionedUser.includes(user.userId)) {
+          continue;
+        }
+
+        const recipient = await User.findByPk(user.userId);
+        if (
+          recipient &&
+          recipient.id !== group.actorId &&
+          recipient.subscribedToEventType(
+            NotificationEventType.GroupMentionedInDocument
+          ) &&
+          (await canUserAccessDocument(recipient, document.id))
+        ) {
+          await Notification.create({
+            event: NotificationEventType.GroupMentionedInDocument,
+            groupId: group.modelId,
+            userId: recipient.id,
+            revisionId: event.modelId,
+            actorId: group.actorId,
+            teamId: document.teamId,
+            documentId: document.id,
+          });
+
+          mentionedUser.push(user.userId);
+        }
+      }
+
+      mentionedGroup.push(group.modelId);
+    }
+
+    // If the content change is insignificant, don't send generic update
+    // notifications (mention notifications above are still sent).
+    if (!DocumentHelper.isChangeOverThreshold(before, revision, 5)) {
+      Logger.info(
+        "processor",
+        `suppressing update notifications as change has insignificant edits`
+      );
+      return;
+    }
+
     const recipients = (
-      await NotificationHelper.getDocumentNotificationRecipients(
+      await NotificationHelper.getDocumentNotificationRecipients({
         document,
-        NotificationEventType.UpdateDocument,
-        document.lastModifiedById,
-        true
-      )
+        notificationType: NotificationEventType.UpdateDocument,
+        actorId: document.lastModifiedById,
+      })
     ).filter((recipient) => !userIdsMentioned.includes(recipient.id));
     if (!recipients.length) {
       return;
@@ -102,7 +195,7 @@ export default class RevisionCreatedNotificationsTask extends BaseTask<RevisionE
     });
 
     if (notification) {
-      if (env.ENVIRONMENT === "development") {
+      if (env.isDevelopment) {
         Logger.info(
           "processor",
           `would have suppressed notification to ${user.id}, but not in development`

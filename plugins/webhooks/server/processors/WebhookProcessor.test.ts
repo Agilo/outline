@@ -1,20 +1,17 @@
 import { buildUser, buildWebhookSubscription } from "@server/test/factories";
-import { setupTestDatabase } from "@server/test/support";
-import { UserEvent } from "@server/types";
+import type { UserEvent } from "@server/types";
 import DeliverWebhookTask from "../tasks/DeliverWebhookTask";
 import WebhookProcessor from "./WebhookProcessor";
 
 jest.mock("../tasks/DeliverWebhookTask");
 const ip = "127.0.0.1";
 
-setupTestDatabase();
-
-beforeEach(async () => {
+beforeEach(() => {
   jest.resetAllMocks();
 });
 
 describe("WebhookProcessor", () => {
-  test("it schedules a delivery for the event", async () => {
+  it("it schedules a delivery for the event", async () => {
     const subscription = await buildWebhookSubscription({
       url: "http://example.com",
       events: ["*"],
@@ -32,14 +29,18 @@ describe("WebhookProcessor", () => {
 
     await processor.perform(event);
 
-    expect(DeliverWebhookTask.schedule).toHaveBeenCalled();
-    expect(DeliverWebhookTask.schedule).toHaveBeenCalledWith({
+    expect(
+      jest.mocked(DeliverWebhookTask.prototype.schedule)
+    ).toHaveBeenCalled();
+    expect(
+      jest.mocked(DeliverWebhookTask.prototype.schedule)
+    ).toHaveBeenCalledWith({
       event,
       subscriptionId: subscription.id,
     });
   });
 
-  test("not schedule a delivery when not subscribed to event", async () => {
+  it("not schedule a delivery when not subscribed to event", async () => {
     const subscription = await buildWebhookSubscription({
       url: "http://example.com",
       events: ["users.create"],
@@ -56,10 +57,12 @@ describe("WebhookProcessor", () => {
 
     await processor.perform(event);
 
-    expect(DeliverWebhookTask.schedule).toHaveBeenCalledTimes(0);
+    expect(
+      jest.mocked(DeliverWebhookTask.prototype.schedule)
+    ).toHaveBeenCalledTimes(0);
   });
 
-  test("it schedules a delivery for the event for each subscription", async () => {
+  it("it schedules a delivery for the event for each subscription", async () => {
     const subscription = await buildWebhookSubscription({
       url: "http://example.com",
       events: ["*"],
@@ -82,13 +85,21 @@ describe("WebhookProcessor", () => {
 
     await processor.perform(event);
 
-    expect(DeliverWebhookTask.schedule).toHaveBeenCalled();
-    expect(DeliverWebhookTask.schedule).toHaveBeenCalledTimes(2);
-    expect(DeliverWebhookTask.schedule).toHaveBeenCalledWith({
+    expect(
+      jest.mocked(DeliverWebhookTask.prototype.schedule)
+    ).toHaveBeenCalled();
+    expect(
+      jest.mocked(DeliverWebhookTask.prototype.schedule)
+    ).toHaveBeenCalledTimes(2);
+    expect(
+      jest.mocked(DeliverWebhookTask.prototype.schedule)
+    ).toHaveBeenCalledWith({
       event,
       subscriptionId: subscription.id,
     });
-    expect(DeliverWebhookTask.schedule).toHaveBeenCalledWith({
+    expect(
+      jest.mocked(DeliverWebhookTask.prototype.schedule)
+    ).toHaveBeenCalledWith({
       event,
       subscriptionId: subscriptionTwo.id,
     });

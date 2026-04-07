@@ -1,27 +1,50 @@
 import { observer } from "mobx-react";
 import * as React from "react";
-import { useLocation, RouteComponentProps, StaticContext } from "react-router";
-import { NavigationNode, TeamPreference } from "@shared/types";
+import type { RouteComponentProps, StaticContext } from "react-router";
+import { Redirect, useLocation } from "react-router";
+import { TeamPreference } from "@shared/types";
+import { ProsemirrorHelper } from "@shared/utils/ProsemirrorHelper";
 import { RevisionHelper } from "@shared/utils/RevisionHelper";
-import Document from "~/models/Document";
-import Revision from "~/models/Revision";
-import Error404 from "~/scenes/Error404";
-import ErrorOffline from "~/scenes/ErrorOffline";
+import type Document from "~/models/Document";
+import type Revision from "~/models/Revision";
+import Error402 from "~/scenes/Errors/Error402";
+import Error403 from "~/scenes/Errors/Error403";
+import Error404 from "~/scenes/Errors/Error404";
+import ErrorOffline from "~/scenes/Errors/ErrorOffline";
+import ErrorUnknown from "~/scenes/Errors/ErrorUnknown";
+import { useDocumentContext } from "~/components/DocumentContext";
+import useCurrentTeam from "~/hooks/useCurrentTeam";
+import useCurrentUser from "~/hooks/useCurrentUser";
 import usePolicy from "~/hooks/usePolicy";
+import useQuery from "~/hooks/useQuery";
 import useStores from "~/hooks/useStores";
+import type { Properties } from "~/types";
 import Logger from "~/utils/Logger";
-import { NotFoundError, OfflineError } from "~/utils/errors";
+import {
+  AuthorizationError,
+  NotFoundError,
+  OfflineError,
+  PaymentRequiredError,
+} from "~/utils/errors";
 import history from "~/utils/history";
-import { matchDocumentEdit } from "~/utils/routeHelpers";
+import {
+  matchDocumentEdit,
+  settingsPath,
+  updateDocumentPath,
+} from "~/utils/routeHelpers";
+import useDocumentSidebar from "../hooks/useDocumentSidebar";
 import Loading from "./Loading";
+import MarkAsViewed from "./MarkAsViewed";
 
 type Params = {
+  /** The document urlId + slugified title  */
   documentSlug: string;
+  /** A specific revision id to load. */
   revisionId?: string;
-  shareId?: string;
 };
 
 type LocationState = {
+  /** The document title, if preloaded */
   title?: string;
   restore?: boolean;
   revisionId?: string;
@@ -32,8 +55,10 @@ type Children = (options: {
   revision: Revision | undefined;
   abilities: Record<string, boolean>;
   readOnly: boolean;
-  onCreateLink: (title: string) => Promise<string>;
-  sharedTree: NavigationNode | undefined;
+  onCreateLink: (
+    params: Properties<Document>,
+    nested?: boolean
+  ) => Promise<string>;
 }) => React.ReactNode;
 
 type Props = RouteComponentProps<Params, StaticContext, LocationState> & {
@@ -41,24 +66,19 @@ type Props = RouteComponentProps<Params, StaticContext, LocationState> & {
 };
 
 function DataLoader({ match, children }: Props) {
-  const {
-    ui,
-    views,
-    shares,
-    comments,
-    documents,
-    auth,
-    revisions,
-    subscriptions,
-  } = useStores();
-  const { team } = auth;
+  const { ui, views, shares, comments, documents, revisions } = useStores();
+  const team = useCurrentTeam();
+  const user = useCurrentUser();
+  const { setDocument } = useDocumentContext();
   const [error, setError] = React.useState<Error | null>(null);
-  const { revisionId, shareId, documentSlug } = match.params;
+  const { revisionId, documentSlug } = match.params;
 
   // Allows loading by /doc/slug-<urlId> or /doc/<id>
-  const document =
-    documents.getByUrl(match.params.documentSlug) ??
-    documents.get(match.params.documentSlug);
+  const document = documents.get(match.params.documentSlug);
+
+  if (document) {
+    setDocument(document);
+  }
 
   const revision = revisionId
     ? revisions.get(
@@ -68,68 +88,48 @@ function DataLoader({ match, children }: Props) {
       )
     : undefined;
 
-  const sharedTree = document
-    ? documents.getSharedTree(document.id)
-    : undefined;
-  const isEditRoute = match.path === matchDocumentEdit;
-  const isEditing = isEditRoute || !auth.user?.separateEditMode;
-  const can = usePolicy(document?.id);
+  const isEditRoute =
+    match.path === matchDocumentEdit || match.path.startsWith(settingsPath());
+  const isEditing = isEditRoute || !user?.separateEditMode;
+  const can = usePolicy(document);
   const location = useLocation<LocationState>();
+  const query = useQuery();
+  const missingPolicy = !can || Object.keys(can).length === 0;
+
+  useDocumentSidebar();
 
   React.useEffect(() => {
     async function fetchDocument() {
       try {
-        await documents.fetchWithSharedTree(documentSlug, {
-          shareId,
+        await documents.fetch(documentSlug, {
+          force: missingPolicy,
         });
       } catch (err) {
         setError(err);
       }
     }
     void fetchDocument();
-  }, [ui, documents, document, shareId, documentSlug]);
+  }, [ui, documents, missingPolicy, documentSlug]);
 
   React.useEffect(() => {
     async function fetchRevision() {
-      if (revisionId && revisionId !== "latest") {
-        try {
+      if (!revisionId) {
+        return;
+      }
+      try {
+        if (revisionId === "latest") {
+          if (document?.id) {
+            await revisions.fetchLatest(document.id);
+          }
+        } else {
           await revisions.fetch(revisionId);
-        } catch (err) {
-          setError(err);
         }
+      } catch (err) {
+        setError(err);
       }
     }
     void fetchRevision();
-  }, [revisions, revisionId]);
-
-  React.useEffect(() => {
-    async function fetchRevision() {
-      if (document && revisionId === "latest") {
-        try {
-          await revisions.fetchLatest(document.id);
-        } catch (err) {
-          setError(err);
-        }
-      }
-    }
-    void fetchRevision();
-  }, [document, revisionId, revisions]);
-
-  React.useEffect(() => {
-    async function fetchSubscription() {
-      if (document?.id && !revisionId) {
-        try {
-          await subscriptions.fetchPage({
-            documentId: document.id,
-            event: "documents.update",
-          });
-        } catch (err) {
-          Logger.error("Failed to fetch subscriptions", err);
-        }
-      }
-    }
-    void fetchSubscription();
-  }, [document?.id, subscriptions, revisionId]);
+  }, [revisions, revisionId, document?.id]);
 
   React.useEffect(() => {
     async function fetchViews() {
@@ -147,17 +147,22 @@ function DataLoader({ match, children }: Props) {
   }, [document?.id, document?.isDeleted, revisionId, views]);
 
   const onCreateLink = React.useCallback(
-    async (title: string) => {
+    async (params: Properties<Document>, nested?: boolean) => {
       if (!document) {
         throw new Error("Document not loaded yet");
       }
 
-      const newDocument = await documents.create({
-        collectionId: document.collectionId,
-        parentDocumentId: document.parentDocumentId,
-        title,
-        text: "",
-      });
+      const newDocument = await documents.create(
+        {
+          collectionId: nested ? undefined : document.collectionId,
+          parentDocumentId: nested ? document.id : document.parentDocumentId,
+          data: ProsemirrorHelper.getEmptyDocument(),
+          ...params,
+        },
+        {
+          publish: document.isDraft ? undefined : true,
+        }
+      );
 
       return newDocument.url;
     },
@@ -171,34 +176,67 @@ function DataLoader({ match, children }: Props) {
 
       // If we're attempting to update an archived, deleted, or otherwise
       // uneditable document then forward to the canonical read url.
-      if (!can.update && isEditRoute) {
+      if (!missingPolicy && !can.update && isEditRoute) {
         history.push(document.url);
         return;
       }
 
       // Prevents unauthorized request to load share information for the document
       // when viewing a public share link
-      if (can.read) {
-        if (team?.getPreference(TeamPreference.Commenting)) {
-          void comments.fetchDocumentComments(document.id, {
+      if (can.read && !document.isDeleted && !revisionId) {
+        if (team.getPreference(TeamPreference.Commenting)) {
+          void comments.fetchAll({
+            documentId: document.id,
             limit: 100,
+            direction: "ASC",
           });
         }
 
-        shares.fetch(document.id).catch((err) => {
+        shares.fetchOne({ documentId: document.id }).catch((err) => {
           if (!(err instanceof NotFoundError)) {
             throw err;
           }
         });
       }
     }
-  }, [can.read, can.update, document, isEditRoute, comments, team, shares, ui]);
+  }, [
+    can.read,
+    can.update,
+    document,
+    isEditRoute,
+    comments,
+    team,
+    shares,
+    ui,
+    revisionId,
+  ]);
+
+  // Auto-enter presentation mode when ?present=true query param is set
+  React.useEffect(() => {
+    if (document && query.has("present") && !ui.presentationData) {
+      ui.setPresentingDocument(document);
+    }
+  }, [document, query, ui]);
 
   if (error) {
-    return error instanceof OfflineError ? <ErrorOffline /> : <Error404 />;
+    return error instanceof OfflineError ? (
+      <ErrorOffline />
+    ) : error instanceof PaymentRequiredError ? (
+      <Error402 />
+    ) : error instanceof AuthorizationError ? (
+      <Error403 />
+    ) : error instanceof NotFoundError ? (
+      <Error404 />
+    ) : (
+      <ErrorUnknown />
+    );
   }
 
-  if (!document || !team || (revisionId && !revision)) {
+  if (can.read === false) {
+    return <Error404 />;
+  }
+
+  if (!document || (revisionId && !revision)) {
     return (
       <>
         <Loading location={location} />
@@ -206,18 +244,37 @@ function DataLoader({ match, children }: Props) {
     );
   }
 
+  // Redirect to the canonical URL if the document slug has changed, e.g.
+  // after a rename, so the browser address bar stays in sync.
+  const canonicalUrl = updateDocumentPath(match.url, document);
+  if (location.pathname !== canonicalUrl) {
+    return (
+      <Redirect
+        to={{
+          pathname: canonicalUrl,
+          state: location.state,
+          hash: location.hash,
+        }}
+      />
+    );
+  }
+
+  const canEdit = can.update && !document.isArchived && !revisionId;
+  const readOnly = !isEditing || !canEdit;
+
   return (
-    <React.Fragment>
-      {children({
-        document,
-        revision,
-        abilities: can,
-        readOnly:
-          !isEditing || !can.update || document.isArchived || !!revisionId,
-        onCreateLink,
-        sharedTree,
-      })}
-    </React.Fragment>
+    <>
+      {!revision && <MarkAsViewed document={document} />}
+      <React.Fragment key={canEdit ? "edit" : "read"}>
+        {children({
+          document,
+          revision,
+          abilities: can,
+          readOnly,
+          onCreateLink,
+        })}
+      </React.Fragment>
+    </>
   );
 }
 

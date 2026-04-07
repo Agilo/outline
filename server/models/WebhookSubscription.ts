@@ -1,6 +1,10 @@
-import crypto from "crypto";
-import isEmpty from "lodash/isEmpty";
-import { SaveOptions } from "sequelize";
+import crypto from "node:crypto";
+import isNil from "lodash/isNil";
+import type {
+  InferAttributes,
+  InferCreationAttributes,
+  InstanceUpdateOptions,
+} from "sequelize";
 import {
   Column,
   Table,
@@ -15,16 +19,14 @@ import {
 } from "sequelize-typescript";
 import { WebhookSubscriptionValidation } from "@shared/validations";
 import { ValidationError } from "@server/errors";
-import { Event } from "@server/types";
+import type { Event } from "@server/types";
 import Team from "./Team";
 import User from "./User";
 import ParanoidModel from "./base/ParanoidModel";
-import Encrypted, {
-  setEncryptedColumn,
-  getEncryptedColumn,
-} from "./decorators/Encrypted";
+import Encrypted from "./decorators/Encrypted";
 import Fix from "./decorators/Fix";
 import Length from "./validators/Length";
+import { randomString } from "@shared/random";
 
 @DefaultScope(() => ({
   include: [
@@ -39,7 +41,12 @@ import Length from "./validators/Length";
   modelName: "webhook_subscription",
 })
 @Fix
-class WebhookSubscription extends ParanoidModel {
+class WebhookSubscription extends ParanoidModel<
+  InferAttributes<WebhookSubscription>,
+  Partial<InferCreationAttributes<WebhookSubscription>>
+> {
+  static eventNamespace = "webhookSubscriptions";
+
   @NotEmpty
   @Length({ max: 255, msg: "Webhook name be less than 255 characters" })
   @Column
@@ -58,19 +65,9 @@ class WebhookSubscription extends ParanoidModel {
   events: string[];
 
   @AllowNull
-  @Encrypted
   @Column(DataType.BLOB)
-  get secret() {
-    const val = getEncryptedColumn(this, "secret");
-    // Turns out that `val` evals to `{}` instead
-    // of `null` even if secret's value in db is `null`.
-    // https://github.com/defunctzombie/sequelize-encrypted/blob/c3854e76ae4b80318c8f10f94e6c898c67659ca6/index.js#L30-L33 explains it possibly.
-    return isEmpty(val) ? "" : val;
-  }
-
-  set secret(value: string) {
-    setEncryptedColumn(this, "secret", value);
-  }
+  @Encrypted
+  secret: string | null;
 
   // associations
 
@@ -102,7 +99,14 @@ class WebhookSubscription extends ParanoidModel {
     }
   }
 
-  // methods
+  // instance methods
+
+  /**
+   * Rotate the secret value. Does not persist to database.
+   */
+  public rotateSecret() {
+    this.secret = `ol_whs_${randomString(32)}`;
+  }
 
   /**
    * Disables the webhook subscription
@@ -110,7 +114,9 @@ class WebhookSubscription extends ParanoidModel {
    * @param options Save options
    * @returns Promise<WebhookSubscription>
    */
-  public async disable(options?: SaveOptions<WebhookSubscription>) {
+  public async disable(
+    options?: InstanceUpdateOptions<InferAttributes<WebhookSubscription>>
+  ) {
     return this.update({ enabled: false }, options);
   }
 
@@ -143,7 +149,7 @@ class WebhookSubscription extends ParanoidModel {
    * @returns the signature as a string
    */
   public signature = (payload: string) => {
-    if (isEmpty(this.secret)) {
+    if (isNil(this.secret)) {
       return;
     }
 

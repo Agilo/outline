@@ -1,8 +1,8 @@
 import size from "lodash/size";
 import { Node } from "prosemirror-model";
 import { addAttributeOptions } from "sequelize-typescript";
-import { ProsemirrorData } from "@shared/types";
-import ProsemirrorHelper from "@shared/utils/ProsemirrorHelper";
+import type { ProsemirrorData } from "@shared/types";
+import { ProsemirrorHelper } from "@shared/utils/ProsemirrorHelper";
 import { schema } from "@server/editor";
 
 /**
@@ -25,11 +25,8 @@ export default function TextLength({
           let text;
 
           try {
-            text = ProsemirrorHelper.toPlainText(
-              Node.fromJSON(schema, value),
-              schema
-            );
-          } catch (err) {
+            text = ProsemirrorHelper.toPlainText(Node.fromJSON(schema, value));
+          } catch (_err) {
             throw new Error("Invalid data");
           }
 

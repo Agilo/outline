@@ -1,10 +1,7 @@
 import { subDays } from "date-fns";
 import { WebhookDelivery } from "@server/models";
 import { buildWebhookDelivery } from "@server/test/factories";
-import { setupTestDatabase } from "@server/test/support";
 import CleanupWebhookDeliveriesTask from "./CleanupWebhookDeliveriesTask";
-
-setupTestDatabase();
 
 const deliveryExists = async (delivery: WebhookDelivery) => {
   const results = await WebhookDelivery.findOne({ where: { id: delivery.id } });
@@ -24,7 +21,13 @@ describe("CleanupWebookDeliveriesTask", () => {
     });
 
     const task = new CleanupWebhookDeliveriesTask();
-    await task.perform();
+    await task.perform({
+      limit: 100,
+      partition: {
+        partitionIndex: 0,
+        partitionCount: 1,
+      },
+    });
 
     expect(await deliveryExists(brandNewWebhookDelivery)).toBe(true);
     expect(await deliveryExists(newishWebhookDelivery)).toBe(true);

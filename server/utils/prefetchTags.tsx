@@ -1,9 +1,8 @@
 import * as React from "react";
 import ReactDOMServer from "react-dom/server";
 import env from "@server/env";
-import readManifestFile, { ManifestStructure } from "./readManifestFile";
-
-const isProduction = env.ENVIRONMENT === "production";
+import type { ManifestStructure } from "./readManifestFile";
+import readManifestFile from "./readManifestFile";
 
 const prefetchTags = [];
 
@@ -30,16 +29,16 @@ if (env.CDN_URL) {
   );
 }
 
-if (isProduction) {
+if (env.isProduction) {
   const manifest = readManifestFile();
 
   const returnFileAndImportsFromManifest = (
-    manifest: ManifestStructure,
+    manifestStructure: ManifestStructure,
     file: string
   ): string[] => [
-    manifest[file]["file"],
-    ...manifest[file]["imports"].map(
-      (entry: string) => manifest[entry]["file"]
+    manifestStructure[file]["file"],
+    ...(manifestStructure[file]["imports"] ?? []).map(
+      (entry: string) => manifestStructure[entry]["file"]
     ),
   ];
 

@@ -1,9 +1,10 @@
 import invariant from "invariant";
-import * as React from "react";
+import { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useHistory } from "react-router-dom";
+import { toast } from "sonner";
 import useStores from "~/hooks/useStores";
-import useToasts from "~/hooks/useToasts";
+import { documentPath } from "~/utils/routeHelpers";
 
 let importingLock = false;
 
@@ -15,11 +16,10 @@ export default function useImportDocument(
   isImporting: boolean;
 } {
   const { documents } = useStores();
-  const { showToast } = useToasts();
-  const [isImporting, setImporting] = React.useState(false);
+  const [isImporting, setImporting] = useState(false);
   const { t } = useTranslation();
   const history = useHistory();
-  const handleFiles = React.useCallback(
+  const handleFiles = useCallback(
     async (files = []) => {
       if (importingLock) {
         return;
@@ -45,24 +45,30 @@ export default function useImportDocument(
         }
 
         for (const file of files) {
-          const doc = await documents.import(file, documentId, cId, {
-            publish: true,
-          });
+          const toastId = toast.loading(`${t("Uploading")}…`);
 
-          if (redirect) {
-            history.push(doc.url);
+          try {
+            const doc = await documents.import(file, documentId, cId, {
+              publish: true,
+            });
+
+            if (redirect) {
+              history.push(documentPath(doc));
+            }
+          } catch (err) {
+            toast.error(err.message);
+          } finally {
+            toast.dismiss(toastId);
           }
         }
       } catch (err) {
-        showToast(`${t("Could not import file")}. ${err.message}`, {
-          type: "error",
-        });
+        toast.error(`${t("Could not import file")}. ${err.message}`);
       } finally {
         setImporting(false);
         importingLock = false;
       }
     },
-    [t, documents, history, showToast, collectionId, documentId]
+    [t, documents, history, collectionId, documentId]
   );
 
   return {

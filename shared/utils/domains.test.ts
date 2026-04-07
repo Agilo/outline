@@ -12,16 +12,19 @@ describe("#parseDomain", () => {
     expect(parseDomain("http://example.com")).toMatchObject({
       teamSubdomain: "",
       host: "example.com",
+      port: undefined,
       custom: false,
     });
     expect(parseDomain("//example.com")).toMatchObject({
       teamSubdomain: "",
       host: "example.com",
+      port: undefined,
       custom: false,
     });
-    expect(parseDomain("https://example.com")).toMatchObject({
+    expect(parseDomain("https://example.com:3030")).toMatchObject({
       teamSubdomain: "",
       host: "example.com",
+      port: "3030",
       custom: false,
     });
   });
@@ -90,6 +93,24 @@ describe("#parseDomain", () => {
     expect(parseDomain("https://medium.com/@username/")).toMatchObject({
       teamSubdomain: "",
       host: "medium.com",
+      custom: true,
+    });
+  });
+
+  it("should strip userinfo before the hostname", () => {
+    expect(parseDomain("user:pass@example.com")).toMatchObject({
+      teamSubdomain: "",
+      host: "example.com",
+      custom: false,
+    });
+    expect(parseDomain("myteam.example.com@evil.com")).toMatchObject({
+      teamSubdomain: "",
+      host: "evil.com",
+      custom: true,
+    });
+    expect(parseDomain("https://myteam.example.com@evil.com")).toMatchObject({
+      teamSubdomain: "",
+      host: "evil.com",
       custom: true,
     });
   });

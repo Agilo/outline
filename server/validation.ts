@@ -1,14 +1,17 @@
 import isArrayLike from "lodash/isArrayLike";
-import { Primitive } from "utility-types";
+import sanitize from "sanitize-filename";
+import type { Primitive } from "utility-types";
 import validator from "validator";
+import isIn from "validator/lib/isIn";
 import isUUID from "validator/lib/isUUID";
+import { CollectionPermission, MentionType } from "@shared/types";
+import { UrlHelper } from "@shared/utils/UrlHelper";
+import { validateColorHex } from "@shared/utils/color";
+import { validateIndexCharacters } from "@shared/utils/indexCharacters";
 import parseMentionUrl from "@shared/utils/parseMentionUrl";
-import { SLUG_URL_REGEX } from "@shared/utils/urlHelpers";
 import { isUrl } from "@shared/utils/urls";
-import { CollectionPermission } from "../shared/types";
-import { validateColorHex } from "../shared/utils/color";
-import { validateIndexCharacters } from "../shared/utils/indexCharacters";
 import { ParamRequiredError, ValidationError } from "./errors";
+import { Buckets } from "./models/helpers/AttachmentHelper";
 
 type IncomingValue = Primitive | string[];
 
@@ -23,7 +26,7 @@ export function assertArray(
   message?: string
 ): asserts value {
   if (!isArrayLike(value)) {
-    throw ValidationError(message);
+    throw ValidationError(message ?? `${String(value)} is not an array`);
   }
 }
 
@@ -52,13 +55,11 @@ export function assertKeysIn(
   Object.keys(obj).forEach((key) => assertIn(key, Object.values(type)));
 }
 
-export const assertSort = (
-  value: string,
-  model: any,
-  message = "Invalid sort parameter"
-) => {
+export const assertSort = (value: string, model: any, message?: string) => {
   if (!Object.keys(model.rawAttributes).includes(value)) {
-    throw ValidationError(message);
+    throw ValidationError(
+      message ?? `${String(value)} is not a valid sort field`
+    );
   }
 };
 
@@ -69,7 +70,7 @@ export function assertNotEmpty(
   assertPresent(value, message);
 
   if (typeof value === "string" && value.trim() === "") {
-    throw ValidationError(message);
+    throw ValidationError(message ?? `${String(value)} is empty`);
   }
 }
 
@@ -78,7 +79,7 @@ export function assertEmail(
   message?: string
 ): asserts value {
   if (typeof value !== "string" || !validator.isEmail(value)) {
-    throw ValidationError(message);
+    throw ValidationError(message ?? `${String(value)} is not a valid email`);
   }
 }
 
@@ -118,10 +119,12 @@ export function assertUuid(
   message?: string
 ): asserts value {
   if (typeof value !== "string") {
-    throw ValidationError(message);
+    throw ValidationError(
+      message ?? `${String(value)} is not a string, expected UUID`
+    );
   }
   if (!validator.isUUID(value)) {
-    throw ValidationError(message);
+    throw ValidationError(message ?? `${String(value)} is not a valid UUID`);
   }
 }
 
@@ -134,13 +137,17 @@ export const assertPositiveInteger = (
       min: 0,
     })
   ) {
-    throw ValidationError(message);
+    throw ValidationError(
+      message ?? `${String(value)} is not a positive integer`
+    );
   }
 };
 
 export const assertHexColor = (value: string, message?: string) => {
   if (!validateColorHex(value)) {
-    throw ValidationError(message);
+    throw ValidationError(
+      message ?? `${String(value)} is not a valid hex color`
+    );
   }
 };
 
@@ -150,7 +157,9 @@ export const assertValueInArray = (
   message?: string
 ) => {
   if (!values.includes(value)) {
-    throw ValidationError(message);
+    throw ValidationError(
+      message ?? `${String(value)} is not in the allowed values`
+    );
   }
 };
 
@@ -159,7 +168,7 @@ export const assertIndexCharacters = (
   message = "index must be between x20 to x7E ASCII"
 ) => {
   if (!validateIndexCharacters(value)) {
-    throw ValidationError(message);
+    throw ValidationError(message ?? `${String(value)} is not a valid index`);
   }
 };
 
@@ -170,6 +179,45 @@ export const assertCollectionPermission = (
   assertIn(value, [...Object.values(CollectionPermission), null], message);
 };
 
+export class ValidateKey {
+  /**
+   * Checks if key is valid. A valid key is of the form
+   * <bucket>/<uuid>/<uuid>/<name>?
+   *
+   * @param key
+   * @returns true if key is valid, false otherwise
+   */
+  public static isValid = (key: string) => {
+    let parts = key.split("/");
+
+    return (
+      parts.length >= 3 &&
+      parts.length <= 4 &&
+      isIn(parts[0], Object.values(Buckets)) &&
+      isUUID(parts[1]) &&
+      isUUID(parts[2])
+    );
+  };
+
+  /**
+   * Sanitizes a key by removing any invalid characters
+   *
+   * @param key
+   * @returns sanitized key
+   */
+  public static sanitize = (key: string) => {
+    const [filename] = key.split("/").slice(-1);
+    return key
+      .split("/")
+      .slice(0, -1)
+      .filter((part) => part !== "" && part !== ".." && part !== ".")
+      .join("/")
+      .concat(`/${sanitize(filename.replace(/#/g, ""))}`);
+  };
+
+  public static message = "Must be of the form <bucket>/<uuid>/<uuid>/<name>?";
+}
+
 export class ValidateDocumentId {
   /**
    * Checks if documentId is valid. A valid documentId is either
@@ -179,7 +227,7 @@ export class ValidateDocumentId {
    * @returns true if documentId is valid, false otherwise
    */
   public static isValid = (documentId: string) =>
-    isUUID(documentId) || SLUG_URL_REGEX.test(documentId);
+    isUUID(documentId) || UrlHelper.SLUG_URL_REGEX.test(documentId);
 
   public static message = "Must be uuid or url slug";
 }
@@ -187,7 +235,7 @@ export class ValidateDocumentId {
 export class ValidateIndex {
   public static regex = new RegExp("^[\x20-\x7E]+$");
   public static message = "Must be between x20 to x7E ASCII";
-  public static maxLength = 100;
+  public static maxLength = 256;
 }
 
 export class ValidateURL {
@@ -202,8 +250,14 @@ export class ValidateURL {
       }
 
       const { id, mentionType, modelId } = parseMentionUrl(url);
-      return id && isUUID(id) && mentionType === "user" && isUUID(modelId);
-    } catch (err) {
+      return (
+        (!id || isUUID(id)) &&
+        !!mentionType &&
+        Object.values(MentionType).includes(mentionType as MentionType) &&
+        !!modelId &&
+        isUUID(modelId)
+      );
+    } catch (_err) {
       return false;
     }
   };
@@ -214,8 +268,4 @@ export class ValidateURL {
 export class ValidateColor {
   public static regex = /(^#[0-9A-F]{6}$)|(^#[0-9A-F]{3}$)/i;
   public static message = "Must be a hex value (please use format #FFFFFF)";
-}
-
-export class ValidateIcon {
-  public static maxLength = 50;
 }

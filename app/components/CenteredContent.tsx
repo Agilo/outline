@@ -1,9 +1,11 @@
 import * as React from "react";
 import styled from "styled-components";
 import breakpoint from "styled-components-breakpoint";
+import { EditorStyleHelper } from "@shared/editor/styles/EditorStyleHelper";
 
 type Props = {
   children?: React.ReactNode;
+  maxWidth?: string;
   withStickyHeader?: boolean;
 };
 
@@ -18,18 +20,21 @@ const Container = styled.div<Props>`
   `};
 `;
 
-const Content = styled.div`
-  max-width: 46em;
-  margin: 0 auto;
+type ContentProps = { $maxWidth?: string };
 
-  ${breakpoint("desktopLarge")`
-    max-width: 52em;
-  `};
+const Content = styled.div<ContentProps>`
+  max-width: ${(props: ContentProps) =>
+    props.$maxWidth ?? EditorStyleHelper.documentWidth};
+  margin: 0 auto;
 `;
 
-const CenteredContent: React.FC<Props> = ({ children, ...rest }: Props) => (
+const CenteredContent: React.FC<Props> = ({
+  children,
+  maxWidth,
+  ...rest
+}: Props) => (
   <Container {...rest}>
-    <Content>{children}</Content>
+    <Content $maxWidth={maxWidth}>{children}</Content>
   </Container>
 );
 

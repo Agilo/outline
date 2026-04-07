@@ -1,12 +1,13 @@
 import Router from "koa-router";
-import { Op, WhereOptions } from "sequelize";
-import { UserPreference } from "@shared/types";
+import type { WhereOptions } from "sequelize";
+import { Op, Sequelize } from "sequelize";
+import type { UserPreferences } from "@shared/types";
+import { NotificationEventType, UserRole } from "@shared/types";
+import { UserRoleHelper } from "@shared/utils/UserRoleHelper";
+import { settingsPath } from "@shared/utils/routeHelpers";
 import { UserValidation } from "@shared/validations";
-import userDemoter from "@server/commands/userDemoter";
-import userDestroyer from "@server/commands/userDestroyer";
 import userInviter from "@server/commands/userInviter";
-import userSuspender from "@server/commands/userSuspender";
-import userUnsuspender from "@server/commands/userUnsuspender";
+import ConfirmUpdateEmail from "@server/emails/templates/ConfirmUpdateEmail";
 import ConfirmUserDeleteEmail from "@server/emails/templates/ConfirmUserDeleteEmail";
 import InviteEmail from "@server/emails/templates/InviteEmail";
 import env from "@server/env";
@@ -16,18 +17,18 @@ import auth from "@server/middlewares/authentication";
 import { rateLimiter } from "@server/middlewares/rateLimiter";
 import { transaction } from "@server/middlewares/transaction";
 import validate from "@server/middlewares/validate";
-import { Event, User, Team } from "@server/models";
+import { User, Team } from "@server/models";
 import { UserFlag } from "@server/models/User";
 import { can, authorize } from "@server/policies";
 import { presentUser, presentPolicies } from "@server/presenters";
-import { APIContext } from "@server/types";
+import type { APIContext } from "@server/types";
 import { RateLimiterStrategy } from "@server/utils/RateLimiter";
 import { safeEqual } from "@server/utils/crypto";
+import { getDetailsForEmailUpdateToken } from "@server/utils/jwt";
 import pagination from "../middlewares/pagination";
 import * as T from "./schema";
 
 const router = new Router();
-const emailEnabled = !!(env.SMTP_HOST || env.ENVIRONMENT === "development");
 
 router.post(
   "users.list",
@@ -35,7 +36,8 @@ router.post(
   pagination(),
   validate(T.UsersListSchema),
   async (ctx: APIContext<T.UsersListReq>) => {
-    const { sort, direction, query, filter, ids } = ctx.input.body;
+    const { sort, direction, query, role, filter, ids, emails } =
+      ctx.input.body;
 
     const actor = ctx.state.auth.user;
     let where: WhereOptions<User> = {
@@ -59,17 +61,17 @@ router.post(
       }
 
       case "viewers": {
-        where = { ...where, isViewer: true };
+        where = { ...where, role: UserRole.Viewer };
         break;
       }
 
       case "admins": {
-        where = { ...where, isAdmin: true };
+        where = { ...where, role: UserRole.Admin };
         break;
       }
 
       case "members": {
-        where = { ...where, isAdmin: false, isViewer: false };
+        where = { ...where, role: UserRole.Member };
         break;
       }
 
@@ -113,11 +115,25 @@ router.post(
       }
     }
 
+    if (role) {
+      where = {
+        ...where,
+        role,
+      };
+    }
+
     if (query) {
       where = {
         ...where,
-        name: {
-          [Op.iLike]: `%${query}%`,
+        [Op.and]: {
+          [Op.or]: [
+            Sequelize.literal(
+              `unaccent(LOWER(email)) like unaccent(LOWER(:query))`
+            ),
+            Sequelize.literal(
+              `unaccent(LOWER(name)) like unaccent(LOWER(:query))`
+            ),
+          ],
         },
       };
     }
@@ -129,15 +145,27 @@ router.post(
       };
     }
 
+    if (emails) {
+      where = {
+        ...where,
+        email: emails,
+      };
+    }
+
+    const replacements = { query: `%${query}%` };
+
     const [users, total] = await Promise.all([
       User.findAll({
         where,
+        replacements,
         order: [[sort, direction]],
         offset: ctx.state.pagination.offset,
         limit: ctx.state.pagination.limit,
       }),
       User.count({
         where,
+        // @ts-expect-error Types are incorrect for count
+        replacements,
       }),
     ]);
 
@@ -145,24 +173,14 @@ router.post(
       pagination: { ...ctx.state.pagination, total },
       data: users.map((user) =>
         presentUser(user, {
-          includeDetails: can(actor, "readDetails", user),
+          includeEmail: !!can(actor, "readEmail", user),
+          includeDetails: !!can(actor, "readDetails", user),
         })
       ),
       policies: presentPolicies(actor, users),
     };
   }
 );
-
-router.post("users.count", auth(), async (ctx: APIContext) => {
-  const { user } = ctx.state.auth;
-  const counts = await User.getCounts(user.teamId);
-
-  ctx.body = {
-    data: {
-      counts,
-    },
-  };
-});
 
 router.post(
   "users.info",
@@ -173,7 +191,7 @@ router.post(
     const actor = ctx.state.auth.user;
     const user = id ? await User.findByPk(id) : actor;
     authorize(actor, "read", user);
-    const includeDetails = can(actor, "readDetails", user);
+    const includeDetails = !!can(actor, "readDetails", user);
 
     ctx.body = {
       data: presentUser(user, {
@@ -185,47 +203,146 @@ router.post(
 );
 
 router.post(
-  "users.update",
+  "users.updateEmail",
+  rateLimiter(RateLimiterStrategy.TenPerHour),
+  auth(),
+  validate(T.UsersUpdateEmailSchema),
+  async (ctx: APIContext<T.UsersUpdateEmailReq>) => {
+    if (!env.EMAIL_ENABLED) {
+      throw ValidationError("Email support is not setup for this instance");
+    }
+
+    const { user: actor } = ctx.state.auth;
+    const { id } = ctx.input.body;
+    const { team } = actor;
+    const user = id ? await User.findByPk(id) : actor;
+    const email = ctx.input.body.email.trim().toLowerCase();
+
+    authorize(actor, "update", user);
+
+    // Check if email domain is allowed
+    if (!(await team.isDomainAllowed(email))) {
+      throw ValidationError("The domain is not allowed for this workspace");
+    }
+
+    // Check if email already exists in workspace
+    if (await User.findByEmail(ctx, email)) {
+      throw ValidationError("User with email already exists");
+    }
+
+    await new ConfirmUpdateEmail({
+      to: email,
+      language: user.language,
+      previous: user.email,
+      code: user.getEmailUpdateToken(email),
+      teamUrl: team.url,
+    }).schedule();
+
+    ctx.body = {
+      success: true,
+    };
+  }
+);
+
+router.get(
+  "users.updateEmail",
+  rateLimiter(RateLimiterStrategy.TenPerHour),
   auth(),
   transaction(),
+  validate(T.UsersUpdateEmailConfirmSchema),
+  async (ctx: APIContext<T.UsersUpdateEmailConfirmReq>) => {
+    if (!env.EMAIL_ENABLED) {
+      throw ValidationError("Email support is not setup for this instance");
+    }
+
+    const { transaction } = ctx.state;
+    const { code, follow } = ctx.input.query;
+
+    // The link in the email does not include the follow query param, this
+    // is to help prevent anti-virus, and email clients from pre-fetching the link
+    if (!follow) {
+      return ctx.redirectOnClient(ctx.request.href + "&follow=true");
+    }
+    let user: User;
+    let email: string;
+
+    try {
+      const res = await getDetailsForEmailUpdateToken(code as string, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      user = res.user;
+      email = res.email;
+    } catch (_err) {
+      ctx.redirect(`/?notice=expired-token`);
+      return;
+    }
+
+    const { user: actor } = ctx.state.auth;
+    authorize(actor, "update", user);
+
+    // Check if email domain is allowed
+    if (!(await actor.team.isDomainAllowed(email))) {
+      throw ValidationError("The domain is not allowed for this workspace");
+    }
+
+    // Check if email already exists in workspace
+    if (await User.findByEmail(ctx, email)) {
+      throw ValidationError("User with email already exists");
+    }
+
+    await user.updateWithCtx(ctx, { email });
+
+    ctx.redirect(settingsPath());
+  }
+);
+
+router.post(
+  "users.update",
+  auth(),
   validate(T.UsersUpdateSchema),
+  transaction(),
   async (ctx: APIContext<T.UsersUpdateReq>) => {
     const { auth, transaction } = ctx.state;
     const actor = auth.user;
-    const { id, name, avatarUrl, language, preferences } = ctx.input.body;
+    const { id, name, avatarUrl, language, preferences, timezone } =
+      ctx.input.body;
 
     let user: User | null = actor;
     if (id) {
-      user = await User.findByPk(id);
+      user = await User.findByPk(id, {
+        rejectOnEmpty: true,
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
     }
     authorize(actor, "update", user);
-    const includeDetails = can(actor, "readDetails", user);
+    const includeDetails = !!can(actor, "readDetails", user);
 
     if (name) {
       user.name = name;
     }
-    if (avatarUrl) {
+    if (avatarUrl !== undefined) {
       user.avatarUrl = avatarUrl;
+
+      // Mark that the user has manually changed their avatar
+      // This prevents automatic syncing from identity providers
+      user.setFlag(UserFlag.AvatarUpdated, avatarUrl ? true : false);
     }
     if (language) {
       user.language = language;
     }
     if (preferences) {
-      for (const key of Object.keys(preferences) as Array<UserPreference>) {
-        user.setPreference(key, preferences[key] as boolean);
-      }
+      user.preferences = {
+        ...user.preferences,
+        ...(preferences as UserPreferences),
+      };
     }
-    await user.save({ transaction });
-    await Event.create(
-      {
-        name: "users.update",
-        actorId: user.id,
-        userId: user.id,
-        teamId: user.teamId,
-        ip: ctx.request.ip,
-      },
-      { transaction }
-    );
+    if (timezone) {
+      user.timezone = timezone;
+    }
+
+    await user.saveWithCtx(ctx);
 
     ctx.body = {
       data: presentUser(user, {
@@ -236,88 +353,135 @@ router.post(
 );
 
 // Admin specific
+
+/**
+ * Promote a user to an admin.
+ *
+ * @deprecated Use `users.update_role` instead.
+ */
 router.post(
   "users.promote",
-  auth(),
+  auth({ role: UserRole.Admin }),
   validate(T.UsersPromoteSchema),
-  async (ctx: APIContext<T.UsersPromoteReq>) => {
-    const userId = ctx.input.body.id;
-    const actor = ctx.state.auth.user;
-    const teamId = actor.teamId;
-    const user = await User.findByPk(userId);
-    authorize(actor, "promote", user);
-
-    await user.promote();
-    await Event.create({
-      name: "users.promote",
-      actorId: actor.id,
-      userId,
-      teamId,
-      data: {
-        name: user.name,
+  transaction(),
+  (ctx: APIContext<T.UsersPromoteReq>) => {
+    const forward = ctx as unknown as APIContext<T.UsersChangeRoleReq>;
+    forward.input = {
+      ...ctx.input,
+      body: {
+        id: ctx.input.body.id,
+        role: UserRole.Admin,
       },
-      ip: ctx.request.ip,
-    });
-    const includeDetails = can(actor, "readDetails", user);
-
-    ctx.body = {
-      data: presentUser(user, {
-        includeDetails,
-      }),
-      policies: presentPolicies(actor, [user]),
     };
+
+    return updateRole(forward);
+  }
+);
+
+/**
+ * Demote a user to another role.
+ *
+ * @deprecated Use `users.update_role` instead.
+ */
+router.post(
+  "users.demote",
+  auth({ role: UserRole.Admin }),
+  validate(T.UsersDemoteSchema),
+  transaction(),
+  (ctx: APIContext<T.UsersDemoteReq>) => {
+    const forward = ctx as unknown as APIContext<T.UsersChangeRoleReq>;
+    forward.input = {
+      ...ctx.input,
+      body: {
+        id: ctx.input.body.id,
+        role: ctx.input.body.to,
+      },
+    };
+
+    return updateRole(forward);
   }
 );
 
 router.post(
-  "users.demote",
-  auth(),
-  validate(T.UsersDemoteSchema),
-  async (ctx: APIContext<T.UsersDemoteReq>) => {
-    const userId = ctx.input.body.id;
-    const to = ctx.input.body.to;
-    const actor = ctx.state.auth.user;
-
-    const user = await User.findByPk(userId, {
-      rejectOnEmpty: true,
-    });
-    authorize(actor, "demote", user);
-
-    await userDemoter({
-      to,
-      user,
-      actorId: actor.id,
-      ip: ctx.request.ip,
-    });
-    const includeDetails = can(actor, "readDetails", user);
-
-    ctx.body = {
-      data: presentUser(user, {
-        includeDetails,
-      }),
-      policies: presentPolicies(actor, [user]),
-    };
-  }
+  "users.update_role",
+  auth({ role: UserRole.Admin }),
+  validate(T.UsersChangeRoleSchema),
+  transaction(),
+  updateRole
 );
+
+async function updateRole(ctx: APIContext<T.UsersChangeRoleReq>) {
+  const { transaction } = ctx.state;
+  const userId = ctx.input.body.id;
+  const role = ctx.input.body.role;
+  const actor = ctx.state.auth.user;
+
+  const user = await User.findByPk(userId, {
+    rejectOnEmpty: true,
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+  await Team.findByPk(user.teamId, {
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+
+  let name;
+
+  if (user.role === role) {
+    throw ValidationError("User is already in that role");
+  }
+  if (user.id === actor.id) {
+    throw ValidationError("You cannot change your own role");
+  }
+
+  if (UserRoleHelper.canDemote(user, role)) {
+    name = "demote";
+    authorize(actor, "demote", user);
+  }
+  if (UserRoleHelper.canPromote(user, role)) {
+    name = "promote";
+    authorize(actor, "promote", user);
+  }
+
+  await user.updateWithCtx(ctx, { role }, { name });
+  const includeDetails = !!can(actor, "readDetails", user);
+
+  ctx.body = {
+    data: presentUser(user, {
+      includeDetails,
+    }),
+    policies: presentPolicies(actor, [user]),
+  };
+}
 
 router.post(
   "users.suspend",
   auth(),
   validate(T.UsersSuspendSchema),
+  transaction(),
   async (ctx: APIContext<T.UsersSuspendReq>) => {
+    const { transaction } = ctx.state;
     const userId = ctx.input.body.id;
     const actor = ctx.state.auth.user;
     const user = await User.findByPk(userId, {
       rejectOnEmpty: true,
+      transaction,
+      lock: transaction.LOCK.UPDATE,
     });
     authorize(actor, "suspend", user);
 
-    await userSuspender({
-      user,
-      actorId: actor.id,
-      ip: ctx.request.ip,
-    });
-    const includeDetails = can(actor, "readDetails", user);
+    await user.updateWithCtx(
+      ctx,
+      {
+        suspendedById: actor.id,
+        suspendedAt: new Date(),
+      },
+      {
+        name: "suspend",
+      }
+    );
+    const includeDetails = !!can(actor, "readDetails", user);
 
     ctx.body = {
       data: presentUser(user, {
@@ -332,20 +496,29 @@ router.post(
   "users.activate",
   auth(),
   validate(T.UsersActivateSchema),
+  transaction(),
   async (ctx: APIContext<T.UsersActivateReq>) => {
+    const { transaction } = ctx.state;
     const userId = ctx.input.body.id;
     const actor = ctx.state.auth.user;
     const user = await User.findByPk(userId, {
       rejectOnEmpty: true,
+      transaction,
+      lock: transaction.LOCK.UPDATE,
     });
     authorize(actor, "activate", user);
 
-    await userUnsuspender({
-      user,
-      actorId: actor.id,
-      ip: ctx.request.ip,
-    });
-    const includeDetails = can(actor, "readDetails", user);
+    await user.updateWithCtx(
+      ctx,
+      {
+        suspendedById: null,
+        suspendedAt: null,
+      },
+      {
+        name: "activate",
+      }
+    );
+    const includeDetails = !!can(actor, "readDetails", user);
 
     ctx.body = {
       data: presentUser(user, {
@@ -358,25 +531,30 @@ router.post(
 
 router.post(
   "users.invite",
-  rateLimiter(RateLimiterStrategy.TenPerHour),
+  rateLimiter(RateLimiterStrategy.FiftyPerHour),
   auth(),
   validate(T.UsersInviteSchema),
+  transaction(),
   async (ctx: APIContext<T.UsersInviteReq>) => {
     const { invites } = ctx.input.body;
     const { user } = ctx.state.auth;
-    const team = await Team.findByPk(user.teamId);
-    authorize(user, "inviteUser", team);
 
-    const response = await userInviter({
-      user,
-      invites: invites.slice(0, UserValidation.maxInvitesPerRequest),
-      ip: ctx.request.ip,
-    });
+    if (invites.length > UserValidation.maxInvitesPerRequest) {
+      throw ValidationError(
+        `You can only invite up to ${UserValidation.maxInvitesPerRequest} users at a time`
+      );
+    }
+    authorize(user, "inviteUser", user.team);
+
+    const response = await userInviter(ctx, { invites });
 
     ctx.body = {
       data: {
         sent: response.sent,
-        users: response.users.map((user) => presentUser(user)),
+        unsent: response.unsent,
+        users: response.users.map((user) =>
+          presentUser(user, { includeEmail: !!can(user, "readEmail", user) })
+        ),
       },
     };
   }
@@ -404,6 +582,7 @@ router.post(
 
     await new InviteEmail({
       to: user.email,
+      language: user.language,
       name: user.name,
       actorName: actor.name,
       actorEmail: actor.email,
@@ -414,12 +593,12 @@ router.post(
     user.incrementFlag(UserFlag.InviteSent);
     await user.save({ transaction });
 
-    if (env.ENVIRONMENT === "development") {
+    if (env.isDevelopment) {
       logger.info(
         "email",
         `Sign in immediately: ${
           env.URL
-        }/auth/email.callback?token=${user.getEmailSigninToken()}`
+        }/auth/email.callback?token=${user.getEmailSigninToken(ctx)}`
       );
     }
 
@@ -434,15 +613,20 @@ router.post(
   rateLimiter(RateLimiterStrategy.FivePerHour),
   auth(),
   async (ctx: APIContext) => {
+    if (!env.EMAIL_ENABLED) {
+      throw ValidationError("Email support is not setup for this instance");
+    }
+
     const { user } = ctx.state.auth;
     authorize(user, "delete", user);
 
-    if (emailEnabled) {
-      await new ConfirmUserDeleteEmail({
-        to: user.email,
-        deleteConfirmationCode: user.deleteConfirmationCode,
-      }).schedule();
-    }
+    await new ConfirmUserDeleteEmail({
+      to: user.email,
+      language: user.language,
+      deleteConfirmationCode: user.deleteConfirmationCode,
+      teamName: user.team.name,
+      teamUrl: user.team.url,
+    }).schedule();
 
     ctx.body = {
       success: true,
@@ -465,6 +649,8 @@ router.post(
     if (id) {
       user = await User.findByPk(id, {
         rejectOnEmpty: true,
+        transaction,
+        lock: transaction.LOCK.UPDATE,
       });
     } else {
       user = actor;
@@ -473,7 +659,7 @@ router.post(
 
     // If we're attempting to delete our own account then a confirmation code
     // is required. This acts as CSRF protection.
-    if ((!id || id === actor.id) && emailEnabled) {
+    if ((!id || id === actor.id) && env.EMAIL_ENABLED) {
       const deleteConfirmationCode = user.deleteConfirmationCode;
 
       if (!safeEqual(code, deleteConfirmationCode)) {
@@ -481,12 +667,7 @@ router.post(
       }
     }
 
-    await userDestroyer({
-      user,
-      actor,
-      ip: ctx.request.ip,
-      transaction,
-    });
+    await user.destroyWithCtx(ctx);
 
     ctx.body = {
       success: true,
@@ -501,11 +682,16 @@ router.post(
   transaction(),
   async (ctx: APIContext<T.UsersNotificationsSubscribeReq>) => {
     const { eventType } = ctx.input.body;
-    const { transaction } = ctx.state;
-
     const { user } = ctx.state.auth;
-    user.setNotificationEventType(eventType, true);
-    await user.save({ transaction });
+    const eventTypes = eventType
+      ? [eventType]
+      : Object.values(NotificationEventType);
+
+    for (const type of eventTypes) {
+      user.setNotificationEventType(type, true);
+    }
+
+    await user.saveWithCtx(ctx);
 
     ctx.body = {
       data: presentUser(user, { includeDetails: true }),
@@ -520,11 +706,16 @@ router.post(
   transaction(),
   async (ctx: APIContext<T.UsersNotificationsUnsubscribeReq>) => {
     const { eventType } = ctx.input.body;
-    const { transaction } = ctx.state;
-
     const { user } = ctx.state.auth;
-    user.setNotificationEventType(eventType, false);
-    await user.save({ transaction });
+    const eventTypes = eventType
+      ? [eventType]
+      : Object.values(NotificationEventType);
+
+    for (const type of eventTypes) {
+      user.setNotificationEventType(type, false);
+    }
+
+    await user.saveWithCtx(ctx);
 
     ctx.body = {
       data: presentUser(user, { includeDetails: true }),

@@ -1,33 +1,32 @@
 import { observer } from "mobx-react";
-import {
-  TableOfContentsIcon,
-  EditIcon,
-  PlusIcon,
-  MoonIcon,
-  MoreIcon,
-  SunIcon,
-} from "outline-icons";
-import * as React from "react";
+import { TableOfContentsIcon, EditIcon } from "outline-icons";
+import { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import styled, { useTheme } from "styled-components";
-import { NavigationNode } from "@shared/types";
-import { Theme } from "~/stores/UiStore";
-import Document from "~/models/Document";
-import Revision from "~/models/Revision";
+import Icon from "@shared/components/Icon";
+import useMeasure from "react-use-measure";
+import { altDisplay, metaDisplay } from "@shared/utils/keyboard";
+import type Document from "~/models/Document";
+import type Revision from "~/models/Revision";
+import type Template from "~/models/Template";
 import { Action, Separator } from "~/components/Actions";
 import Badge from "~/components/Badge";
 import Button from "~/components/Button";
 import Collaborators from "~/components/Collaborators";
 import DocumentBreadcrumb from "~/components/DocumentBreadcrumb";
-import { useEditingFocus } from "~/components/DocumentContext";
+import { useDocumentContext } from "~/components/DocumentContext";
+import Flex from "~/components/Flex";
 import Header from "~/components/Header";
-import EmojiIcon from "~/components/Icons/EmojiIcon";
 import Star from "~/components/Star";
 import Tooltip from "~/components/Tooltip";
 import { publishDocument } from "~/actions/definitions/documents";
 import { restoreRevision } from "~/actions/definitions/revisions";
-import useActionContext from "~/hooks/useActionContext";
+import useCurrentTeam from "~/hooks/useCurrentTeam";
+import useCurrentUser from "~/hooks/useCurrentUser";
+import useEditingFocus from "~/hooks/useEditingFocus";
+import useKeyDown from "~/hooks/useKeyDown";
+import { useLocationSidebarContext } from "~/hooks/useLocationSidebarContext";
 import useMobile from "~/hooks/useMobile";
 import usePolicy from "~/hooks/usePolicy";
 import useStores from "~/hooks/useStores";
@@ -35,91 +34,112 @@ import DocumentMenu from "~/menus/DocumentMenu";
 import NewChildDocumentMenu from "~/menus/NewChildDocumentMenu";
 import TableOfContentsMenu from "~/menus/TableOfContentsMenu";
 import TemplatesMenu from "~/menus/TemplatesMenu";
-import { metaDisplay } from "~/utils/keyboard";
-import { newDocumentPath, documentEditPath } from "~/utils/routeHelpers";
+import env from "~/env";
+import { documentEditPath } from "~/utils/routeHelpers";
 import ObservingBanner from "./ObservingBanner";
 import PublicBreadcrumb from "./PublicBreadcrumb";
 import ShareButton from "./ShareButton";
+import {
+  AppearanceAction,
+  SubscribeAction,
+} from "~/components/Sharing/components/Actions";
+import useShare from "@shared/hooks/useShare";
+import { type Editor } from "~/editor";
+import { ChangesNavigation } from "./ChangesNavigation";
 
 type Props = {
+  editorRef: React.RefObject<Editor>;
   document: Document;
-  documentHasHeadings: boolean;
   revision: Revision | undefined;
-  sharedTree: NavigationNode | undefined;
-  shareId: string | null | undefined;
   isDraft: boolean;
   isEditing: boolean;
   isSaving: boolean;
   isPublishing: boolean;
   publishingIsDisabled: boolean;
   savingIsDisabled: boolean;
-  onSelectTemplate: (template: Document) => void;
+  onSelectTemplate: (template: Template) => void;
   onSave: (options: {
     done?: boolean;
     publish?: boolean;
     autosave?: boolean;
   }) => void;
-  headings: {
-    title: string;
-    level: number;
-    id: string;
-  }[];
 };
 
 function DocumentHeader({
+  editorRef,
   document,
-  documentHasHeadings,
   revision,
-  shareId,
   isEditing,
   isDraft,
-  isPublishing,
-  isSaving,
   savingIsDisabled,
   publishingIsDisabled,
-  sharedTree,
   onSelectTemplate,
   onSave,
-  headings,
 }: Props) {
   const { t } = useTranslation();
-  const { ui, auth } = useStores();
+  const { ui } = useStores();
   const theme = useTheme();
-  const { resolvedTheme } = ui;
-  const { team, user } = auth;
-  const isMobile = useMobile();
+  const team = useCurrentTeam({ rejectOnEmpty: false });
+  const user = useCurrentUser({ rejectOnEmpty: false });
+  const isMobileMedia = useMobile();
   const isRevision = !!revision;
   const isEditingFocus = useEditingFocus();
+
+  // Set CSS variable for header offset (used by sticky table headers)
+  useEffect(() => {
+    window.document.documentElement.style.setProperty(
+      "--header-offset",
+      isEditingFocus ? "0px" : "64px"
+    );
+  }, [isEditingFocus]);
+
+  const { hasHeadings, editor } = useDocumentContext();
+  const sidebarContext = useLocationSidebarContext();
+  const [measureRef, size] = useMeasure();
+  const { isShare, shareId, sharedTree, allowSubscriptions } = useShare();
+  const isMobile = isMobileMedia || size.width < 700;
 
   // We cache this value for as long as the component is mounted so that if you
   // apply a template there is still the option to replace it until the user
   // navigates away from the doc
-  const [isNew] = React.useState(document.isPersistedOnce);
+  const [isNew] = useState(document.isPersistedOnce);
 
-  const handleSave = React.useCallback(() => {
+  const handleSave = useCallback(() => {
     onSave({
       done: true,
     });
   }, [onSave]);
 
-  const context = useActionContext({
-    activeDocumentId: document?.id,
-  });
+  const handleToggle = useCallback(() => {
+    // Public shares, by default, show ToC on load.
+    if (isShare && ui.tocVisible === undefined) {
+      ui.set({ tocVisible: false });
+    } else {
+      ui.set({ tocVisible: !ui.tocVisible });
+    }
+  }, [ui, isShare]);
 
-  const { isDeleted, isTemplate } = document;
-  const can = usePolicy(document?.id);
+  const can = usePolicy(document);
+  const { isDeleted } = document;
   const canToggleEmbeds = team?.documentEmbeds;
+  const showContents =
+    ui.tocVisible === true || (isShare && ui.tocVisible !== false);
+
   const toc = (
     <Tooltip
-      tooltip={ui.tocVisible ? t("Hide contents") : t("Show contents")}
-      shortcut="ctrl+alt+h"
-      delay={250}
+      content={
+        showContents
+          ? t("Hide contents")
+          : hasHeadings
+            ? t("Show contents")
+            : `${t("Show contents")} (${t("available when headings are added")})`
+      }
+      shortcut={`Ctrl+${altDisplay}+h`}
       placement="bottom"
     >
       <Button
-        onClick={
-          ui.tocVisible ? ui.hideTableOfContents : ui.showTableOfContents
-        }
+        aria-label={t("Show contents")}
+        onClick={handleToggle}
         icon={<TableOfContentsIcon />}
         borderOnHover
         neutral
@@ -129,17 +149,20 @@ function DocumentHeader({
   const editAction = (
     <Action>
       <Tooltip
-        tooltip={t("Edit {{noun}}", {
+        content={t("Edit {{noun}}", {
           noun: document.noun,
         })}
         shortcut="e"
-        delay={500}
         placement="bottom"
       >
         <Button
           as={Link}
           icon={<EditIcon />}
-          to={documentEditPath(document)}
+          to={{
+            pathname: documentEditPath(document),
+            state: { sidebarContext },
+          }}
+          haptic="light"
           neutral
         >
           {isMobile ? null : t("Edit")}
@@ -147,49 +170,54 @@ function DocumentHeader({
       </Tooltip>
     </Action>
   );
-  const appearanceAction = (
-    <Action>
-      <Tooltip
-        tooltip={
-          resolvedTheme === "light" ? t("Switch to dark") : t("Switch to light")
-        }
-        delay={500}
-        placement="bottom"
-      >
-        <Button
-          icon={resolvedTheme === "light" ? <SunIcon /> : <MoonIcon />}
-          onClick={() =>
-            ui.setTheme(resolvedTheme === "light" ? Theme.Dark : Theme.Light)
-          }
-          neutral
-          borderOnHover
-        />
-      </Tooltip>
-    </Action>
+
+  useKeyDown(
+    (event) => event.ctrlKey && event.altKey && event.code === "KeyH",
+    handleToggle,
+    {
+      allowInInput: true,
+    }
   );
 
   if (shareId) {
     return (
       <StyledHeader
+        ref={measureRef}
         $hidden={isEditingFocus}
-        title={document.title}
-        hasSidebar={!!sharedTree}
+        title={
+          <Flex gap={4}>
+            {document.icon && (
+              <Icon
+                value={document.icon}
+                initial={document.initial}
+                color={document.color ?? undefined}
+              />
+            )}
+            {document.title}
+          </Flex>
+        }
+        hasSidebar={sharedTree && sharedTree.children?.length > 0}
         left={
           isMobile ? (
-            <TableOfContentsMenu headings={headings} />
+            hasHeadings ? (
+              <TableOfContentsMenu />
+            ) : null
           ) : (
             <PublicBreadcrumb
               documentId={document.id}
               shareId={shareId}
               sharedTree={sharedTree}
             >
-              {documentHasHeadings ? toc : null}
+              {hasHeadings ? toc : null}
             </PublicBreadcrumb>
           )
         }
         actions={
           <>
-            {appearanceAction}
+            {allowSubscriptions !== false && !user && env.EMAIL_ENABLED && (
+              <SubscribeAction shareId={shareId} documentId={document.id} />
+            )}
+            <AppearanceAction />
             {can.update && !isEditing ? editAction : <div />}
           </>
         }
@@ -200,74 +228,76 @@ function DocumentHeader({
   return (
     <>
       <StyledHeader
+        ref={measureRef}
         $hidden={isEditingFocus}
         hasSidebar
         left={
           isMobile ? (
-            <TableOfContentsMenu headings={headings} />
+            <TableOfContentsMenu />
           ) : (
-            <DocumentBreadcrumb document={document}>
-              {toc} <Star document={document} color={theme.textSecondary} />
+            <DocumentBreadcrumb document={document as Document}>
+              {toc}{" "}
+              <Star
+                document={document as Document}
+                color={theme.textSecondary}
+              />
             </DocumentBreadcrumb>
           )
         }
         title={
-          <>
-            {document.emoji && (
-              <>
-                <EmojiIcon size={24} emoji={document.emoji} />{" "}
-              </>
+          <Flex gap={4} align="center">
+            {document.icon && (
+              <Icon
+                value={document.icon}
+                initial={document.initial}
+                color={document.color ?? undefined}
+              />
             )}
-            {document.title}{" "}
-            {document.isArchived && (
-              <ArchivedBadge>{t("Archived")}</ArchivedBadge>
-            )}
-          </>
+            {document.title}
+            {document.isArchived && <Badge>{t("Archived")}</Badge>}
+          </Flex>
         }
-        actions={
+        actions={({ isCompact }) => (
           <>
             <ObservingBanner />
-
-            {!isPublishing && isSaving && user?.separateEditMode && (
-              <Status>{t("Saving")}…</Status>
+            {!isDeleted && !isRevision && can.listViews && (
+              <Collaborators
+                document={document}
+                limit={isCompact ? 3 : undefined}
+              />
             )}
-            {!isDeleted && !isRevision && <Collaborators document={document} />}
-            {(isEditing || !user?.separateEditMode) && !isTemplate && isNew && (
+            {(isEditing || !user?.separateEditMode) && isNew && can.update && (
               <Action>
                 <TemplatesMenu
-                  document={document}
+                  isCompact={isCompact}
+                  document={document as Document}
                   onSelectTemplate={onSelectTemplate}
                 />
               </Action>
             )}
-            {!isEditing &&
-              !isDeleted &&
-              !isRevision &&
-              (!isMobile || !isTemplate) &&
-              document.collectionId && (
-                <Action>
-                  <ShareButton document={document} />
-                </Action>
-              )}
+            {!isEditing && !isRevision && can.update && (
+              <Action>
+                <ShareButton document={document} />
+              </Action>
+            )}
             {isEditing && (
-              <>
-                <Action>
-                  <Tooltip
-                    tooltip={t("Save")}
-                    shortcut={`${metaDisplay}+enter`}
-                    delay={500}
-                    placement="bottom"
+              <Action>
+                <Tooltip
+                  content={isDraft ? t("Save draft") : t("Done editing")}
+                  shortcut={`${metaDisplay}+enter`}
+                  placement="bottom"
+                >
+                  <Button
+                    onClick={handleSave}
+                    disabled={savingIsDisabled}
+                    neutral={isDraft}
+                    haptic="medium"
+                    hideIcon
                   >
-                    <Button
-                      onClick={handleSave}
-                      disabled={savingIsDisabled}
-                      neutral={isDraft}
-                    >
-                      {isDraft ? t("Save draft") : t("Done editing")}
-                    </Button>
-                  </Tooltip>
-                </Action>
-              </>
+                    {isDraft ? t("Save draft") : t("Done editing")}
+                  </Button>
+                </Tooltip>
+              </Action>
             )}
             {can.update &&
               !isEditing &&
@@ -277,90 +307,60 @@ function DocumentHeader({
             {can.update &&
               can.createChildDocument &&
               !isRevision &&
+              !isCompact &&
               !isMobile && (
                 <Action>
-                  <NewChildDocumentMenu
-                    document={document}
-                    label={(props) => (
-                      <Tooltip
-                        tooltip={t("New document")}
-                        shortcut="n"
-                        delay={500}
-                        placement="bottom"
-                      >
-                        <Button icon={<PlusIcon />} {...props} neutral>
-                          {t("New doc")}
-                        </Button>
-                      </Tooltip>
-                    )}
+                  <NewChildDocumentMenu document={document} />
+                </Action>
+              )}
+            {revision && (
+              <>
+                <Action>
+                  <ChangesNavigation
+                    revision={revision}
+                    editorRef={editorRef}
                   />
                 </Action>
-              )}
-            {can.update &&
-              !isEditing &&
-              isTemplate &&
-              !isDraft &&
-              !isRevision && (
                 <Action>
-                  <Button
-                    icon={<PlusIcon />}
-                    as={Link}
-                    to={newDocumentPath(document.collectionId, {
-                      templateId: document.id,
-                    })}
-                  >
-                    {t("New from template")}
-                  </Button>
+                  <Tooltip content={t("Restore version")} placement="bottom">
+                    <Button
+                      action={restoreRevision}
+                      disabled={revision.createdAt === document.updatedAt}
+                      neutral
+                      hideOnActionDisabled
+                    >
+                      {t("Restore")}
+                    </Button>
+                  </Tooltip>
                 </Action>
-              )}
-            {revision && revision.createdAt !== document.updatedAt && (
+              </>
+            )}
+            {can.publish && (
               <Action>
-                <Tooltip
-                  tooltip={t("Restore version")}
-                  delay={500}
-                  placement="bottom"
+                <Button
+                  action={publishDocument}
+                  disabled={publishingIsDisabled}
+                  hideOnActionDisabled
+                  hideIcon
                 >
-                  <Button
-                    action={restoreRevision}
-                    context={context}
-                    neutral
-                    hideOnActionDisabled
-                  >
-                    {t("Restore")}
-                  </Button>
-                </Tooltip>
+                  {t("Publish")}…
+                </Button>
               </Action>
             )}
-            <Action>
-              <Button
-                action={publishDocument}
-                context={context}
-                disabled={publishingIsDisabled}
-                hideOnActionDisabled
-                hideIcon
-              >
-                {document.collectionId ? t("Publish") : `${t("Publish")}…`}
-              </Button>
-            </Action>
             {!isDeleted && <Separator />}
             <Action>
               <DocumentMenu
                 document={document}
-                isRevision={isRevision}
-                label={(props) => (
-                  <Button
-                    icon={<MoreIcon />}
-                    {...props}
-                    borderOnHover
-                    neutral
-                  />
-                )}
+                align="end"
+                neutral
+                onSelectTemplate={onSelectTemplate}
+                onFindAndReplace={editor?.commands.openFindAndReplace}
                 showToggleEmbeds={canToggleEmbeds}
                 showDisplayOptions
               />
             </Action>
           </>
-        }
+        )}
       />
     </>
   );
@@ -369,16 +369,6 @@ function DocumentHeader({
 const StyledHeader = styled(Header)<{ $hidden: boolean }>`
   transition: opacity 500ms ease-in-out;
   ${(props) => props.$hidden && "opacity: 0;"}
-`;
-
-const ArchivedBadge = styled(Badge)`
-  position: absolute;
-`;
-
-const Status = styled(Action)`
-  padding-left: 0;
-  padding-right: 4px;
-  color: ${(props) => props.theme.slate};
 `;
 
 export default observer(DocumentHeader);

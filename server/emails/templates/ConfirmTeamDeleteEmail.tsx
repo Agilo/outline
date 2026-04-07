@@ -1,6 +1,7 @@
 import * as React from "react";
 import env from "@server/env";
-import BaseEmail, { EmailProps } from "./BaseEmail";
+import type { EmailProps } from "./BaseEmail";
+import BaseEmail, { EmailMessageCategory } from "./BaseEmail";
 import Body from "./components/Body";
 import CopyableCode from "./components/CopyableCode";
 import EmailTemplate from "./components/EmailLayout";
@@ -17,19 +18,26 @@ type Props = EmailProps & {
  * Email sent to a user when they request to delete their workspace.
  */
 export default class ConfirmTeamDeleteEmail extends BaseEmail<Props> {
+  protected get category() {
+    return EmailMessageCategory.Notification;
+  }
+
   protected subject() {
-    return `Your workspace deletion request`;
+    return this.t("Your workspace deletion request");
   }
 
   protected preview() {
-    return `Your requested workspace deletion code`;
+    return this.t("Your requested workspace deletion code");
   }
 
   protected renderAsText({ deleteConfirmationCode }: Props): string {
     return `
-You requested to permanantly delete your ${env.APP_NAME} workspace. Please enter the code below to confirm the workspace deletion.
+${this.t(
+  "You requested to permanently delete your {{ appName }} workspace. Please enter the code below to confirm your workspace deletion.",
+  { appName: env.APP_NAME }
+)}
 
-Code: ${deleteConfirmationCode}
+${this.t("Code")}: ${deleteConfirmationCode}
 `;
   }
 
@@ -39,10 +47,12 @@ Code: ${deleteConfirmationCode}
         <Header />
 
         <Body>
-          <Heading>Your workspace deletion request</Heading>
+          <Heading>{this.t("Your workspace deletion request")}</Heading>
           <p>
-            You requested to permanantly delete your {env.APP_NAME} workspace.
-            Please enter the code below to confirm your workspace deletion.
+            {this.t(
+              "You requested to permanently delete your {{ appName }} workspace. Please enter the code below to confirm your workspace deletion.",
+              { appName: env.APP_NAME }
+            )}
           </p>
           <EmptySpace height={5} />
           <p>

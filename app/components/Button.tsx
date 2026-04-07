@@ -1,12 +1,13 @@
-import { LocationDescriptor } from "history";
-import { ExpandedIcon } from "outline-icons";
+import type { LocationDescriptor } from "history";
+import { DisclosureIcon } from "outline-icons";
 import { darken, lighten, transparentize } from "polished";
 import * as React from "react";
 import styled from "styled-components";
+import type { HapticInput } from "web-haptics";
+import { useWebHaptics } from "web-haptics/react";
 import { s } from "@shared/styles";
-import ActionButton, {
-  Props as ActionButtonProps,
-} from "~/components/ActionButton";
+import type { Props as ActionButtonProps } from "~/components/ActionButton";
+import ActionButton from "~/components/ActionButton";
 import { undraggableOnDesktop } from "~/styles";
 
 type RealProps = {
@@ -25,7 +26,7 @@ const RealButton = styled(ActionButton)<RealProps>`
   background: ${s("accent")};
   color: ${s("accentText")};
   box-shadow: rgba(0, 0, 0, 0.2) 0px 1px 2px;
-  border-radius: 4px;
+  border-radius: 6px;
   font-size: 14px;
   font-weight: 500;
   height: 32px;
@@ -34,6 +35,7 @@ const RealButton = styled(ActionButton)<RealProps>`
   cursor: var(--pointer);
   user-select: none;
   appearance: none !important;
+  transition: background 200ms ease-out;
   ${undraggableOnDesktop()}
 
   &::-moz-focus-inner {
@@ -44,13 +46,14 @@ const RealButton = styled(ActionButton)<RealProps>`
   &:hover:not(:disabled),
   &[aria-expanded="true"] {
     background: ${(props) => darken(0.05, props.theme.accent)};
+    transition: background 0s;
   }
 
   &:disabled {
     cursor: default;
     pointer-events: none;
-    color: ${(props) => transparentize(0.5, props.theme.accentText)};
-    background: ${(props) => lighten(0.2, props.theme.accent)};
+    color: ${(props) => transparentize(0.3, props.theme.accentText)};
+    background: ${(props) => transparentize(0.1, props.theme.accent)};
 
     svg {
       fill: ${(props) => props.theme.white50};
@@ -78,6 +81,11 @@ const RealButton = styled(ActionButton)<RealProps>`
       box-shadow: rgba(0, 0, 0, 0.07) 0px 1px 2px, ${
         props.theme.buttonNeutralBorder
       } 0 0 0 1px inset;
+      transition: background 0s;
+    }
+
+    &:focus-visible {
+      box-shadow: ${`rgba(0, 0, 0, 0.07) 0px 1px 2px, ${props.theme.inputBorderFocused} 0 0 0 1px inset`};
     }
 
     &:disabled {
@@ -99,13 +107,14 @@ const RealButton = styled(ActionButton)<RealProps>`
       &:hover:not(:disabled),
       &[aria-expanded="true"] {
         background: ${darken(0.05, props.theme.danger)};
+        transition: background 0s;
       }
 
       &:disabled {
         background: ${lighten(0.05, props.theme.danger)};
       }
 
-      &.focus-visible {
+      &:focus-visible {
         outline-color: ${darken(0.2, props.theme.danger)} !important;
       }
   `};
@@ -145,6 +154,8 @@ export type Props<T> = ActionButtonProps & {
   fullwidth?: boolean;
   as?: T;
   to?: LocationDescriptor;
+  /** Haptic feedback to trigger on click. Pass a preset name or custom pattern. */
+  haptic?: HapticInput;
   borderOnHover?: boolean;
   hideIcon?: boolean;
   href?: string;
@@ -169,11 +180,13 @@ const Button = <T extends React.ElementType = "button">(
     hideIcon,
     fullwidth,
     danger,
+    haptic,
     ...rest
   } = props;
-  const hasText = children !== undefined || value !== undefined;
-  const ic = hideIcon ? undefined : action?.icon ?? icon;
+  const hasText = !!children || value !== undefined;
+  const ic = hideIcon ? undefined : (action?.icon ?? icon);
   const hasIcon = ic !== undefined;
+  const { trigger } = useWebHaptics();
 
   return (
     <RealButton
@@ -184,15 +197,20 @@ const Button = <T extends React.ElementType = "button">(
       $danger={danger}
       $fullwidth={fullwidth}
       $borderOnHover={borderOnHover}
+      onClickCapture={haptic ? () => void trigger(haptic) : undefined}
       {...rest}
     >
       <Inner hasIcon={hasIcon} hasText={hasText} disclosure={disclosure}>
         {hasIcon && ic}
         {hasText && <Label hasIcon={hasIcon}>{children || value}</Label>}
-        {disclosure && <ExpandedIcon />}
+        {disclosure && <StyledDisclosureIcon />}
       </Inner>
     </RealButton>
   );
 };
+
+const StyledDisclosureIcon = styled(DisclosureIcon)`
+  opacity: 0.8;
+`;
 
 export default React.forwardRef(Button);

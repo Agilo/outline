@@ -1,8 +1,9 @@
-import * as React from "react";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { useHistory } from "react-router-dom";
+import { toast } from "sonner";
 import { QueryNotices } from "@shared/types";
 import useQuery from "./useQuery";
-import useToasts from "./useToasts";
 
 /**
  * Display a toast message based on a notice in the query string. This is usually
@@ -11,21 +12,44 @@ import useToasts from "./useToasts";
  */
 export default function useQueryNotices() {
   const query = useQuery();
+  const history = useHistory();
   const { t } = useTranslation();
-  const { showToast } = useToasts();
   const notice = query.get("notice") as QueryNotices;
 
-  React.useEffect(() => {
+  useEffect(() => {
+    let message: string | undefined;
+
     switch (notice) {
       case QueryNotices.UnsubscribeDocument: {
-        showToast(
-          t("Unsubscribed from document", {
-            type: "success",
-          })
-        );
+        message = t("Unsubscribed from document");
+        break;
+      }
+      case QueryNotices.UnsubscribeCollection: {
+        message = t("Unsubscribed from collection");
+        break;
+      }
+      case QueryNotices.Subscribed: {
+        message = t("Subscription successful");
+        break;
+      }
+      case QueryNotices.Unsubscribed: {
+        message = t("Unsubscribed");
         break;
       }
       default:
     }
-  }, [t, showToast, notice]);
+
+    if (message) {
+      // Remove the notice param from the URL to prevent duplicate toasts
+      const params = new URLSearchParams(window.location.search);
+      params.delete("notice");
+      const search = params.toString();
+      history.replace({
+        pathname: window.location.pathname,
+        search: search ? `?${search}` : "",
+      });
+
+      setTimeout(() => toast.success(message), 0);
+    }
+  }, [t, notice, history]);
 }

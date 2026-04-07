@@ -1,30 +1,36 @@
+import {
+  useFocusEffect,
+  useRovingTabIndex,
+} from "@getoutline/react-roving-tabindex";
 import { observer } from "mobx-react";
-import { PlusIcon } from "outline-icons";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { CompositeStateReturn, CompositeItem } from "reakit/Composite";
-import styled, { css } from "styled-components";
+import { DocumentIcon } from "outline-icons";
+import styled, { css, useTheme } from "styled-components";
 import breakpoint from "styled-components-breakpoint";
-import { s } from "@shared/styles";
-import Document from "~/models/Document";
+import EventBoundary from "@shared/components/EventBoundary";
+import Icon from "@shared/components/Icon";
+import { s, hover } from "@shared/styles";
+import type Document from "~/models/Document";
 import Badge from "~/components/Badge";
-import Button from "~/components/Button";
 import DocumentMeta from "~/components/DocumentMeta";
-import EventBoundary from "~/components/EventBoundary";
 import Flex from "~/components/Flex";
 import Highlight from "~/components/Highlight";
 import NudeButton from "~/components/NudeButton";
 import StarButton, { AnimatedStar } from "~/components/Star";
 import Tooltip from "~/components/Tooltip";
 import useBoolean from "~/hooks/useBoolean";
-import useCurrentTeam from "~/hooks/useCurrentTeam";
 import useCurrentUser from "~/hooks/useCurrentUser";
-import usePolicy from "~/hooks/usePolicy";
+import useMobile from "~/hooks/useMobile";
+import { useLocationSidebarContext } from "~/hooks/useLocationSidebarContext";
 import DocumentMenu from "~/menus/DocumentMenu";
-import { hover } from "~/styles";
-import { newDocumentPath } from "~/utils/routeHelpers";
-import EmojiIcon from "./Icons/EmojiIcon";
+import { documentPath } from "~/utils/routeHelpers";
+import { determineSidebarContext } from "./Sidebar/components/SidebarContext";
+import { ActionContextProvider } from "~/hooks/useActionContext";
+import { useDocumentMenuAction } from "~/hooks/useDocumentMenuAction";
+import { ContextMenu } from "./Menu/ContextMenu";
+import useStores from "~/hooks/useStores";
 
 type Props = {
   document: Document;
@@ -33,17 +39,14 @@ type Props = {
   showParentDocuments?: boolean;
   showCollection?: boolean;
   showPublished?: boolean;
-  showPin?: boolean;
   showDraft?: boolean;
-  showTemplate?: boolean;
-} & CompositeStateReturn;
+};
 
 const SEARCH_RESULT_REGEX = /<b\b[^>]*>(.*?)<\/b>/gi;
 
 function replaceResultMarks(tag: string) {
-  // don't use SEARCH_RESULT_REGEX here as it causes
-  // an infinite loop to trigger a regex inside it's own callback
-  return tag.replace(/<b\b[^>]*>(.*?)<\/b>/gi, "$1");
+  // don't use SEARCH_RESULT_REGEX directly here as it causes an infinite loop
+  return tag.replace(new RegExp(SEARCH_RESULT_REGEX.source), "$1");
 }
 
 function DocumentListItem(
@@ -52,17 +55,27 @@ function DocumentListItem(
 ) {
   const { t } = useTranslation();
   const user = useCurrentUser();
-  const team = useCurrentTeam();
+  const theme = useTheme();
+  const { userMemberships, groupMemberships } = useStores();
+  const locationSidebarContext = useLocationSidebarContext();
   const [menuOpen, handleMenuOpen, handleMenuClose] = useBoolean();
+  const isMobile = useMobile();
+
+  let itemRef: React.Ref<HTMLAnchorElement> =
+    React.useRef<HTMLAnchorElement>(null);
+  if (ref) {
+    itemRef = ref;
+  }
+
+  const { focused, ...rovingTabIndex } = useRovingTabIndex(itemRef, false);
+  useFocusEffect(focused, itemRef);
 
   const {
     document,
     showParentDocuments,
     showCollection,
     showPublished,
-    showPin,
     showDraft = true,
-    showTemplate,
     highlight,
     context,
     ...rest
@@ -70,108 +83,123 @@ function DocumentListItem(
   const queryIsInTitle =
     !!highlight &&
     !!document.title.toLowerCase().includes(highlight.toLowerCase());
-  const canStar =
-    !document.isDraft && !document.isArchived && !document.isTemplate;
-  const can = usePolicy(team);
-  const canCollection = usePolicy(document.collectionId);
+  const canStar = !document.isArchived;
+
+  const isShared = !!(
+    userMemberships.getByDocumentId(document.id) ||
+    groupMemberships.getByDocumentId(document.id)
+  );
+
+  const sidebarContext = determineSidebarContext({
+    document,
+    user,
+    currentContext: locationSidebarContext,
+  });
+
+  const contextMenuAction = useDocumentMenuAction({ documentId: document.id });
 
   return (
-    <CompositeItem
-      as={DocumentLink}
-      ref={ref}
-      dir={document.dir}
-      role="menuitem"
-      $isStarred={document.isStarred}
-      $menuOpen={menuOpen}
-      to={{
-        pathname: document.url,
-        state: {
-          title: document.titleWithDefault,
-        },
+    <ActionContextProvider
+      value={{
+        activeModels: [
+          document,
+          ...(!isShared && document.collection ? [document.collection] : []),
+        ],
       }}
-      {...rest}
     >
-      <Content>
-        <Heading dir={document.dir}>
-          {document.emoji && (
-            <>
-              <EmojiIcon emoji={document.emoji} size={24} />
-              &nbsp;
-            </>
-          )}
-          <Title
-            text={document.titleWithDefault}
-            highlight={highlight}
-            dir={document.dir}
-          />
-          {document.isBadgedNew && document.createdBy.id !== user.id && (
-            <Badge yellow>{t("New")}</Badge>
-          )}
-          {canStar && (
-            <StarPositioner>
-              <StarButton document={document} />
-            </StarPositioner>
-          )}
-          {document.isDraft && showDraft && (
-            <Tooltip
-              tooltip={t("Only visible to you")}
-              delay={500}
-              placement="top"
-            >
-              <Badge>{t("Draft")}</Badge>
-            </Tooltip>
-          )}
-          {document.isTemplate && showTemplate && (
-            <Badge primary>{t("Template")}</Badge>
-          )}
-        </Heading>
+      <ContextMenu
+        action={contextMenuAction}
+        ariaLabel={t("Document options")}
+        onOpen={handleMenuOpen}
+        onClose={handleMenuClose}
+      >
+        <DocumentLink
+          ref={itemRef}
+          dir={document.dir}
+          $isStarred={document.isStarred}
+          $menuOpen={menuOpen}
+          to={{
+            pathname: documentPath(document),
+            search: highlight
+              ? `?q=${encodeURIComponent(highlight)}`
+              : undefined,
+            state: {
+              title: document.titleWithDefault,
+              sidebarContext,
+            },
+          }}
+          {...rest}
+          {...rovingTabIndex}
+        >
+          <Flex gap={4} auto>
+            <IconWrapper>
+              {document.icon ? (
+                <Icon
+                  value={document.icon}
+                  color={document.color ?? undefined}
+                  initial={document.initial}
+                />
+              ) : (
+                <DocumentIcon
+                  outline={document.isDraft}
+                  color={theme.textSecondary}
+                />
+              )}
+            </IconWrapper>
+            <Content>
+              <Heading dir={document.dir}>
+                <Title
+                  text={document.titleWithDefault}
+                  highlight={highlight}
+                  dir={document.dir}
+                />
+                {document.isBadgedNew && document.createdBy?.id !== user.id && (
+                  <Badge yellow>{t("New")}</Badge>
+                )}
+                {document.isDraft && showDraft && (
+                  <Tooltip content={t("Only visible to you")} placement="top">
+                    <Badge>{t("Draft")}</Badge>
+                  </Tooltip>
+                )}
+                {canStar && !isMobile && <StarButton document={document} />}
+              </Heading>
 
-        {!queryIsInTitle && (
-          <ResultContext
-            text={context}
-            highlight={highlight ? SEARCH_RESULT_REGEX : undefined}
-            processResult={replaceResultMarks}
-          />
-        )}
-        <DocumentMeta
-          document={document}
-          showCollection={showCollection}
-          showPublished={showPublished}
-          showParentDocuments={showParentDocuments}
-          showLastViewed
-        />
-      </Content>
-      <Actions>
-        {document.isTemplate &&
-          !document.isArchived &&
-          !document.isDeleted &&
-          can.createDocument &&
-          canCollection.update && (
-            <>
-              <Button
-                as={Link}
-                to={newDocumentPath(document.collectionId, {
-                  templateId: document.id,
-                })}
-                icon={<PlusIcon />}
-                neutral
-              >
-                {t("New doc")}
-              </Button>
-              &nbsp;
-            </>
-          )}
-        <DocumentMenu
-          document={document}
-          showPin={showPin}
-          onOpen={handleMenuOpen}
-          onClose={handleMenuClose}
-          modal={false}
-        />
-      </Actions>
-    </CompositeItem>
+              {!queryIsInTitle && (
+                <ResultContext
+                  text={context}
+                  highlight={highlight ? SEARCH_RESULT_REGEX : undefined}
+                  processResult={replaceResultMarks}
+                />
+              )}
+              <DocumentMeta
+                document={document}
+                showCollection={showCollection}
+                showPublished={showPublished}
+                showParentDocuments={showParentDocuments}
+                showLastViewed
+              />
+            </Content>
+          </Flex>
+          <Actions>
+            <DocumentMenu
+              document={document}
+              onOpen={handleMenuOpen}
+              onClose={handleMenuClose}
+            />
+          </Actions>
+        </DocumentLink>
+      </ContextMenu>
+    </ActionContextProvider>
   );
 }
+
+const IconWrapper = styled.div`
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  width: 24px;
+`;
 
 const Content = styled.div`
   flex-grow: 1;
@@ -187,10 +215,9 @@ const Actions = styled(EventBoundary)`
   flex-grow: 0;
   color: ${s("textSecondary")};
 
-  ${NudeButton} {
-    &: ${hover}, &[aria-expanded= "true"] {
-      background: ${s("sidebarControlHoverBackground")};
-    }
+  ${NudeButton}:${hover},
+  ${NudeButton}[aria-expanded= "true"] {
+    background: ${s("sidebarControlHoverBackground")};
   }
 
   ${breakpoint("tablet")`
@@ -261,21 +288,19 @@ const DocumentLink = styled(Link)<{
     `}
 `;
 
-const Heading = styled.h3<{ rtl?: boolean }>`
+const Heading = styled.span<{ rtl?: boolean }>`
   display: flex;
   justify-content: ${(props) => (props.rtl ? "flex-end" : "flex-start")};
   align-items: center;
   margin-top: 0;
-  margin-bottom: 0.25em;
+  margin-bottom: 0.1em;
   white-space: nowrap;
   color: ${s("text")};
   font-family: ${s("fontFamily")};
   font-weight: 500;
-`;
-
-const StarPositioner = styled(Flex)`
-  margin-left: 4px;
-  align-items: center;
+  font-size: 18px;
+  line-height: 1.2;
+  gap: 4px;
 `;
 
 const Title = styled(Highlight)`
@@ -286,10 +311,12 @@ const Title = styled(Highlight)`
 
 const ResultContext = styled(Highlight)`
   display: block;
-  color: ${s("textTertiary")};
-  font-size: 14px;
+  color: ${s("textSecondary")};
+  font-size: 15px;
   margin-top: -0.25em;
   margin-bottom: 0.25em;
+  max-height: 90px;
+  overflow: hidden;
 `;
 
 export default observer(React.forwardRef(DocumentListItem));

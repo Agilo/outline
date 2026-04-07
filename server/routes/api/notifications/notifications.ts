@@ -1,9 +1,12 @@
 import Router from "koa-router";
+import isEmpty from "lodash/isEmpty";
+import isNil from "lodash/isNil";
 import isNull from "lodash/isNull";
 import isUndefined from "lodash/isUndefined";
-import { WhereOptions, Op } from "sequelize";
-import { NotificationEventType } from "@shared/types";
-import notificationUpdater from "@server/commands/notificationUpdater";
+import type { WhereOptions } from "sequelize";
+import { Op } from "sequelize";
+import type { NotificationEventType } from "@shared/types";
+import { createContext } from "@server/context";
 import env from "@server/env";
 import { AuthenticationError } from "@server/errors";
 import auth from "@server/middlewares/authentication";
@@ -14,7 +17,7 @@ import NotificationSettingsHelper from "@server/models/helpers/NotificationSetti
 import { authorize } from "@server/policies";
 import { presentPolicies } from "@server/presenters";
 import presentNotification from "@server/presenters/notification";
-import { APIContext } from "@server/types";
+import type { APIContext } from "@server/types";
 import { safeEqual } from "@server/utils/crypto";
 import pagination from "../middlewares/pagination";
 import * as T from "./schema";
@@ -28,6 +31,7 @@ const pixel = Buffer.from(
 const handleUnsubscribe = async (
   ctx: APIContext<T.NotificationsUnsubscribeReq>
 ) => {
+  const { transaction } = ctx.state;
   const eventType = (ctx.input.body.eventType ??
     ctx.input.query.eventType) as NotificationEventType;
   const userId = (ctx.input.body.userId ?? ctx.input.query.userId) as string;
@@ -45,10 +49,12 @@ const handleUnsubscribe = async (
 
   const user = await User.scope("withTeam").findByPk(userId, {
     rejectOnEmpty: true,
+    lock: transaction.LOCK.UPDATE,
+    transaction,
   });
 
   user.setNotificationEventType(eventType, false);
-  await user.save();
+  await user.save({ transaction });
   ctx.redirect(`${user.team.url}/settings/notifications?success`);
 };
 
@@ -56,8 +62,19 @@ router.get(
   "notifications.unsubscribe",
   validate(T.NotificationsUnsubscribeSchema),
   transaction(),
-  handleUnsubscribe
+  async (ctx: APIContext<T.NotificationsUnsubscribeReq>) => {
+    const { follow } = ctx.input.query;
+
+    // The link in the email does not include the follow query param, this
+    // is to help prevent anti-virus, and email clients from pre-fetching the link
+    if (!follow) {
+      return ctx.redirectOnClient(ctx.request.href + "&follow=true");
+    }
+
+    return handleUnsubscribe(ctx);
+  }
 );
+
 router.post(
   "notifications.unsubscribe",
   validate(T.NotificationsUnsubscribeSchema),
@@ -70,22 +87,26 @@ router.post(
   auth(),
   pagination(),
   validate(T.NotificationsListSchema),
-  transaction(),
   async (ctx: APIContext<T.NotificationsListReq>) => {
     const { eventType, archived } = ctx.input.body;
     const user = ctx.state.auth.user;
     let where: WhereOptions<Notification> = {
+      teamId: user.teamId,
       userId: user.id,
     };
     if (eventType) {
       where = { ...where, event: eventType };
     }
-    if (archived) {
+    if (!isNil(archived)) {
       where = {
         ...where,
-        archivedAt: {
-          [Op.ne]: null,
-        },
+        archivedAt: archived
+          ? {
+              [Op.ne]: null,
+            }
+          : {
+              [Op.eq]: null,
+            },
       };
     }
     const [notifications, total, unseen] = await Promise.all([
@@ -112,7 +133,9 @@ router.post(
       pagination: { ...ctx.state.pagination, total },
       data: {
         notifications: await Promise.all(
-          notifications.map(presentNotification)
+          notifications.map((notification) =>
+            presentNotification(ctx, notification)
+          )
         ),
         unseen,
       },
@@ -126,19 +149,32 @@ router.get(
   transaction(),
   async (ctx: APIContext<T.NotificationsPixelReq>) => {
     const { id, token } = ctx.input.query;
-    const notification = await Notification.unscoped().findByPk(id);
+    const { transaction } = ctx.state;
 
-    if (!notification || !safeEqual(token, notification.pixelToken)) {
+    const notification = await Notification.unscoped().findByPk(id, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+      rejectOnEmpty: true,
+    });
+
+    if (!safeEqual(token, notification.pixelToken)) {
       throw AuthenticationError();
     }
 
     if (!notification.viewedAt) {
-      await notificationUpdater({
-        notification,
-        viewedAt: new Date(),
-        ip: ctx.request.ip,
-        transaction: ctx.state.transaction,
-      });
+      const user = await notification.$get("user");
+      if (user) {
+        await notification.updateWithCtx(
+          createContext({
+            ip: ctx.request.ip,
+            transaction,
+            user,
+          }),
+          {
+            viewedAt: new Date(),
+          }
+        );
+      }
     }
 
     ctx.response.set("Content-Type", "image/gif");
@@ -154,20 +190,28 @@ router.post(
   async (ctx: APIContext<T.NotificationsUpdateReq>) => {
     const { id, viewedAt, archivedAt } = ctx.input.body;
     const { user } = ctx.state.auth;
+    const { transaction } = ctx.state;
 
-    const notification = await Notification.findByPk(id);
+    const notification = await Notification.findByPk(id, {
+      lock: {
+        level: transaction.LOCK.UPDATE,
+        of: Notification,
+      },
+      rejectOnEmpty: true,
+      transaction,
+    });
     authorize(user, "update", notification);
 
-    await notificationUpdater({
-      notification,
-      viewedAt,
-      archivedAt,
-      ip: ctx.request.ip,
-      transaction: ctx.state.transaction,
-    });
+    if (!isUndefined(viewedAt)) {
+      notification.viewedAt = viewedAt;
+    }
+    if (!isUndefined(archivedAt)) {
+      notification.archivedAt = archivedAt;
+    }
+    await notification.saveWithCtx(ctx);
 
     ctx.body = {
-      data: await presentNotification(notification),
+      data: await presentNotification(ctx, notification),
       policies: presentPolicies(user, [notification]),
     };
   }
@@ -177,12 +221,15 @@ router.post(
   "notifications.update_all",
   auth(),
   validate(T.NotificationsUpdateAllSchema),
+  transaction(),
   async (ctx: APIContext<T.NotificationsUpdateAllReq>) => {
     const { viewedAt, archivedAt } = ctx.input.body;
     const { user } = ctx.state.auth;
+    const { transaction } = ctx.state;
 
-    const values: { [x: string]: any } = {};
+    const values: Partial<Notification> = {};
     let where: WhereOptions<Notification> = {
+      teamId: user.teamId,
       userId: user.id,
     };
     if (!isUndefined(viewedAt)) {
@@ -200,7 +247,19 @@ router.post(
       };
     }
 
-    const [total] = await Notification.update(values, { where });
+    let total = 0;
+    if (!isEmpty(values)) {
+      total = await Notification.unscoped().findAllInBatches(
+        { where, transaction, lock: transaction.LOCK.UPDATE },
+        async (results) => {
+          await Promise.all(
+            results.map((notification) =>
+              notification.updateWithCtx(ctx, values)
+            )
+          );
+        }
+      );
+    }
 
     ctx.body = {
       success: true,

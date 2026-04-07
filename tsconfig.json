@@ -8,10 +8,11 @@
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
     "baseUrl": ".",
-    "jsx": "react",
+    "jsx": "react-jsx",
     "lib": ["dom", "es2020", "dom.iterable", "esnext.asynciterable"],
     "module": "esnext",
     "moduleResolution": "node",
+    "noErrorTruncation": true,
     "noImplicitAny": true,
     "noImplicitOverride": false,
     "noImplicitReturns": true,
@@ -22,7 +23,6 @@
     "noEmit": true,
     "skipLibCheck": true,
     "ignoreDeprecations": "5.0",
-    "suppressImplicitAnyIndexErrors": true,
     "target": "es2020",
     "paths": {
       "@server/*": ["./server/*"],
@@ -30,9 +30,5 @@
       "~/*": ["./app/*"]
     }
   },
-  "exclude": [
-    "node_modules",
-    "build",
-    "server/migrations"
-  ]
+  "exclude": ["node_modules", "build", "server/migrations"]
 }

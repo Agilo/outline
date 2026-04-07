@@ -1,6 +1,7 @@
 import escapeRegExp from "lodash/escapeRegExp";
 import env from "../env";
-import { getBaseDomain, parseDomain } from "./domains";
+import { isBrowser } from "./browser";
+import { parseDomain } from "./domains";
 
 /**
  * Prepends the CDN url to the given path (If a CDN is configured).
@@ -9,7 +10,22 @@ import { getBaseDomain, parseDomain } from "./domains";
  * @returns The path with the CDN url prepended.
  */
 export function cdnPath(path: string): string {
-  return `${env.CDN_URL}${path}`;
+  return `${env.CDN_URL ?? ""}${path}`;
+}
+
+/**
+ * Extracts the file name from a given url.
+ *
+ * @param url The url to extract the file name from.
+ * @returns The file name.
+ */
+export function fileNameFromUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname.split("/").pop();
+  } catch (_err) {
+    return;
+  }
 }
 
 /**
@@ -29,14 +45,60 @@ export function isInternalUrl(href: string) {
     return true;
   }
 
-  const outline =
-    typeof window !== "undefined"
-      ? parseDomain(window.location.href)
-      : parseDomain(env.URL);
+  const outline = isBrowser
+    ? parseDomain(window.location.href)
+    : parseDomain(env.URL);
   const domain = parseDomain(href);
 
-  return outline.host === domain.host || domain.host.endsWith(getBaseDomain());
+  return (
+    (outline.host === domain.host && outline.port === domain.port) ||
+    (isBrowser &&
+      window.location.hostname === domain.host &&
+      window.location.port === domain.port)
+  );
 }
+
+/**
+ * Returns true if the given string is a link to a documement.
+ *
+ * @param options Parsing options.
+ * @returns True if a document, false otherwise.
+ */
+export function isDocumentUrl(url: string) {
+  try {
+    const parsed = new URL(url, env.URL);
+    return (
+      isInternalUrl(url) &&
+      (parsed.pathname.startsWith("/doc/") || parsed.pathname.startsWith("/d/"))
+    );
+  } catch (_err) {
+    return false;
+  }
+}
+
+/**
+ * Returns true if the given string is a link to a collection.
+ *
+ * @param options Parsing options.
+ * @returns True if a collection, false otherwise.
+ */
+export function isCollectionUrl(url: string) {
+  try {
+    const parsed = new URL(url, env.URL);
+    return isInternalUrl(url) && parsed.pathname.startsWith("/collection/");
+  } catch (_err) {
+    return false;
+  }
+}
+
+type UrlOptions = {
+  /** Require the url to have a hostname. */
+  requireHostname?: boolean;
+  /** Require the url not to use HTTP, custom protocols are ok. */
+  requireHttps?: boolean;
+  /** Require the url to have a protocol. */
+  requireProtocol?: boolean;
+};
 
 /**
  * Returns true if the given string is a url.
@@ -45,9 +107,21 @@ export function isInternalUrl(href: string) {
  * @param options Parsing options.
  * @returns True if a url, false otherwise.
  */
-export function isUrl(text: string, options?: { requireHostname: boolean }) {
+export function isUrl(
+  text: string,
+  { requireProtocol = true, requireHostname, requireHttps }: UrlOptions = {}
+) {
   if (text.match(/\n/)) {
     return false;
+  }
+
+  if (!requireProtocol && text.startsWith("www.")) {
+    const parts = text.split(".");
+    if (parts.length < 2) {
+      return false;
+    }
+
+    text = `https://${text}`;
   }
 
   try {
@@ -57,6 +131,9 @@ export function isUrl(text: string, options?: { requireHostname: boolean }) {
     if (blockedProtocols.includes(url.protocol)) {
       return false;
     }
+    if (requireHttps && url.protocol === "http:") {
+      return false;
+    }
     if (url.hostname) {
       return true;
     }
@@ -64,9 +141,9 @@ export function isUrl(text: string, options?: { requireHostname: boolean }) {
     return (
       url.protocol !== "" &&
       (url.pathname.startsWith("//") || url.pathname.startsWith("http")) &&
-      !options?.requireHostname
+      !requireHostname
     );
-  } catch (err) {
+  } catch (_err) {
     return false;
   }
 }
@@ -83,7 +160,23 @@ export const creatingUrlPrefix = "creating#";
  * @returns True if the url is external, false otherwise.
  */
 export function isExternalUrl(url: string) {
-  return !!url && !isInternalUrl(url) && !url.startsWith(creatingUrlPrefix);
+  return (
+    !!url &&
+    !isInternalUrl(url) &&
+    !url.startsWith(creatingUrlPrefix) &&
+    (!env.CDN_URL || !url.startsWith(env.CDN_URL))
+  );
+}
+
+/**
+ * Returns match if the given string is a base64 encoded url.
+ *
+ * @param url The url to check.
+ * @returns A RegExp match if the url is base64, false otherwise.
+ */
+export function isBase64Url(url: string) {
+  const match = url.match(/^data:([a-z]+\/[^;]+);base64,(.*)/i);
+  return match ? match : false;
 }
 
 /**
@@ -112,6 +205,12 @@ export function sanitizeUrl(url: string | null | undefined) {
   return url;
 }
 
+/**
+ * Returns a regex to match the given url.
+ *
+ * @param url The url to create a regex for.
+ * @returns A regex to match the url.
+ */
 export function urlRegex(url: string | null | undefined): RegExp | undefined {
   if (!url || !isUrl(url)) {
     return undefined;
@@ -120,4 +219,29 @@ export function urlRegex(url: string | null | undefined): RegExp | undefined {
   const urlObj = new URL(sanitizeUrl(url) as string);
 
   return new RegExp(escapeRegExp(`${urlObj.protocol}//${urlObj.host}`));
+}
+
+/**
+ * Extracts LIKELY urls from the given text, note this does not validate the urls.
+ *
+ * @param text The text to extract urls from.
+ * @returns An array of likely urls.
+ */
+export function getUrls(text: string) {
+  return Array.from(text.match(/(?:https?):\/\/[^\s]+/gi) || []);
+}
+
+/**
+ * Converts a url to a display friendly format, removing the protocol and trailing slash.
+ *
+ * @param url The url to convert.
+ * @returns The display friendly url.
+ */
+export function toDisplayUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    return parsed.host + (parsed.pathname === "/" ? "" : parsed.pathname);
+  } catch {
+    return url;
+  }
 }

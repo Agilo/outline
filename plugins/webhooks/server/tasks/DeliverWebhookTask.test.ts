@@ -1,16 +1,12 @@
 import fetchMock from "jest-fetch-mock";
-import { v4 as uuidv4 } from "uuid";
 import { WebhookDelivery } from "@server/models";
 import {
   buildUser,
   buildWebhookDelivery,
   buildWebhookSubscription,
 } from "@server/test/factories";
-import { setupTestDatabase } from "@server/test/support";
-import { UserEvent } from "@server/types";
+import type { UserEvent } from "@server/types";
 import DeliverWebhookTask from "./DeliverWebhookTask";
-
-setupTestDatabase();
 
 beforeEach(async () => {
   jest.resetAllMocks();
@@ -88,7 +84,10 @@ describe("DeliverWebhookTask", () => {
       event,
     });
 
-    const headers = fetchMock.mock.calls[0]![1]!.headers!;
+    const headers = fetchMock.mock.calls[0]![1]!.headers! as Record<
+      string,
+      string
+    >;
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(headers["Outline-Signature"]).toMatch(/^t=[0-9]+,s=[a-z0-9]+$/);
@@ -99,7 +98,7 @@ describe("DeliverWebhookTask", () => {
       url: "http://example.com",
       events: ["*"],
     });
-    const deletedUserId = uuidv4();
+    const deletedUserId = crypto.randomUUID();
     const signedInUser = await buildUser({ teamId: subscription.teamId });
 
     const task = new DeliverWebhookTask();

@@ -1,7 +1,9 @@
-import invariant from "invariant";
+import isEqual from "fast-deep-equal";
+import Redis from "@server/storage/redis";
 import revisionCreator from "@server/commands/revisionCreator";
 import { Revision, Document, User } from "@server/models";
-import { DocumentEvent, RevisionEvent, Event } from "@server/types";
+import type { DocumentEvent, RevisionEvent, Event } from "@server/types";
+import DocumentUpdateTextTask from "../tasks/DocumentUpdateTextTask";
 import BaseProcessor from "./BaseProcessor";
 
 export default class RevisionsProcessor extends BaseProcessor {
@@ -16,32 +18,42 @@ export default class RevisionsProcessor extends BaseProcessor {
       case "documents.publish":
       case "documents.update.debounced":
       case "documents.update": {
-        if (event.name === "documents.update" && !event.data.done) {
+        if (event.name === "documents.update" && !event.data?.done) {
           return;
         }
 
+        // Get collaborator IDs since last revision was written.
+        const key = Document.getCollaboratorKey(event.documentId);
+        const collaboratorIds = await Redis.defaultClient.smembers(key);
+        await Redis.defaultClient.del(key);
+
         const document = await Document.findByPk(event.documentId, {
           paranoid: false,
+          rejectOnEmpty: true,
         });
-        invariant(document, "Document should exist");
         const previous = await Revision.findLatest(document.id);
 
-        // we don't create revisions if identical to previous revision, this can
-        // happen if a manual revision was created from another service or user.
+        // we don't create revisions if identical to previous revision, this can happen if a manual
+        // revision was created from another service or user.
         if (
           previous &&
-          document.text === previous.text &&
+          isEqual(document.content, previous.content) &&
           document.title === previous.title
         ) {
           return;
         }
 
+        await new DocumentUpdateTextTask().schedule(event);
+
         const user = await User.findByPk(event.actorId, {
           paranoid: false,
           rejectOnEmpty: true,
         });
+
         await revisionCreator({
+          event,
           user,
+          collaboratorIds,
           document,
         });
         break;

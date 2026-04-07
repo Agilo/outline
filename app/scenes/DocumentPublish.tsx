@@ -1,19 +1,17 @@
-import flatten from "lodash/flatten";
 import { observer } from "mobx-react";
-import * as React from "react";
+import { useState, useMemo } from "react";
 import { useTranslation, Trans } from "react-i18next";
+import { toast } from "sonner";
 import styled from "styled-components";
 import { ellipsis } from "@shared/styles";
-import { NavigationNode } from "@shared/types";
-import Document from "~/models/Document";
+import type { NavigationNode } from "@shared/types";
+import type Document from "~/models/Document";
 import Button from "~/components/Button";
 import DocumentExplorer from "~/components/DocumentExplorer";
 import Flex from "~/components/Flex";
 import Text from "~/components/Text";
 import useCollectionTrees from "~/hooks/useCollectionTrees";
 import useStores from "~/hooks/useStores";
-import useToasts from "~/hooks/useToasts";
-import { flattenTree } from "~/utils/tree";
 
 type Props = {
   /** Document to publish */
@@ -21,23 +19,23 @@ type Props = {
 };
 
 function DocumentPublish({ document }: Props) {
-  const { dialogs } = useStores();
-  const { showToast } = useToasts();
+  const { dialogs, policies } = useStores();
   const { t } = useTranslation();
   const collectionTrees = useCollectionTrees();
-  const [selectedPath, selectPath] = React.useState<NavigationNode | null>(
-    null
-  );
-  const publishOptions = React.useMemo(
-    () => flatten(collectionTrees.map(flattenTree)),
-    [collectionTrees]
+  const [selectedPath, selectPath] = useState<NavigationNode | null>(null);
+  const publishOptions = useMemo(
+    () =>
+      collectionTrees.filter((node) =>
+        node.collectionId
+          ? policies.get(node.collectionId)?.abilities.createDocument
+          : true
+      ),
+    [policies, collectionTrees]
   );
 
   const publish = async () => {
     if (!selectedPath) {
-      showToast(t("Select a location to publish"), {
-        type: "info",
-      });
+      toast.message(t("Select a location to publish"));
       return;
     }
 
@@ -48,21 +46,17 @@ function DocumentPublish({ document }: Props) {
 
       // Also move it under if selected path corresponds to another doc
       if (type === "document") {
-        await document.move(collectionId, parentDocumentId);
+        await document.move({ collectionId, parentDocumentId });
       }
 
       document.collectionId = collectionId;
       await document.save(undefined, { publish: true });
 
-      showToast(t("Document published"), {
-        type: "success",
-      });
+      toast.success(t("Document published"));
 
       dialogs.closeAllModals();
-    } catch (err) {
-      showToast(t("Couldn’t publish the document, try again?"), {
-        type: "error",
-      });
+    } catch (_err) {
+      toast.error(t("Couldn’t publish the document, try again?"));
     }
   };
 

@@ -1,9 +1,12 @@
-import crypto from "crypto";
-import type { SaveOptions } from "sequelize";
+import crypto from "node:crypto";
+import type {
+  InferAttributes,
+  InferCreationAttributes,
+  SaveOptions,
+} from "sequelize";
 import {
   Table,
   ForeignKey,
-  Model,
   Column,
   PrimaryKey,
   IsUUID,
@@ -16,8 +19,11 @@ import {
   AfterCreate,
   DefaultScope,
 } from "sequelize-typescript";
+import type { NotificationData } from "@shared/types";
 import { NotificationEventType } from "@shared/types";
+import { getBaseDomain } from "@shared/utils/domains";
 import env from "@server/env";
+import Model from "@server/models/base/Model";
 import Collection from "./Collection";
 import Comment from "./Comment";
 import Document from "./Document";
@@ -25,13 +31,17 @@ import Event from "./Event";
 import Revision from "./Revision";
 import Team from "./Team";
 import User from "./User";
+import Group from "./Group";
 import Fix from "./decorators/Fix";
+
+let baseDomain;
 
 @Scopes(() => ({
   withTeam: {
     include: [
       {
         association: "team",
+        required: true,
       },
     ],
   },
@@ -53,6 +63,7 @@ import Fix from "./decorators/Fix";
     include: [
       {
         association: "actor",
+        required: true,
       },
     ],
   },
@@ -60,6 +71,7 @@ import Fix from "./decorators/Fix";
     include: [
       {
         association: "user",
+        required: true,
       },
     ],
   },
@@ -68,12 +80,15 @@ import Fix from "./decorators/Fix";
   include: [
     {
       association: "document",
+      required: false,
     },
     {
       association: "comment",
+      required: false,
     },
     {
       association: "actor",
+      required: false,
     },
   ],
 }))
@@ -83,7 +98,10 @@ import Fix from "./decorators/Fix";
   updatedAt: false,
 })
 @Fix
-class Notification extends Model {
+class Notification extends Model<
+  InferAttributes<Notification>,
+  Partial<InferCreationAttributes<Notification>>
+> {
   @IsUUID(4)
   @PrimaryKey
   @Default(DataType.UUIDV4)
@@ -92,7 +110,7 @@ class Notification extends Model {
 
   @AllowNull
   @Column
-  emailedAt: Date;
+  emailedAt?: Date | null;
 
   @AllowNull
   @Column
@@ -105,10 +123,20 @@ class Notification extends Model {
   @CreatedAt
   createdAt: Date;
 
+  @Column(DataType.JSONB)
+  data: NotificationData | null;
+
   @Column(DataType.STRING)
   event: NotificationEventType;
 
   // associations
+  @BelongsTo(() => Group, "groupId")
+  group: Group;
+
+  @AllowNull
+  @ForeignKey(() => User)
+  @Column(DataType.UUID)
+  groupId: string;
 
   @BelongsTo(() => User, "userId")
   user: User;
@@ -164,18 +192,26 @@ class Notification extends Model {
   @Column(DataType.UUID)
   teamId: string;
 
+  @AllowNull
+  @Column(DataType.UUID)
+  membershipId: string;
+
   @AfterCreate
   static async createEvent(
     model: Notification,
-    options: SaveOptions<Notification>
+    options: SaveOptions<InferAttributes<Notification>>
   ) {
     const params = {
       name: "notifications.create",
       userId: model.userId,
       modelId: model.id,
       teamId: model.teamId,
+      commentId: model.commentId,
       documentId: model.documentId,
+      collectionId: model.collectionId,
       actorId: model.actorId,
+      membershipId: model.membershipId,
+      groupId: model.groupId,
     };
 
     if (options.transaction) {
@@ -205,6 +241,51 @@ class Notification extends Model {
    */
   public get pixelUrl() {
     return `${env.URL}/api/notifications.pixel?token=${this.pixelToken}&id=${this.id}`;
+  }
+
+  /**
+   * Returns the message id for the email.
+   *
+   * @param name Username part of the email address.
+   * @returns Email message id.
+   */
+  public static emailMessageId(name: string) {
+    baseDomain ||= getBaseDomain();
+    return `<${name}@${baseDomain}>`;
+  }
+
+  /**
+   * Returns the message reference id which will be used to setup the thread chain in email clients.
+   *
+   * @param notification Notification for which to determine the reference id.
+   * @returns Reference id as an array.
+   */
+  public static async emailReferences(
+    notification: Notification
+  ): Promise<string[] | undefined> {
+    let name: string | undefined;
+
+    switch (notification.event) {
+      case NotificationEventType.PublishDocument:
+      case NotificationEventType.UpdateDocument:
+        name = `${notification.documentId}-updates`;
+        break;
+      case NotificationEventType.GroupMentionedInComment:
+      case NotificationEventType.GroupMentionedInDocument:
+        name = `${notification.documentId}-group-mentions`;
+        break;
+      case NotificationEventType.MentionedInDocument:
+      case NotificationEventType.MentionedInComment:
+        name = `${notification.documentId}-mentions`;
+        break;
+      case NotificationEventType.CreateComment: {
+        const comment = await Comment.findByPk(notification.commentId);
+        name = `${comment?.parentCommentId ?? comment?.id}-comments`;
+        break;
+      }
+    }
+
+    return name ? [this.emailMessageId(name)] : undefined;
   }
 }
 

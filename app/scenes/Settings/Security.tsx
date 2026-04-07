@@ -1,99 +1,170 @@
 import debounce from "lodash/debounce";
 import { observer } from "mobx-react";
-import { CheckboxIcon, EmailIcon, PadlockIcon } from "outline-icons";
+import { ShieldIcon } from "outline-icons";
 import { useState } from "react";
 import * as React from "react";
 import { useTranslation, Trans } from "react-i18next";
-import { useTheme } from "styled-components";
-import { TeamPreference } from "@shared/types";
+import { toast } from "sonner";
+import { TeamPreference, EmailDisplay } from "@shared/types";
 import ConfirmationDialog from "~/components/ConfirmationDialog";
-import Flex from "~/components/Flex";
 import Heading from "~/components/Heading";
-import InputSelect from "~/components/InputSelect";
-import PluginIcon from "~/components/PluginIcon";
+import type { Option } from "~/components/InputSelect";
+import { InputSelect } from "~/components/InputSelect";
 import Scene from "~/components/Scene";
 import Switch from "~/components/Switch";
 import Text from "~/components/Text";
-import env from "~/env";
 import useCurrentTeam from "~/hooks/useCurrentTeam";
-import useRequest from "~/hooks/useRequest";
 import useStores from "~/hooks/useStores";
-import useToasts from "~/hooks/useToasts";
 import isCloudHosted from "~/utils/isCloudHosted";
-import DomainManagement from "./components/DomainManagement";
 import SettingRow from "./components/SettingRow";
 
 function Security() {
-  const { auth, authenticationProviders, dialogs } = useStores();
+  const { dialogs } = useStores();
   const team = useCurrentTeam();
   const { t } = useTranslation();
-  const { showToast } = useToasts();
-  const theme = useTheme();
+
   const [data, setData] = useState({
     sharing: team.sharing,
-    documentEmbeds: team.documentEmbeds,
-    guestSignin: team.guestSignin,
     defaultUserRole: team.defaultUserRole,
     memberCollectionCreate: team.memberCollectionCreate,
+    memberTeamCreate: team.memberTeamCreate,
     inviteRequired: team.inviteRequired,
+    passkeysEnabled: team.passkeysEnabled,
   });
 
-  const {
-    data: providers,
-    loading,
-    request,
-  } = useRequest(() => authenticationProviders.fetchPage({}));
+  const userRoleOptions: Option[] = React.useMemo(
+    () =>
+      [
+        {
+          type: "item",
+          label: t("Editor"),
+          value: "member",
+        },
+        {
+          type: "item",
+          label: t("Viewer"),
+          value: "viewer",
+        },
+      ] satisfies Option[],
+    [t]
+  );
 
-  React.useEffect(() => {
-    if (!providers && !loading) {
-      void request();
-    }
-  }, [loading, providers, request]);
+  const emailDisplayOptions: Option[] = React.useMemo(
+    () =>
+      [
+        {
+          type: "item",
+          label: t("Members"),
+          value: EmailDisplay.Members,
+        },
+        {
+          type: "item",
+          label: t("Members and guests"),
+          value: EmailDisplay.Everyone,
+        },
+        {
+          type: "item",
+          label: t("No one"),
+          value: EmailDisplay.None,
+        },
+      ] satisfies Option[],
+    [t]
+  );
 
   const showSuccessMessage = React.useMemo(
     () =>
       debounce(() => {
-        showToast(t("Settings saved"), {
-          type: "success",
-        });
+        toast.success(t("Settings saved"));
       }, 250),
-    [showToast, t]
+    [t]
   );
 
   const saveData = React.useCallback(
     async (newData) => {
       try {
-        setData(newData);
-        await auth.updateTeam(newData);
+        setData((prev) => ({ ...prev, ...newData }));
+        await team.save(newData);
         showSuccessMessage();
       } catch (err) {
-        showToast(err.message, {
-          type: "error",
-        });
+        toast.error(err.message);
       }
     },
-    [auth, showSuccessMessage, showToast]
-  );
-
-  const handleChange = React.useCallback(
-    async (ev: React.ChangeEvent<HTMLInputElement>) => {
-      await saveData({ ...data, [ev.target.id]: ev.target.checked });
-    },
-    [data, saveData]
+    [team, showSuccessMessage]
   );
 
   const handleDefaultRoleChange = React.useCallback(
     async (newDefaultRole: string) => {
-      await saveData({ ...data, defaultUserRole: newDefaultRole });
+      await saveData({ defaultUserRole: newDefaultRole });
     },
-    [data, saveData]
+    [saveData]
   );
 
-  const handlePreferenceChange = React.useCallback(
-    async (ev: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSharingChange = React.useCallback(
+    async (checked: boolean) => {
+      await saveData({ sharing: checked });
+    },
+    [saveData]
+  );
+
+  const handlePasskeysEnabledChange = React.useCallback(
+    async (checked: boolean) => {
+      await saveData({ passkeysEnabled: checked });
+    },
+    [saveData]
+  );
+
+  const handleMemberCollectionCreateChange = React.useCallback(
+    async (checked: boolean) => {
+      await saveData({ memberCollectionCreate: checked });
+    },
+    [saveData]
+  );
+
+  const handleMemberTeamCreateChange = React.useCallback(
+    async (checked: boolean) => {
+      await saveData({ memberTeamCreate: checked });
+    },
+    [saveData]
+  );
+
+  const handleMembersCanInviteChange = React.useCallback(
+    async (checked: boolean) => {
       const preferences = {
         ...team.preferences,
-        [ev.target.id]: ev.target.checked,
+        [TeamPreference.MembersCanInvite]: checked,
+      };
+      await saveData({ preferences });
+    },
+    [saveData, team.preferences]
+  );
+
+  const handleViewersCanExportChange = React.useCallback(
+    async (checked: boolean) => {
+      const preferences = {
+        ...team.preferences,
+        [TeamPreference.ViewersCanExport]: checked,
+      };
+      await saveData({ preferences });
+    },
+    [saveData, team.preferences]
+  );
+
+  const handleMembersCanDeleteAccountChange = React.useCallback(
+    async (checked: boolean) => {
+      const preferences = {
+        ...team.preferences,
+        [TeamPreference.MembersCanDeleteAccount]: checked,
+      };
+      await saveData({ preferences });
+    },
+    [saveData, team.preferences]
+  );
+
+  const handleEmailDisplayChange = React.useCallback(
+    async (emailDisplay: string) => {
+      const preferences = {
+        ...team.preferences,
+        [TeamPreference.EmailDisplay]: emailDisplay,
       };
       await saveData({ preferences });
     },
@@ -101,20 +172,18 @@ function Security() {
   );
 
   const handleInviteRequiredChange = React.useCallback(
-    async (ev: React.ChangeEvent<HTMLInputElement>) => {
-      const inviteRequired = ev.target.checked;
+    async (checked: boolean) => {
+      const inviteRequired = checked;
       const newData = { ...data, inviteRequired };
 
       if (inviteRequired) {
         dialogs.openModal({
-          isCentered: true,
           title: t("Are you sure you want to require invites?"),
           content: (
             <ConfirmationDialog
               onSubmit={async () => {
                 await saveData(newData);
               }}
-              submitText={t("I’m sure")}
               savingText={`${t("Saving")}…`}
               danger
             >
@@ -130,75 +199,35 @@ function Security() {
             </ConfirmationDialog>
           ),
         });
-        return;
+      } else {
+        await saveData(newData);
       }
-
-      await saveData(newData);
     },
     [data, saveData, t, dialogs, team.signinMethods]
   );
 
   return (
-    <Scene title={t("Security")} icon={<PadlockIcon />}>
+    <Scene title={t("Security")} icon={<ShieldIcon />}>
       <Heading>{t("Security")}</Heading>
-      <Text type="secondary">
+      <Text as="p" type="secondary">
         <Trans>
           Settings that impact the access, security, and content of your
-          knowledge base.
+          workspace.
         </Trans>
       </Text>
 
-      <h2>{t("Sign In")}</h2>
-      {authenticationProviders.orderedData
-        // filtering unconnected, until we have ability to connect from this screen
-        .filter((provider) => provider.isConnected)
-        .map((provider) => (
-          <SettingRow
-            key={provider.name}
-            label={
-              <Flex gap={8} align="center">
-                <PluginIcon id={provider.name} /> {provider.displayName}
-              </Flex>
-            }
-            name={provider.name}
-            description={t("Allow members to sign-in with {{ authProvider }}", {
-              authProvider: provider.displayName,
-            })}
-          >
-            <Flex align="center">
-              <CheckboxIcon
-                color={provider.isActive ? theme.accent : undefined}
-                checked={provider.isActive}
-              />{" "}
-              <Text type="secondary">
-                {provider.isActive ? t("Connected") : t("Disabled")}
-              </Text>
-            </Flex>
-          </SettingRow>
-        ))}
+      <Heading as="h2">{t("Invites")}</Heading>
       <SettingRow
-        label={
-          <Flex gap={8} align="center">
-            <EmailIcon /> {t("Email")}
-          </Flex>
-        }
-        name="guestSignin"
-        description={
-          env.EMAIL_ENABLED
-            ? t("Allow members to sign-in using their email address")
-            : t("The server must have SMTP configured to enable this setting")
-        }
-        border={false}
+        label={t("Allow users to send invites")}
+        name={TeamPreference.MembersCanInvite}
+        description={t("Allow editors to invite other people to the workspace")}
       >
         <Switch
-          id="guestSignin"
-          checked={data.guestSignin}
-          onChange={handleChange}
-          disabled={!env.EMAIL_ENABLED}
+          id={TeamPreference.MembersCanInvite}
+          checked={team.getPreference(TeamPreference.MembersCanInvite)}
+          onChange={handleMembersCanInviteChange}
         />
       </SettingRow>
-
-      <h2>{t("Access")}</h2>
       {isCloudHosted && (
         <SettingRow
           label={t("Require invites")}
@@ -216,9 +245,6 @@ function Security() {
       )}
 
       {!data.inviteRequired && (
-        <DomainManagement onSuccess={showSuccessMessage} />
-      )}
-      {!data.inviteRequired && (
         <SettingRow
           label={t("Default role")}
           name="defaultUserRole"
@@ -228,26 +254,32 @@ function Security() {
           border={false}
         >
           <InputSelect
-            id="defaultUserRole"
             value={data.defaultUserRole}
-            options={[
-              {
-                label: t("Member"),
-                value: "member",
-              },
-              {
-                label: t("Viewer"),
-                value: "viewer",
-              },
-            ]}
+            options={userRoleOptions}
             onChange={handleDefaultRoleChange}
-            ariaLabel={t("Default role")}
+            label={t("Default role")}
+            hideLabel
             short
           />
         </SettingRow>
       )}
 
-      <h2>{t("Behavior")}</h2>
+      <Heading as="h2">{t("Authentication")}</Heading>
+      <SettingRow
+        label={t("Passkeys")}
+        name="passkeysEnabled"
+        description={t(
+          "Allow users to sign in with passkeys for passwordless authentication"
+        )}
+      >
+        <Switch
+          id="passkeysEnabled"
+          checked={data.passkeysEnabled}
+          onChange={handlePasskeysEnabledChange}
+        />
+      </SettingRow>
+
+      <Heading as="h2">{t("Behavior")}</Heading>
       <SettingRow
         label={t("Public document sharing")}
         name="sharing"
@@ -255,7 +287,11 @@ function Security() {
           "When enabled, documents can be shared publicly on the internet by any member of the workspace"
         )}
       >
-        <Switch id="sharing" checked={data.sharing} onChange={handleChange} />
+        <Switch
+          id="sharing"
+          checked={data.sharing}
+          onChange={handleSharingChange}
+        />
       </SettingRow>
       <SettingRow
         label={t("Viewer document exports")}
@@ -267,35 +303,64 @@ function Security() {
         <Switch
           id={TeamPreference.ViewersCanExport}
           checked={team.getPreference(TeamPreference.ViewersCanExport)}
-          onChange={handlePreferenceChange}
+          onChange={handleViewersCanExportChange}
         />
       </SettingRow>
       <SettingRow
-        label={t("Rich service embeds")}
-        name="documentEmbeds"
+        label={t("Users can delete account")}
+        name={TeamPreference.MembersCanDeleteAccount}
         description={t(
-          "Links to supported services are shown as rich embeds within your documents"
+          "When enabled, users can delete their own account from the workspace"
         )}
       >
         <Switch
-          id="documentEmbeds"
-          checked={data.documentEmbeds}
-          onChange={handleChange}
+          id={TeamPreference.MembersCanDeleteAccount}
+          checked={team.getPreference(TeamPreference.MembersCanDeleteAccount)}
+          onChange={handleMembersCanDeleteAccountChange}
+        />
+      </SettingRow>
+      <SettingRow
+        label={t("Email address visibility")}
+        name={TeamPreference.EmailDisplay}
+        description={t(
+          "Controls who can see user email addresses in the workspace"
+        )}
+      >
+        <InputSelect
+          value={team.getPreference(TeamPreference.EmailDisplay) as string}
+          options={emailDisplayOptions}
+          onChange={handleEmailDisplayChange}
+          label={t("Email address visibility")}
+          hideLabel
+          short
         />
       </SettingRow>
       <SettingRow
         label={t("Collection creation")}
         name="memberCollectionCreate"
         description={t(
-          "Allow members to create new collections within the knowledge base"
+          "Allow editors to create new collections within the workspace"
         )}
       >
         <Switch
           id="memberCollectionCreate"
           checked={data.memberCollectionCreate}
-          onChange={handleChange}
+          onChange={handleMemberCollectionCreateChange}
         />
       </SettingRow>
+      {isCloudHosted && (
+        <SettingRow
+          label={t("Workspace creation")}
+          name="memberTeamCreate"
+          description={t("Allow editors to create new workspaces")}
+        >
+          <Switch
+            id="memberTeamCreate"
+            checked={data.memberTeamCreate}
+            onChange={handleMemberTeamCreateChange}
+          />
+        </SettingRow>
+      )}
     </Scene>
   );
 }

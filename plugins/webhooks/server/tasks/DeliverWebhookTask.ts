@@ -1,9 +1,11 @@
 import { FetchError } from "node-fetch";
 import { Op } from "sequelize";
+import { colorPalette } from "@shared/utils/collections";
 import WebhookDisabledEmail from "@server/emails/templates/WebhookDisabledEmail";
 import env from "@server/env";
 import Logger from "@server/logging/Logger";
 import {
+  Attachment,
   Collection,
   FileOperation,
   Group,
@@ -18,12 +20,13 @@ import {
   Revision,
   View,
   Share,
-  CollectionUser,
-  CollectionGroup,
+  UserMembership,
+  GroupMembership,
   GroupUser,
   Comment,
 } from "@server/models";
 import {
+  presentAttachment,
   presentCollection,
   presentDocument,
   presentRevision,
@@ -37,17 +40,20 @@ import {
   presentView,
   presentShare,
   presentMembership,
+  presentGroupUser,
   presentGroupMembership,
-  presentCollectionGroupMembership,
   presentComment,
 } from "@server/presenters";
-import BaseTask from "@server/queues/tasks/BaseTask";
-import {
+import { BaseTask } from "@server/queues/tasks/base/BaseTask";
+import type {
+  AttachmentEvent,
   CollectionEvent,
   CollectionGroupEvent,
   CollectionUserEvent,
   CommentEvent,
   DocumentEvent,
+  DocumentUserEvent,
+  DocumentGroupEvent,
   Event,
   FileOperationEvent,
   GroupEvent,
@@ -60,14 +66,16 @@ import {
   TeamEvent,
   UserEvent,
   ViewEvent,
+  WebhookDeliveryStatus,
   WebhookSubscriptionEvent,
 } from "@server/types";
 import fetch from "@server/utils/fetch";
-import presentWebhook, { WebhookPayload } from "../presenters/webhook";
+import type { WebhookPayload } from "../presenters/webhook";
+import presentWebhook from "../presenters/webhook";
 import presentWebhookSubscription from "../presenters/webhookSubscription";
 
 function assertUnreachable(event: never) {
-  Logger.warn(`DeliverWebhookTask did not handle ${(event as any).name}`);
+  Logger.warn(`DeliverWebhookTask did not handle ${(event as Event).name}`);
 }
 
 type Props = {
@@ -76,6 +84,9 @@ type Props = {
 };
 
 export default class DeliverWebhookTask extends BaseTask<Props> {
+  // Minimum number of deliveries required in time window before considering disabling
+  private static readonly MIN_DELIVERIES_FOR_ANALYSIS = 10;
+
   public async perform({ subscriptionId, event }: Props) {
     const subscription = await WebhookSubscription.findByPk(subscriptionId, {
       rejectOnEmpty: true,
@@ -95,10 +106,13 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
     });
 
     switch (event.name) {
+      case "attachments.create":
+      case "attachments.update":
+      case "attachments.delete":
+        await this.handleAttachmentEvent(subscription, event);
+        return;
       case "api_keys.create":
       case "api_keys.delete":
-      case "attachments.create":
-      case "attachments.delete":
       case "subscriptions.create":
       case "subscriptions.delete":
       case "authenticationProviders.update":
@@ -116,6 +130,7 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       case "users.invite":
       case "users.promote":
       case "users.demote":
+      case "users.invite_accepted":
         await this.handleUserEvent(subscription, event);
         return;
       case "documents.create":
@@ -131,8 +146,17 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       case "documents.title_change":
         await this.handleDocumentEvent(subscription, event);
         return;
+      case "documents.add_user":
+      case "documents.remove_user":
+        await this.handleDocumentUserEvent(subscription, event);
+        return;
+      case "documents.add_group":
+      case "documents.remove_group":
+        await this.handleDocumentGroupEvent(subscription, event);
+        return;
       case "documents.update.delayed":
       case "documents.update.debounced":
+      case "documents.empty_trash":
         // Ignored
         return;
       case "revisions.create":
@@ -148,6 +172,8 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       case "collections.delete":
       case "collections.move":
       case "collections.permission_changed":
+      case "collections.archive":
+      case "collections.restore":
         await this.handleCollectionEvent(subscription, event);
         return;
       case "collections.add_user":
@@ -163,6 +189,10 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       case "comments.delete":
         await this.handleCommentEvent(subscription, event);
         return;
+      case "comments.add_reaction":
+      case "comments.remove_reaction":
+        // Ignored
+        return;
       case "groups.create":
       case "groups.update":
       case "groups.delete":
@@ -174,9 +204,12 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
         return;
       case "integrations.create":
       case "integrations.update":
+      case "integrations.delete":
         await this.handleIntegrationEvent(subscription, event);
         return;
       case "teams.create":
+      case "teams.delete":
+      case "teams.destroy":
         // Ignored
         return;
       case "teams.update":
@@ -205,9 +238,50 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       case "views.create":
         await this.handleViewEvent(subscription, event);
         return;
+      case "userMemberships.update":
+        // Ignored
+        return;
+      case "imports.create":
+      case "imports.update":
+      case "imports.processed":
+      case "imports.delete":
+        // Ignored
+        return;
+      case "oauthClients.create":
+      case "oauthClients.update":
+      case "oauthClients.delete":
+        // Ignored
+        return;
+      case "templates.create":
+      case "templates.update":
+      case "templates.delete":
+      case "templates.restore":
+      case "passkeys.create":
+      case "passkeys.update":
+      case "passkeys.delete":
+        // Ignored
+        return;
       default:
         assertUnreachable(event);
     }
+  }
+
+  private async handleAttachmentEvent(
+    subscription: WebhookSubscription,
+    event: AttachmentEvent
+  ): Promise<void> {
+    const model = await Attachment.findByPk(event.modelId, {
+      paranoid: false,
+    });
+
+    await this.sendWebhook({
+      event,
+      subscription,
+      payload: {
+        id: event.modelId,
+        model: model && presentAttachment(model),
+      },
+    });
   }
 
   private async handleWebhookSubscriptionEvent(
@@ -374,7 +448,7 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       subscription,
       payload: {
         id: event.modelId,
-        model: model && presentGroup(model),
+        model: model && (await presentGroup(model)),
       },
     });
   }
@@ -396,8 +470,8 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       subscription,
       payload: {
         id: `${event.userId}-${event.modelId}`,
-        model: model && presentGroupMembership(model),
-        group: model && presentGroup(model.group),
+        model: model && presentGroupUser(model),
+        group: model && (await presentGroup(model.group)),
         user: model && presentUser(model.user),
       },
     });
@@ -411,12 +485,18 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       paranoid: false,
     });
 
+    const collection = model && (await presentCollection(undefined, model));
+    if (collection) {
+      // For backward compatibility, set a default color.
+      collection.color = collection.color ?? colorPalette[0];
+    }
+
     await this.sendWebhook({
       event,
       subscription,
       payload: {
         id: event.collectionId,
-        model: model && presentCollection(model),
+        model: collection,
       },
     });
   }
@@ -425,7 +505,7 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
     subscription: WebhookSubscription,
     event: CollectionUserEvent
   ): Promise<void> {
-    const model = await CollectionUser.scope([
+    const model = await UserMembership.scope([
       "withUser",
       "withCollection",
     ]).findOne({
@@ -436,13 +516,20 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       paranoid: false,
     });
 
+    const collection =
+      model && (await presentCollection(undefined, model.collection!));
+    if (collection) {
+      // For backward compatibility, set a default color.
+      collection.color = collection.color ?? colorPalette[0];
+    }
+
     await this.sendWebhook({
       event,
       subscription,
       payload: {
-        id: `${event.userId}-${event.collectionId}`,
+        id: event.modelId,
         model: model && presentMembership(model),
-        collection: model && presentCollection(model.collection),
+        collection,
         user: model && presentUser(model.user),
       },
     });
@@ -452,7 +539,7 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
     subscription: WebhookSubscription,
     event: CollectionGroupEvent
   ): Promise<void> {
-    const model = await CollectionGroup.scope([
+    const model = await GroupMembership.scope([
       "withGroup",
       "withCollection",
     ]).findOne({
@@ -463,14 +550,21 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       paranoid: false,
     });
 
+    const collection =
+      model && (await presentCollection(undefined, model.collection!));
+    if (collection) {
+      // For backward compatibility, set a default color.
+      collection.color = collection.color ?? colorPalette[0];
+    }
+
     await this.sendWebhook({
       event,
       subscription,
       payload: {
-        id: `${event.modelId}-${event.collectionId}`,
-        model: model && presentCollectionGroupMembership(model),
-        collection: model && presentCollection(model.collection),
-        group: model && presentGroup(model.group),
+        id: event.modelId,
+        model: model && presentGroupMembership(model),
+        collection,
+        group: model && (await presentGroup(model.group)),
       },
     });
   }
@@ -506,7 +600,74 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       subscription,
       payload: {
         id: event.documentId,
-        model: model && (await presentDocument(model)),
+        model:
+          model &&
+          (await presentDocument(undefined, model, {
+            includeData: true,
+            includeText: true,
+          })),
+      },
+    });
+  }
+
+  private async handleDocumentUserEvent(
+    subscription: WebhookSubscription,
+    event: DocumentUserEvent
+  ): Promise<void> {
+    const model = await UserMembership.scope([
+      "withUser",
+      "withDocument",
+    ]).findOne({
+      where: {
+        documentId: event.documentId,
+        userId: event.userId,
+      },
+      paranoid: false,
+    });
+
+    await this.sendWebhook({
+      event,
+      subscription,
+      payload: {
+        id: event.modelId,
+        model: model && presentMembership(model),
+        document:
+          model &&
+          (await presentDocument(undefined, model.document!, {
+            includeData: true,
+            includeText: true,
+          })),
+        user: model && presentUser(model.user),
+      },
+    });
+  }
+
+  private async handleDocumentGroupEvent(
+    subscription: WebhookSubscription,
+    event: DocumentGroupEvent
+  ): Promise<void> {
+    const model = await GroupMembership.scope([
+      "withGroup",
+      "withDocument",
+    ]).findOne({
+      where: {
+        documentId: event.documentId,
+        groupId: event.modelId,
+      },
+      paranoid: false,
+    });
+
+    const document =
+      model && (await presentDocument(undefined, model.document!));
+
+    await this.sendWebhook({
+      event,
+      subscription,
+      payload: {
+        id: event.modelId,
+        model: model && presentGroupMembership(model),
+        document,
+        group: model && (await presentGroup(model.group)),
       },
     });
   }
@@ -557,6 +718,9 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
     });
   }
 
+  /** Maximum number of bytes to read from webhook response bodies. */
+  private static readonly MAX_RESPONSE_BODY_SIZE = 1024;
+
   private async sendWebhook({
     event,
     subscription,
@@ -571,7 +735,11 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       status: "pending",
     });
 
-    let response, requestBody, requestHeaders, status;
+    let response: Awaited<ReturnType<typeof fetch>> | undefined;
+    let requestBody, requestHeaders;
+    let status: WebhookDeliveryStatus;
+    let responseBody = "";
+
     try {
       requestBody = presentWebhook({
         event,
@@ -580,10 +748,7 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       });
       requestHeaders = {
         "Content-Type": "application/json",
-        "user-agent": `Outline-Webhooks${
-          env.VERSION ? `/${env.VERSION.slice(0, 7)}` : ""
-        }`,
-      };
+      } as Record<string, string>;
 
       const signature = subscription.signature(JSON.stringify(requestBody));
       if (signature) {
@@ -613,12 +778,25 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       status = "failed";
     }
 
+    if (response) {
+      try {
+        // TODO: Use stream to avoid buffering large responses in memory.
+        const text = await response.text();
+        responseBody = text.slice(0, DeliverWebhookTask.MAX_RESPONSE_BODY_SIZE);
+      } catch (err) {
+        Logger.debug(
+          "task",
+          `Failed to read webhook response body: ${(err as Error).message}`
+        );
+      }
+    }
+
     await delivery.update({
       status,
       statusCode: response ? response.status : null,
       requestBody,
       requestHeaders,
-      responseBody: response ? await response.text() : "",
+      responseBody,
       responseHeaders: response
         ? Object.fromEntries(response.headers.entries())
         : {},
@@ -637,20 +815,62 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
   }
 
   private async checkAndDisableSubscription(subscription: WebhookSubscription) {
-    const recentDeliveries = await WebhookDelivery.findAll({
+    // Calculate the time window for analysis
+    const timeWindowSeconds = env.WEBHOOK_FAILURE_TIME_WINDOW;
+    const failureRateThreshold = env.WEBHOOK_FAILURE_RATE_THRESHOLD;
+    const timeWindowStart = new Date(Date.now() - timeWindowSeconds * 1000);
+
+    // Get all deliveries within the time window
+    const deliveriesInWindow = await WebhookDelivery.findAll({
       where: {
         webhookSubscriptionId: subscription.id,
+        createdAt: {
+          [Op.gte]: timeWindowStart,
+        },
       },
       order: [["createdAt", "DESC"]],
-      limit: 25,
     });
 
-    const allFailed = recentDeliveries.every(
+    // If there are no deliveries in the time window, don't disable
+    if (deliveriesInWindow.length === 0) {
+      return;
+    }
+
+    // Calculate failure rate
+    const failedDeliveries = deliveriesInWindow.filter(
       (delivery) => delivery.status === "failed"
     );
+    const failureRate =
+      (failedDeliveries.length / deliveriesInWindow.length) * 100;
 
-    if (recentDeliveries.length === 25 && allFailed) {
-      // If the last 25 deliveries failed, disable the subscription
+    // Only log analysis if there are failures to report
+    if (failedDeliveries.length > 0) {
+      Logger.info("task", "Webhook failure analysis", {
+        subscriptionId: subscription.id,
+        timeWindowSeconds,
+        totalDeliveries: deliveriesInWindow.length,
+        failedDeliveries: failedDeliveries.length,
+        failureRate: Math.round(failureRate * 100) / 100,
+        threshold: failureRateThreshold,
+      });
+    }
+
+    // Check if failure rate exceeds threshold and we have enough data points
+    if (
+      failureRate >= failureRateThreshold &&
+      deliveriesInWindow.length >=
+        DeliverWebhookTask.MIN_DELIVERIES_FOR_ANALYSIS
+    ) {
+      Logger.warn("Disabling webhook due to high failure rate", {
+        subscriptionId: subscription.id,
+        failureRate: Math.round(failureRate * 100) / 100,
+        threshold: failureRateThreshold,
+        timeWindowSeconds,
+        totalDeliveries: deliveriesInWindow.length,
+        failedDeliveries: failedDeliveries.length,
+      });
+
+      // Disable the subscription
       await subscription.disable();
 
       // Send an email to the creator of the webhook to let them know
@@ -667,6 +887,7 @@ export default class DeliverWebhookTask extends BaseTask<Props> {
       if (createdBy && team) {
         await new WebhookDisabledEmail({
           to: createdBy.email,
+          language: createdBy.language,
           teamUrl: team.url,
           webhookName: subscription.name,
         }).schedule();

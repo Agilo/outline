@@ -1,16 +1,17 @@
-// eslint-disable-next-line import/no-unresolved
+// oxlint-disable-next-line import/no-unresolved
 import "vite/modulepreload-polyfill";
-import "focus-visible";
-import { LazyMotion } from "framer-motion";
+import { LazyMotion, domMax } from "framer-motion";
 import { KBarProvider } from "kbar";
 import { Provider } from "mobx-react";
-import * as React from "react";
+import { configure as configureMobx } from "mobx";
+import { StrictMode } from "react";
 import { render } from "react-dom";
 import { HelmetProvider } from "react-helmet-async";
 import { Router } from "react-router-dom";
 import stores from "~/stores";
 import Analytics from "~/components/Analytics";
 import Dialogs from "~/components/Dialogs";
+import Presentation from "~/components/Presentation";
 import ErrorBoundary from "~/components/ErrorBoundary";
 import PageTheme from "~/components/PageTheme";
 import ScrollToTop from "~/components/ScrollToTop";
@@ -20,26 +21,30 @@ import env from "~/env";
 import { initI18n } from "~/utils/i18n";
 import Desktop from "./components/DesktopEventHandler";
 import LazyPolyfill from "./components/LazyPolyfills";
+import PageScroll from "./components/PageScroll";
 import Routes from "./routes";
 import Logger from "./utils/Logger";
+import { PluginManager } from "./utils/PluginManager";
 import history from "./utils/history";
 import { initSentry } from "./utils/sentry";
+import { ActionContextProvider } from "./hooks/useActionContext";
+
+// Load plugins as soon as possible
+void PluginManager.loadPlugins();
 
 initI18n(env.DEFAULT_LANGUAGE);
 const element = window.document.getElementById("root");
-
-history.listen(() => {
-  requestAnimationFrame(() =>
-    window.dispatchEvent(new Event("location-changed"))
-  );
-});
 
 if (env.SENTRY_DSN) {
   initSentry(history);
 }
 
-// Make sure to return the specific export containing the feature bundle.
-const loadFeatures = () => import("./utils/motion").then((res) => res.default);
+configureMobx({
+  // TODO: Enable these options and fix any resulting warnings
+  // enforceActions: env.isDevelopment ? "always" : "never",
+  computedRequiresReaction: true,
+  isolateGlobalState: true,
+});
 
 const commandBarOptions = {
   animations: {
@@ -50,35 +55,38 @@ const commandBarOptions = {
 
 if (element) {
   const App = () => (
-    <React.StrictMode>
+    <StrictMode>
       <HelmetProvider>
         <Provider {...stores}>
           <Analytics>
-            <Theme>
-              <ErrorBoundary showTitle>
-                <KBarProvider actions={[]} options={commandBarOptions}>
-                  <LazyPolyfill>
-                    <LazyMotion features={loadFeatures}>
-                      <Router history={history}>
-                        <>
-                          <PageTheme />
-                          <ScrollToTop>
-                            <Routes />
-                          </ScrollToTop>
-                          <Toasts />
-                          <Dialogs />
-                          <Desktop />
-                        </>
-                      </Router>
-                    </LazyMotion>
-                  </LazyPolyfill>
-                </KBarProvider>
-              </ErrorBoundary>
-            </Theme>
+            <Router history={history}>
+              <Theme>
+                <ActionContextProvider>
+                  <ErrorBoundary showTitle>
+                    <KBarProvider actions={[]} options={commandBarOptions}>
+                      <LazyPolyfill>
+                        <LazyMotion features={domMax}>
+                          <PageScroll>
+                            <PageTheme />
+                            <ScrollToTop>
+                              <Routes />
+                            </ScrollToTop>
+                            <Toasts />
+                            <Dialogs />
+                            <Presentation />
+                            <Desktop />
+                          </PageScroll>
+                        </LazyMotion>
+                      </LazyPolyfill>
+                    </KBarProvider>
+                  </ErrorBoundary>
+                </ActionContextProvider>
+              </Theme>
+            </Router>
           </Analytics>
         </Provider>
       </HelmetProvider>
-    </React.StrictMode>
+    </StrictMode>
   );
 
   render(<App />, element);

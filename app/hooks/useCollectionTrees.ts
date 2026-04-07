@@ -1,6 +1,8 @@
-import * as React from "react";
-import { NavigationNode, NavigationNodeType } from "@shared/types";
-import Collection from "~/models/Collection";
+import { useMemo } from "react";
+import type { NavigationNode } from "@shared/types";
+import { NavigationNodeType } from "@shared/types";
+import { sortNavigationNodes } from "@shared/utils/collections";
+import type Collection from "~/models/Collection";
 import useStores from "~/hooks/useStores";
 
 /**
@@ -64,19 +66,21 @@ export default function useCollectionTrees(): NavigationNode[] {
     const collectionNode: NavigationNode = {
       id: collection.id,
       title: collection.name,
-      url: collection.url,
+      url: collection.path,
       type: NavigationNodeType.Collection,
-      children: collection.documents || [],
+      children: collection.documents
+        ? sortNavigationNodes(collection.documents, collection.sort, true)
+        : [],
       parent: null,
     };
 
-    return addParent(addCollectionId(addDepth(addType(collectionNode))));
+    return addParent(addCollectionId(addDepth(addType(collectionNode), 1)));
   };
 
   const key = collections.orderedData.map((o) => o.documents?.length).join("-");
-  const collectionTrees = React.useMemo(
+  const collectionTrees = useMemo(
     () => collections.orderedData.map(getCollectionTree),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
     [collections.orderedData, key]
   );
 

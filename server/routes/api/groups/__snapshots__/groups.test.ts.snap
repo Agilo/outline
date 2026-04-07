@@ -1,9 +1,9 @@
-// Jest Snapshot v1, https://goo.gl/fbAQLP
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
 
 exports[`#groups.add_user should require admin 1`] = `
 {
-  "error": "admin_required",
-  "message": "An admin role is required to access this resource",
+  "error": "authorization_error",
+  "message": "Authorization error",
   "ok": false,
   "status": 403,
 }
@@ -56,8 +56,8 @@ exports[`#groups.memberships should require authentication 1`] = `
 
 exports[`#groups.remove_user should require admin 1`] = `
 {
-  "error": "admin_required",
-  "message": "An admin role is required to access this resource",
+  "error": "authorization_error",
+  "message": "Authorization error",
   "ok": false,
   "status": 403,
 }
@@ -81,7 +81,7 @@ exports[`#groups.update should require authentication 1`] = `
 }
 `;
 
-exports[`#groups.update when user is admin fails with validation error when name already taken 1`] = `
+exports[`#groups.update when checking for noop updates fails with validation error when name already taken 1`] = `
 {
   "error": "validation_error",
   "message": "The name of this group is already in use (isUniqueNameInTeam)",

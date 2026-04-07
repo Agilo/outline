@@ -1,22 +1,24 @@
-import fs from "fs";
-import path from "path";
-import util from "util";
-import { Context, Next } from "koa";
+import fs from "node:fs";
+import path from "node:path";
+import util from "node:util";
+import type { Context, Next } from "koa";
 import escape from "lodash/escape";
 import { Sequelize } from "sequelize";
 import isUUID from "validator/lib/isUUID";
-import { IntegrationType, TeamPreference } from "@shared/types";
-import documentLoader from "@server/commands/documentLoader";
+import {
+  IntegrationType,
+  TeamPreference,
+  type NavigationNode,
+} from "@shared/types";
+import { unicodeCLDRtoISO639 } from "@shared/utils/date";
 import env from "@server/env";
 import { Integration } from "@server/models";
+import { DocumentHelper } from "@server/models/helpers/DocumentHelper";
 import presentEnv from "@server/presenters/env";
 import { getTeamFromContext } from "@server/utils/passport";
 import prefetchTags from "@server/utils/prefetchTags";
 import readManifestFile from "@server/utils/readManifestFile";
-
-const isProduction = env.ENVIRONMENT === "production";
-const isDevelopment = env.ENVIRONMENT === "development";
-const isTest = env.ENVIRONMENT === "test";
+import { loadPublicShare } from "@server/commands/shareLoader";
 
 const readFile = util.promisify(fs.readFile);
 const entry = "app/index.tsx";
@@ -24,18 +26,41 @@ const viteHost = env.URL.replace(`:${env.PORT}`, ":3001");
 
 let indexHtmlCache: Buffer | undefined;
 
+/**
+ * Formats navigation tree children as markdown list items.
+ *
+ * @param children Array of navigation nodes
+ * @param baseUrl Base URL for generating links
+ * @returns Formatted markdown string
+ */
+function formatChildDocumentsAsMarkdown(
+  children: NavigationNode[],
+  baseUrl: string
+): string {
+  if (!children || children.length === 0) {
+    return "";
+  }
+
+  const lines = children.map((child) => {
+    const url = baseUrl + child.url;
+    return `- [${child.title}](${url})`;
+  });
+
+  return `\n\n---\n\n**Documents**\n\n${lines.join("\n")}`;
+}
+
 const readIndexFile = async (): Promise<Buffer> => {
-  if (isProduction || isTest) {
+  if (env.isProduction || env.isTest) {
     if (indexHtmlCache) {
       return indexHtmlCache;
     }
   }
 
-  if (isTest) {
+  if (env.isTest) {
     return await readFile(path.join(__dirname, "../static/index.html"));
   }
 
-  if (isDevelopment) {
+  if (env.isDevelopment) {
     return await readFile(
       path.join(__dirname, "../../../server/static/index.html")
     );
@@ -52,31 +77,53 @@ export const renderApp = async (
   options: {
     title?: string;
     description?: string;
+    content?: string;
     canonical?: string;
     shortcutIcon?: string;
-    analytics?: Integration | null;
+    rootShareId?: string;
+    isShare?: boolean;
+    analytics?: Integration<IntegrationType.Analytics>[];
+    allowIndexing?: boolean;
   } = {}
 ) => {
   const {
     title = env.APP_NAME,
     description = "A modern team knowledge base for your internal documentation, product specs, support answers, meeting notes, onboarding, &amp; more…",
     canonical = "",
+    content = "",
     shortcutIcon = `${env.CDN_URL || ""}/images/favicon-32.png`,
+    allowIndexing = true,
   } = options;
 
   if (ctx.request.path === "/realtime/") {
     return next();
   }
 
+  if (!env.isCloudHosted) {
+    options.analytics?.forEach((integration) => {
+      if (integration.settings?.instanceUrl) {
+        const parsed = new URL(integration.settings?.instanceUrl);
+        const csp = ctx.response.get("Content-Security-Policy");
+        ctx.set(
+          "Content-Security-Policy",
+          csp.replace("script-src", `script-src ${parsed.host}`)
+        );
+      }
+    });
+  }
+
   const { shareId } = ctx.params;
   const page = await readIndexFile();
   const environment = `
     <script nonce="${ctx.state.cspNonce}">
-      window.env = ${JSON.stringify(presentEnv(env, options.analytics))};
+      window.env = ${JSON.stringify(presentEnv(env, options)).replace(
+        /</g,
+        "\\u003c"
+      )};
     </script>
   `;
 
-  const scriptTags = isProduction
+  const scriptTags = env.isProduction
     ? `<script type="module" nonce="${ctx.state.cspNonce}" src="${
         env.CDN_URL || ""
       }/static/${readManifestFile()[entry]["file"]}"></script>`
@@ -91,35 +138,95 @@ export const renderApp = async (
       <script type="module" nonce="${ctx.state.cspNonce}" src="${viteHost}/static/${entry}"></script>
     `;
 
+  let headTags = `
+    <meta name="robots" content="${allowIndexing ? "index, follow" : "noindex, nofollow"}" />
+    <link rel="canonical" href="${escape(canonical)}" />
+    <link
+      rel="shortcut icon"
+      type="image/png"
+      href="${escape(shortcutIcon)}"
+      sizes="32x32"
+    />
+    `;
+
+  if (options.isShare) {
+    headTags += `
+    <link rel="sitemap" type="application/xml" href="/api/shares.sitemap?id=${escape(options.rootShareId || shareId)}">
+    `;
+  } else {
+    headTags += prefetchTags;
+    headTags += `
+    <link rel="manifest" href="/static/manifest.webmanifest" />
+    <link
+      rel="apple-touch-icon"
+      type="image/png"
+      href="${env.CDN_URL ?? ""}/images/icon-maskable-192.png"
+      sizes="192x192"
+    />
+    <link
+      rel="apple-touch-icon"
+      type="image/png"
+      href="${env.CDN_URL ?? ""}/images/icon-maskable-512.png"
+      sizes="512x512"
+    />
+    <link
+      rel="apple-touch-icon"
+      type="image/png"
+      href="${env.CDN_URL ?? ""}/images/icon-maskable-1024.png"
+      sizes="1024x1024"
+    />
+    <link
+      rel="search"
+      type="application/opensearchdescription+xml"
+      href="/opensearch.xml"
+      title="Outline"
+    />
+    `;
+  }
+
+  // Ensure no caching is performed
+  ctx.response.set("Cache-Control", "no-cache, must-revalidate");
+  ctx.response.set("Expires", "-1");
+
   ctx.body = page
     .toString()
     .replace(/\{env\}/g, environment)
+    .replace(/\{lang\}/g, unicodeCLDRtoISO639(env.DEFAULT_LANGUAGE))
     .replace(/\{title\}/g, escape(title))
     .replace(/\{description\}/g, escape(description))
-    .replace(/\{canonical-url\}/g, canonical)
-    .replace(/\{shortcut-icon\}/g, shortcutIcon)
-    .replace(/\{prefetch\}/g, shareId ? "" : prefetchTags)
-    .replace(/\{slack-app-id\}/g, env.SLACK_APP_ID || "")
+    .replace(/\{content\}/g, content)
     .replace(/\{cdn-url\}/g, env.CDN_URL || "")
+    .replace(/\{head-tags\}/g, headTags)
+    .replace(/\{slack-app-id\}/g, env.public.SLACK_APP_ID || "")
     .replace(/\{script-tags\}/g, scriptTags)
     .replace(/\{csp-nonce\}/g, ctx.state.cspNonce);
 };
 
 export const renderShare = async (ctx: Context, next: Next) => {
-  const { shareId, documentSlug } = ctx.params;
-  // Find the share record if publicly published so that the document title
-  // can be be returned in the server-rendered HTML. This allows it to appear in
-  // unfurls with more reliablity
-  let share, document, team, analytics;
+  const rootShareId = ctx.state?.rootShare?.id;
+  const shareId = rootShareId ?? ctx.params.shareId;
+  const collectionSlug = ctx.params.collectionSlug;
+  const documentSlug = ctx.params.documentSlug;
 
+  // Find the share record if published so that the document title can be returned
+  // in the server-rendered HTML. This allows it to appear in unfurls more reliably.
+  let share, collection, document, team;
+  let analytics: Integration<IntegrationType.Analytics>[] = [];
+
+  let sharedTree;
   try {
-    team = await getTeamFromContext(ctx);
-    const result = await documentLoader({
-      id: documentSlug,
-      shareId,
+    team = await getTeamFromContext(ctx, { includeStateCookie: false });
+    const result = await loadPublicShare({
+      id: shareId,
+      collectionId: collectionSlug,
+      documentId: documentSlug,
       teamId: team?.id,
     });
     share = result.share;
+    collection = result.collection;
+    document = result.document;
+    sharedTree = result.sharedTree;
+
     if (isUUID(shareId) && share?.urlId) {
       // Redirect temporarily because the url slug
       // can be modified by the user at any time
@@ -127,40 +234,119 @@ export const renderShare = async (ctx: Context, next: Next) => {
       ctx.status = 307;
       return;
     }
-    document = result.document;
 
-    analytics = await Integration.findOne({
+    analytics = await Integration.findAll({
       where: {
-        teamId: document.teamId,
+        teamId: share.teamId,
         type: IntegrationType.Analytics,
       },
     });
 
     if (share && !ctx.userAgent.isBot) {
-      await share.update({
-        lastAccessedAt: new Date(),
-        views: Sequelize.literal("views + 1"),
-      });
+      await share.update(
+        {
+          lastAccessedAt: new Date(),
+          views: Sequelize.literal("views + 1"),
+        },
+        {
+          hooks: false,
+        }
+      );
     }
-  } catch (err) {
+  } catch (_err) {
     // If the share or document does not exist, return a 404.
     ctx.status = 404;
   }
 
-  // Allow shares to be embedded in iframes on other websites
-  ctx.remove("X-Frame-Options");
+  // If the client explicitly requests markdown and prefers it over HTML,
+  // or the URL path ends with .md, return the document as markdown. This is
+  // useful for LLMs and API clients.
+  const acceptHeader = ctx.request.headers.accept || "";
+  const prefersMarkdown =
+    ctx.params.format === "md" ||
+    (acceptHeader.includes("text/markdown") &&
+      ctx.accepts("text/markdown", "text/html") === "text/markdown");
+
+  if (prefersMarkdown && (document || collection)) {
+    let markdown = await DocumentHelper.toMarkdown(document || collection!, {
+      includeTitle: true,
+      signedUrls: 86400, // 24 hours
+      teamId: team?.id,
+    });
+
+    // Append child documents list if the share includes them
+    if (share?.includeChildDocuments && sharedTree) {
+      const node = document
+        ? (collection?.getDocumentTree(document.id) ?? sharedTree)
+        : sharedTree;
+
+      if (node?.children?.length) {
+        markdown += formatChildDocumentsAsMarkdown(
+          node.children,
+          share.canonicalUrl
+        );
+      }
+    }
+
+    ctx.type = "text/markdown";
+    ctx.body = markdown;
+    return;
+  }
+
+  // Allow shares to be embedded in iframes on other websites unless prevented by team preference
+  const preventEmbedding =
+    team?.getPreference(TeamPreference.PreventDocumentEmbedding) ?? false;
+  if (!preventEmbedding) {
+    ctx.remove("X-Frame-Options");
+  }
+
+  const publicBranding =
+    team?.getPreference(TeamPreference.PublicBranding) ?? false;
+
+  const title = document
+    ? document.title
+    : collection
+      ? collection.name
+      : publicBranding && team?.name
+        ? team.name
+        : undefined;
+
+  const content =
+    document || collection
+      ? await DocumentHelper.toHTML(document || collection!, {
+          includeStyles: false,
+          includeHead: false,
+          includeTitle: true,
+          signedUrls: true,
+        })
+      : undefined;
+
+  const canonicalUrl =
+    share && share.canonicalUrl !== ctx.request.origin + ctx.request.url
+      ? `${share.canonicalUrl}${
+          documentSlug && document
+            ? document.path
+            : collectionSlug && collection
+              ? collection.path
+              : ""
+        }`
+      : undefined;
 
   // Inject share information in SSR HTML
   return renderApp(ctx, next, {
-    title: document?.title,
-    description: document?.getSummary(),
+    title,
+    description:
+      document?.getSummary() ||
+      (publicBranding && team?.description ? team.description : undefined),
+    content,
     shortcutIcon:
-      team?.getPreference(TeamPreference.PublicBranding) && team.avatarUrl
-        ? team.avatarUrl
+      publicBranding && team?.avatarUrl
+        ? (await team.publicAvatarUrl()) ?? undefined
         : undefined,
     analytics,
-    canonical: share
-      ? `${share.canonicalUrl}${documentSlug && document ? document.url : ""}`
-      : undefined,
+    isShare: true,
+    rootShareId,
+    canonical: canonicalUrl,
+    allowIndexing: share?.allowIndexing,
   });
 };

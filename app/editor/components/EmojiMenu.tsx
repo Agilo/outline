@@ -1,74 +1,79 @@
-import data, { type Emoji as TEmoji, EmojiMartData } from "@emoji-mart/data";
-import FuzzySearch from "fuzzy-search";
 import capitalize from "lodash/capitalize";
-import snakeCase from "lodash/snakeCase";
-import React from "react";
+import { observer } from "mobx-react";
+import { useCallback, useMemo, useEffect } from "react";
+import { emojiMartToGemoji, snakeCase } from "@shared/editor/lib/emoji";
+import { search as emojiSearch } from "@shared/utils/emoji";
 import EmojiMenuItem from "./EmojiMenuItem";
-import SuggestionsMenu, {
-  Props as SuggestionsMenuProps,
-} from "./SuggestionsMenu";
+import type { Props as SuggestionsMenuProps } from "./SuggestionsMenu";
+import SuggestionsMenu from "./SuggestionsMenu";
+import useStores from "~/hooks/useStores";
+import { determineIconType } from "@shared/utils/icon";
+import { IconType } from "@shared/types";
 
 type Emoji = {
   name: string;
   title: string;
   emoji: string;
   description: string;
-  attrs: { markup: string; "data-name": string };
+  attrs: { "data-name": string };
 };
-
-const searcher = new FuzzySearch<TEmoji>(
-  Object.values((data as EmojiMartData).emojis),
-  ["keywords"],
-  {
-    caseSensitive: true,
-    sort: true,
-  }
-);
 
 type Props = Omit<
   SuggestionsMenuProps<Emoji>,
-  "renderMenuItem" | "items" | "onLinkToolbarOpen" | "embeds" | "trigger"
+  "renderMenuItem" | "items" | "embeds"
 >;
 
 const EmojiMenu = (props: Props) => {
+  const { emojis } = useStores();
   const { search = "" } = props;
 
-  const items = React.useMemo(() => {
-    const n = search.toLowerCase();
-    const result = searcher.search(n).map((item) => {
-      // We snake_case the shortcode for backwards compatability with gemoji to
-      // avoid multiple formats being written into documents.
-      const shortcode = snakeCase(item.id);
-      const emoji = item.skins[0].native;
+  useEffect(() => {
+    if (search) {
+      void emojis.fetchPage({ query: search });
+    }
+  }, [emojis, search]);
 
-      return {
-        name: "emoji",
-        title: emoji,
-        description: capitalize(item.name.toLowerCase()),
-        emoji,
-        attrs: { markup: shortcode, "data-name": shortcode },
-      };
-    });
+  const items = useMemo(
+    () =>
+      emojiSearch({ customEmojis: emojis.orderedData, query: search })
+        .map((item) => {
+          // We snake_case the shortcode for backwards compatability with gemoji to
+          // avoid multiple formats being written into documents.
+          const id = emojiMartToGemoji[item.id] || item.id;
+          const type = determineIconType(id);
+          const value = type === IconType.Custom ? id : snakeCase(id);
+          const emoji = item.value;
 
-    return result.slice(0, 10);
-  }, [search]);
+          return {
+            name: "emoji",
+            title: emoji,
+            description:
+              type === IconType.Custom
+                ? item.name
+                : capitalize(item.name.toLowerCase()),
+            emoji,
+            attrs: { "data-name": value },
+          };
+        })
+        .slice(0, 15),
+    [search, emojis.orderedData]
+  );
+
+  const renderMenuItem = useCallback(
+    (item, _index, options) => (
+      <EmojiMenuItem {...options} title={item.description} emoji={item.emoji} />
+    ),
+    []
+  );
 
   return (
     <SuggestionsMenu
       {...props}
-      trigger=":"
       filterable={false}
-      renderMenuItem={(item, _index, options) => (
-        <EmojiMenuItem
-          onClick={options.onClick}
-          selected={options.selected}
-          title={item.description}
-          emoji={item.emoji}
-        />
-      )}
+      renderMenuItem={renderMenuItem}
       items={items}
     />
   );
 };
 
-export default EmojiMenu;
+export default observer(EmojiMenu);

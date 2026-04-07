@@ -1,4 +1,4 @@
-import { View } from "@server/models";
+import type { View } from "@server/models";
 import { presentUser } from "../presenters";
 
 export default function presentView(view: View) {
@@ -8,6 +8,7 @@ export default function presentView(view: View) {
     count: view.count,
     firstViewedAt: view.createdAt,
     lastViewedAt: view.updatedAt,
+    userId: view.userId,
     user: presentUser(view.user),
   };
 }

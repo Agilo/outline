@@ -1,8 +1,6 @@
 import Router from "koa-router";
 import { Sequelize } from "sequelize";
 import starCreator from "@server/commands/starCreator";
-import starDestroyer from "@server/commands/starDestroyer";
-import starUpdater from "@server/commands/starUpdater";
 import auth from "@server/middlewares/authentication";
 import { transaction } from "@server/middlewares/transaction";
 import validate from "@server/middlewares/validate";
@@ -10,10 +8,10 @@ import { Document, Star, Collection } from "@server/models";
 import { authorize } from "@server/policies";
 import {
   presentStar,
-  presentDocument,
+  presentDocuments,
   presentPolicies,
 } from "@server/presenters";
-import { APIContext } from "@server/types";
+import type { APIContext } from "@server/types";
 import { starIndexing } from "@server/utils/indexing";
 import pagination from "../middlewares/pagination";
 import * as T from "./schema";
@@ -33,24 +31,25 @@ router.post(
     if (documentId) {
       const document = await Document.findByPk(documentId, {
         userId: user.id,
+        transaction,
       });
       authorize(user, "star", document);
     }
 
     if (collectionId) {
-      const collection = await Collection.scope({
-        method: ["withMembership", user.id],
-      }).findByPk(collectionId);
+      const collection = await Collection.findByPk(collectionId, {
+        userId: user.id,
+        transaction,
+      });
       authorize(user, "star", collection);
     }
 
     const star = await starCreator({
+      ctx,
       user,
       documentId,
       collectionId,
-      ip: ctx.request.ip,
       index,
-      transaction,
     });
 
     ctx.body = {
@@ -96,7 +95,7 @@ router.post(
       .map((star) => star.documentId)
       .filter(Boolean) as string[];
     const documents = documentIds.length
-      ? await Document.defaultScopeWithUser(user.id).findAll({
+      ? await Document.withMembershipScope(user.id).findAll({
           where: {
             id: documentIds,
             collectionId: collectionIds,
@@ -110,9 +109,7 @@ router.post(
       pagination: ctx.state.pagination,
       data: {
         stars: stars.map(presentStar),
-        documents: await Promise.all(
-          documents.map((document: Document) => presentDocument(document))
-        ),
+        documents: await presentDocuments(ctx, documents),
       },
       policies,
     };
@@ -123,19 +120,19 @@ router.post(
   "stars.update",
   auth(),
   validate(T.StarsUpdateSchema),
+  transaction(),
   async (ctx: APIContext<T.StarsUpdateReq>) => {
     const { id, index } = ctx.input.body;
-
     const { user } = ctx.state.auth;
-    let star = await Star.findByPk(id);
+    const { transaction } = ctx.state;
+
+    const star = await Star.findByPk(id, {
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
     authorize(user, "update", star);
 
-    star = await starUpdater({
-      user,
-      star,
-      ip: ctx.request.ip,
-      index,
-    });
+    await star.updateWithCtx(ctx, { index });
 
     ctx.body = {
       data: presentStar(star),
@@ -148,14 +145,19 @@ router.post(
   "stars.delete",
   auth(),
   validate(T.StarsDeleteSchema),
+  transaction(),
   async (ctx: APIContext<T.StarsDeleteReq>) => {
     const { id } = ctx.input.body;
-
     const { user } = ctx.state.auth;
-    const star = await Star.findByPk(id);
+    const { transaction } = ctx.state;
+
+    const star = await Star.findByPk(id, {
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
     authorize(user, "delete", star);
 
-    await starDestroyer({ user, star, ip: ctx.request.ip });
+    await star.destroyWithCtx(ctx);
 
     ctx.body = {
       success: true,

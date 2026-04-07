@@ -1,13 +1,12 @@
-import MarkdownIt from "markdown-it";
-import StateBlock from "markdown-it/lib/rules_block/state_block";
-import StateInline from "markdown-it/lib/rules_inline/state_inline";
+import type { StateBlock, StateInline } from "markdown-it";
+import type MarkdownIt from "markdown-it";
 
-export const REGEX_INLINE_MATH_DOLLARS = /\$\$(.+)\$\$/;
+export const REGEX_INLINE_MATH_DOLLARS = /\$\$(.+)\$\$$/;
 
 export const REGEX_BLOCK_MATH_DOLLARS = /\$\$\$\s+$/;
 
-const inlineMathDelimiter = "$$";
-const blockMathDelimiter = "$$$";
+const inlineMathDelimiter = "$";
+const blockMathDelimiter = "$$";
 
 // test if potential opening or closing delimiter
 // assumes that there is a "$" at state.src[pos]
@@ -85,7 +84,7 @@ function mathInline(state: StateInline, silent: boolean): boolean {
     return true;
   }
 
-  // check if we have empty content (ex. $$$$) do not parse
+  // check if we have empty content (ex. $$) do not parse
   if (match - start === 0) {
     if (!silent) {
       state.pending += inlineMathDelimiter + inlineMathDelimiter;

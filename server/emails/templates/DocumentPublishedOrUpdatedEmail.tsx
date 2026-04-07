@@ -1,13 +1,16 @@
-import inlineCss from "inline-css";
 import * as React from "react";
-import { NotificationEventType } from "@shared/types";
+import { NotificationEventType, TeamPreference } from "@shared/types";
 import { Day } from "@shared/utils/time";
-import env from "@server/env";
-import { Document, Collection, Revision } from "@server/models";
-import DocumentHelper from "@server/models/helpers/DocumentHelper";
+import type { Collection } from "@server/models";
+import { Document, Revision } from "@server/models";
+import { DocumentHelper } from "@server/models/helpers/DocumentHelper";
+import HTMLHelper from "@server/models/helpers/HTMLHelper";
 import NotificationSettingsHelper from "@server/models/helpers/NotificationSettingsHelper";
 import SubscriptionHelper from "@server/models/helpers/SubscriptionHelper";
-import BaseEmail, { EmailProps } from "./BaseEmail";
+import { can } from "@server/policies";
+import { CacheHelper } from "@server/utils/CacheHelper";
+import type { EmailProps } from "./BaseEmail";
+import BaseEmail, { EmailMessageCategory } from "./BaseEmail";
 import Body from "./components/Body";
 import Button from "./components/Button";
 import Diff from "./components/Diff";
@@ -30,7 +33,7 @@ type InputProps = EmailProps & {
 
 type BeforeSend = {
   document: Document;
-  collection: Collection;
+  collection: Collection | null;
   unsubscribeUrl: string;
   body: string | undefined;
 };
@@ -45,6 +48,10 @@ export default class DocumentPublishedOrUpdatedEmail extends BaseEmail<
   InputProps,
   BeforeSend
 > {
+  protected get category() {
+    return EmailMessageCategory.Notification;
+  }
+
   protected async beforeSend(props: InputProps) {
     const { documentId, revisionId } = props;
     const document = await Document.unscoped().findByPk(documentId, {
@@ -54,34 +61,36 @@ export default class DocumentPublishedOrUpdatedEmail extends BaseEmail<
       return false;
     }
 
-    const collection = await document.$get("collection");
-    if (!collection) {
-      return false;
-    }
+    const [collection, team] = await Promise.all([
+      document.$get("collection"),
+      document.$get("team"),
+    ]);
 
     let body;
-    if (revisionId) {
-      // generate the diff html for the email
-      const revision = await Revision.findByPk(revisionId);
+    if (revisionId && team?.getPreference(TeamPreference.PreviewsInEmails)) {
+      body = await CacheHelper.getDataOrSet<string>(
+        `diff:${revisionId}`,
+        async () => {
+          // generate the diff html for the email
+          const revision = await Revision.findByPk(revisionId);
 
-      if (revision) {
-        const before = await revision.previous();
-        const content = await DocumentHelper.toEmailDiff(before, revision, {
-          includeTitle: false,
-          centered: false,
-          signedUrls: (4 * Day) / 1000,
-        });
+          if (revision) {
+            const before = await revision.before();
+            const content = await DocumentHelper.toEmailDiff(before, revision, {
+              includeTitle: false,
+              centered: false,
+              signedUrls: 4 * Day.seconds,
+              baseUrl: props.teamUrl,
+            });
 
-        // inline all css so that it works in as many email providers as possible.
-        body = content
-          ? await inlineCss(content, {
-              url: env.URL,
-              applyStyleTags: true,
-              applyLinkTags: false,
-              removeStyleTags: true,
-            })
-          : undefined;
-      }
+            // inline all css so that it works in as many email providers as possible.
+            return content ? await HTMLHelper.inlineCSS(content) : undefined;
+          }
+          return;
+        },
+        30,
+        10000
+      );
     }
 
     return {
@@ -99,20 +108,39 @@ export default class DocumentPublishedOrUpdatedEmail extends BaseEmail<
   eventName(eventType: NotificationEventType) {
     switch (eventType) {
       case NotificationEventType.PublishDocument:
-        return "published";
+        return this.t("published");
       case NotificationEventType.UpdateDocument:
-        return "updated";
+        return this.t("updated");
       default:
         return "";
     }
   }
 
   protected subject({ document, eventType }: Props) {
-    return `“${document.title}” ${this.eventName(eventType)}`;
+    return this.t(`“{{ documentTitle }}” {{ eventName }}`, {
+      documentTitle: document.titleWithDefault,
+      eventName: this.eventName(eventType),
+    });
   }
 
   protected preview({ actorName, eventType }: Props): string {
-    return `${actorName} ${this.eventName(eventType)} a document`;
+    return this.t("{{ actorName }} {{ eventName }} a document", {
+      actorName,
+      eventName: this.eventName(eventType),
+    });
+  }
+
+  protected fromName({ actorName }: Props) {
+    return actorName;
+  }
+
+  protected replyTo({ notification }: Props) {
+    if (notification?.user && notification.actor?.email) {
+      if (can(notification.user, "readEmail", notification.actor)) {
+        return notification.actor.email;
+      }
+    }
+    return;
   }
 
   protected renderAsText({
@@ -125,11 +153,15 @@ export default class DocumentPublishedOrUpdatedEmail extends BaseEmail<
     const eventName = this.eventName(eventType);
 
     return `
-"${document.title}" ${eventName}
+${this.t(`"{{ documentTitle }}" {{ eventName }}`, { documentTitle: document.titleWithDefault, eventName })}
 
-${actorName} ${eventName} the document "${document.title}", in the ${collection.name} collection.
+${this.t(`{{ actorName }} {{ eventName }} the document "{{ documentTitle }}"`, { actorName, eventName, documentTitle: document.titleWithDefault })}${
+      collection?.name
+        ? `, ${this.t("in the {{ collectionName }} collection", { collectionName: collection.name })}`
+        : ""
+    }.
 
-Open Document: ${teamUrl}${document.url}
+${this.t("Open Document")}: ${teamUrl}${document.url}
 `;
   }
 
@@ -149,18 +181,34 @@ Open Document: ${teamUrl}${document.url}
     return (
       <EmailTemplate
         previewText={this.preview(props)}
-        goToAction={{ url: documentLink, name: "View Document" }}
+        goToAction={{ url: documentLink, name: this.t("View Document") }}
       >
         <Header />
 
         <Body>
           <Heading>
-            “{document.title}” {eventName}
+            {this.t(`“{{ documentTitle }}” {{ eventName }}`, {
+              documentTitle: document.titleWithDefault,
+              eventName,
+            })}
           </Heading>
           <p>
-            {actorName} {eventName} the document{" "}
-            <a href={documentLink}>{document.title}</a>, in the{" "}
-            {collection.name} collection.
+            {this.t("{{ actorName }} {{ eventName }} the document", {
+              actorName,
+              eventName,
+            })}{" "}
+            <a href={documentLink}>{document.titleWithDefault}</a>
+            {collection?.name ? (
+              <>
+                ,{" "}
+                {this.t("in the {{ collectionName }} collection", {
+                  collectionName: collection.name,
+                })}
+              </>
+            ) : (
+              ""
+            )}
+            .
           </p>
           {body && (
             <>
@@ -172,18 +220,21 @@ Open Document: ${teamUrl}${document.url}
             </>
           )}
           <p>
-            <Button href={documentLink}>Open Document</Button>
+            <Button href={documentLink}>{this.t("Open Document")}</Button>
           </p>
         </Body>
 
-        <Footer unsubscribeUrl={unsubscribeUrl}>
+        <Footer
+          unsubscribeUrl={unsubscribeUrl}
+          unsubscribeText={this.t("Unsubscribe from these emails")}
+        >
           <Link
             href={SubscriptionHelper.unsubscribeUrl(
               props.userId,
               props.documentId
             )}
           >
-            Unsubscribe from this doc
+            {this.t("Unsubscribe from this doc")}
           </Link>
         </Footer>
       </EmailTemplate>

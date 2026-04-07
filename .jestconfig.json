@@ -1,5 +1,7 @@
 {
   "workerIdleMemoryLimit": "0.75",
+  "maxWorkers": "50%",
+  "transformIgnorePatterns": ["node_modules/(?!(franc|trigram-utils)/)"],
   "projects": [
     {
       "displayName": "server",
@@ -10,11 +12,11 @@
       },
       "setupFiles": [
         "<rootDir>/__mocks__/console.js",
-        "<rootDir>/server/test/env.ts"
+        "<rootDir>/server/test/setupMocks.js"
       ],
       "setupFilesAfterEnv": ["<rootDir>/server/test/setup.ts"],
-      "testEnvironment": "node",
-      "runner": "@getoutline/jest-runner-serial"
+      "globalTeardown": "<rootDir>/server/test/globalTeardown.js",
+      "testEnvironment": "node"
     },
     {
       "displayName": "app",
@@ -22,8 +24,7 @@
       "moduleNameMapper": {
         "^~/(.*)$": "<rootDir>/app/$1",
         "^@shared/(.*)$": "<rootDir>/shared/$1",
-        "^.*[.](gif|ttf|eot|svg)$": "<rootDir>/__test__/fileMock.js",
-        "^uuid$": "<rootDir>/node_modules/uuid/dist/index.js"
+        "^.*[.](gif|ttf|eot|svg)$": "<rootDir>/__test__/fileMock.js"
       },
       "modulePaths": ["<rootDir>/app"],
       "setupFiles": ["<rootDir>/__mocks__/window.js"],
@@ -50,8 +51,7 @@
       "moduleNameMapper": {
         "^~/(.*)$": "<rootDir>/app/$1",
         "^@shared/(.*)$": "<rootDir>/shared/$1",
-        "^.*[.](gif|ttf|eot|svg)$": "<rootDir>/__test__/fileMock.js",
-        "^uuid$": "<rootDir>/node_modules/uuid/dist/index.js"
+        "^.*[.](gif|ttf|eot|svg)$": "<rootDir>/__test__/fileMock.js"
       },
       "setupFiles": ["<rootDir>/__mocks__/window.js"],
       "testEnvironment": "jsdom",

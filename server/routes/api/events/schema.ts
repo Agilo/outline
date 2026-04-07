@@ -1,28 +1,41 @@
 import { z } from "zod";
-import BaseSchema from "@server/routes/api/BaseSchema";
+import { EventHelper } from "@shared/utils/EventHelper";
+import { BaseSchema } from "@server/routes/api/schema";
 
 export const EventsListSchema = BaseSchema.extend({
   body: z.object({
+    /** Events to retrieve */
+    events: z
+      .array(
+        z.union([
+          z.enum(EventHelper.ACTIVITY_EVENTS),
+          z.enum(EventHelper.AUDIT_EVENTS),
+        ])
+      )
+      .optional(),
+
     /** Id of the user who performed the action */
-    actorId: z.string().uuid().optional(),
+    actorId: z.uuid().optional(),
 
     /** Id of the document to filter the events for */
-    documentId: z.string().uuid().optional(),
+    documentId: z.uuid().optional(),
 
     /** Id of the collection to filter the events for */
-    collectionId: z.string().uuid().optional(),
+    collectionId: z.uuid().optional(),
 
     /** Whether to include audit events */
-    auditLog: z.boolean().default(false),
+    auditLog: z.boolean().prefault(false),
 
-    /** Name of the event to retrieve */
+    /** @deprecated, use 'events' parameter instead
+     * Name of the event to retrieve
+     */
     name: z.string().optional(),
 
     /** The attribute to sort the events by */
     sort: z
       .string()
       .refine((val) => ["name", "createdAt"].includes(val))
-      .default("createdAt"),
+      .prefault("createdAt"),
 
     /** The direction to sort the events */
     direction: z

@@ -1,33 +1,35 @@
 import isEmpty from "lodash/isEmpty";
-import isUUID from "validator/lib/isUUID";
 import { z } from "zod";
-import { SHARE_URL_SLUG_REGEX, SLUG_URL_REGEX } from "@shared/utils/urlHelpers";
+import { UrlHelper } from "@shared/utils/UrlHelper";
 import { Share } from "@server/models";
-import BaseSchema from "../BaseSchema";
+import { zodIdType } from "@server/utils/zod";
+import { BaseSchema } from "../schema";
 
 export const SharesInfoSchema = BaseSchema.extend({
   body: z
     .object({
-      id: z.string().uuid().optional(),
-      documentId: z
-        .string()
-        .optional()
-        .refine(
-          (val) => (val ? isUUID(val) || SLUG_URL_REGEX.test(val) : true),
-          {
-            message: "must be uuid or url slug",
-          }
-        ),
+      id: z.string().optional(),
+      collectionId: zodIdType().optional(),
+      documentId: zodIdType().optional(),
     })
-    .refine((body) => !(isEmpty(body.id) && isEmpty(body.documentId)), {
-      message: "id or documentId is required",
-    }),
+    .refine(
+      (body) =>
+        !(
+          isEmpty(body.id) &&
+          isEmpty(body.collectionId) &&
+          isEmpty(body.documentId)
+        ),
+      {
+        error: "one of id, collectionId, or documentId is required",
+      }
+    ),
 });
 
 export type SharesInfoReq = z.infer<typeof SharesInfoSchema>;
 
 export const SharesListSchema = BaseSchema.extend({
   body: z.object({
+    query: z.string().optional(),
     sort: z
       .string()
       .refine((val) => Object.keys(Share.getAttributes()).includes(val), {
@@ -35,7 +37,7 @@ export const SharesListSchema = BaseSchema.extend({
           ", "
         )}`,
       })
-      .default("updatedAt"),
+      .prefault("updatedAt"),
     direction: z
       .string()
       .optional()
@@ -47,13 +49,17 @@ export type SharesListReq = z.infer<typeof SharesListSchema>;
 
 export const SharesUpdateSchema = BaseSchema.extend({
   body: z.object({
-    id: z.string().uuid(),
+    id: z.uuid(),
     includeChildDocuments: z.boolean().optional(),
     published: z.boolean().optional(),
+    allowIndexing: z.boolean().optional(),
+    allowSubscriptions: z.boolean().optional(),
+    showLastUpdated: z.boolean().optional(),
+    showTOC: z.boolean().optional(),
     urlId: z
       .string()
-      .regex(SHARE_URL_SLUG_REGEX, {
-        message: "must contain only alphanumeric and dashes",
+      .regex(UrlHelper.SHARE_URL_SLUG_REGEX, {
+        error: "must contain only alphanumeric and dashes",
       })
       .nullish(),
   }),
@@ -62,21 +68,74 @@ export const SharesUpdateSchema = BaseSchema.extend({
 export type SharesUpdateReq = z.infer<typeof SharesUpdateSchema>;
 
 export const SharesCreateSchema = BaseSchema.extend({
-  body: z.object({
-    documentId: z
-      .string()
-      .refine((val) => isUUID(val) || SLUG_URL_REGEX.test(val), {
-        message: "must be uuid or url slug",
-      }),
-  }),
+  body: z
+    .object({
+      collectionId: zodIdType().optional(),
+      documentId: zodIdType().optional(),
+      published: z.boolean().prefault(false),
+      allowIndexing: z.boolean().optional(),
+      allowSubscriptions: z.boolean().optional(),
+      showLastUpdated: z.boolean().optional(),
+      showTOC: z.boolean().optional(),
+      urlId: z
+        .string()
+        .regex(UrlHelper.SHARE_URL_SLUG_REGEX, {
+          error: "must contain only alphanumeric and dashes",
+        })
+        .optional(),
+      includeChildDocuments: z.boolean().prefault(false),
+    })
+    .refine((obj) => !(isEmpty(obj.collectionId) && isEmpty(obj.documentId)), {
+      error: "one of collectionId or documentId is required",
+    }),
 });
 
 export type SharesCreateReq = z.infer<typeof SharesCreateSchema>;
 
 export const SharesRevokeSchema = BaseSchema.extend({
   body: z.object({
-    id: z.string().uuid(),
+    id: z.uuid(),
   }),
 });
 
 export type SharesRevokeReq = z.infer<typeof SharesRevokeSchema>;
+
+export const SharesSitemapSchema = BaseSchema.extend({
+  query: z.object({
+    id: z.string(),
+  }),
+});
+
+export type SharesSitemapReq = z.infer<typeof SharesSitemapSchema>;
+
+export const SharesSubscribeSchema = BaseSchema.extend({
+  body: z.object({
+    shareId: z.string(),
+    documentId: z.uuid(),
+    email: z.string().email(),
+  }),
+});
+
+export type SharesSubscribeReq = z.infer<typeof SharesSubscribeSchema>;
+
+export const SharesConfirmSubscriptionSchema = BaseSchema.extend({
+  query: z.object({
+    id: z.uuid(),
+    token: z.string(),
+    follow: z.string().optional(),
+  }),
+});
+
+export type SharesConfirmSubscriptionReq = z.infer<
+  typeof SharesConfirmSubscriptionSchema
+>;
+
+export const SharesUnsubscribeSchema = BaseSchema.extend({
+  query: z.object({
+    id: z.uuid(),
+    token: z.string(),
+    follow: z.string().optional(),
+  }),
+});
+
+export type SharesUnsubscribeReq = z.infer<typeof SharesUnsubscribeSchema>;

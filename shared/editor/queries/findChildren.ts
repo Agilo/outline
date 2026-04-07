@@ -1,11 +1,7 @@
-import { Node } from "prosemirror-model";
+import type { Node } from "prosemirror-model";
+import type { NodeWithPos } from "../types";
 
 type Predicate = (node: Node) => boolean;
-
-export type NodeWithPos = {
-  pos: number;
-  node: Node;
-};
 
 export function flatten(node: Node, descend = true): NodeWithPos[] {
   if (!node) {

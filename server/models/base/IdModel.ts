@@ -7,9 +7,12 @@ import {
   DataType,
   Default,
 } from "sequelize-typescript";
-import BaseModel from "./BaseModel";
+import Model from "./Model";
 
-class IdModel extends BaseModel {
+class IdModel<
+  TModelAttributes extends object = any,
+  TCreationAttributes extends object = TModelAttributes,
+> extends Model<TModelAttributes, TCreationAttributes> {
   @IsUUID(4)
   @PrimaryKey
   @Default(DataType.UUIDV4)

@@ -1,8 +1,9 @@
-import { NodeSpec, NodeType } from "prosemirror-model";
-import { Command } from "prosemirror-state";
+import type { NodeSpec, NodeType } from "prosemirror-model";
+import type { Command } from "prosemirror-state";
 import { isInTable } from "prosemirror-tables";
-import { MarkdownSerializerState } from "../lib/markdown/serializer";
-import isNodeActive from "../queries/isNodeActive";
+import type { MarkdownSerializerState } from "../lib/markdown/serializer";
+import { isInCode } from "../queries/isInCode";
+import { isNodeActive } from "../queries/isNodeActive";
 import breakRule from "../rules/breaks";
 import Node from "./Node";
 
@@ -18,7 +19,7 @@ export default class HardBreak extends Node {
       selectable: false,
       parseDOM: [{ tag: "br" }],
       toDOM: () => ["br"],
-      toPlainText: () => "\n",
+      leafText: () => "\n",
     };
   }
 
@@ -36,9 +37,12 @@ export default class HardBreak extends Node {
   keys({ type }: { type: NodeType }): Record<string, Command> {
     return {
       "Shift-Enter": (state, dispatch) => {
+        const isParagraphActive = isNodeActive(state.schema.nodes.paragraph)(
+          state
+        );
         if (
-          !isInTable(state) &&
-          !isNodeActive(state.schema.nodes.paragraph)(state)
+          (!isInTable(state) && !isParagraphActive) ||
+          isInCode(state, { onlyBlock: true })
         ) {
           return false;
         }
@@ -51,7 +55,9 @@ export default class HardBreak extends Node {
   }
 
   toMarkdown(state: MarkdownSerializerState) {
-    state.write("\\n");
+    state.write(
+      state.inTable ? "<br>" : state.options.softBreak ? "\n" : "\\n"
+    );
   }
 
   parseMarkdown() {

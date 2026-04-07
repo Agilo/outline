@@ -1,3 +1,5 @@
+import type { Primitive } from "utility-types";
+
 /**
  * Storage is a wrapper class for localStorage that allow safe usage when
  * localStorage is not available.
@@ -41,7 +43,7 @@ class Storage {
    * @param fallback The fallback value if the key doesn't exist.
    * @returns The value or undefined if it doesn't exist.
    */
-  public get(key: string, fallback?: any) {
+  public get(key: string, fallback?: Primitive) {
     try {
       const value = this.interface.getItem(key);
       if (typeof value === "string") {
@@ -66,6 +68,17 @@ class Storage {
       // Ignore errors
     }
   }
+
+  /**
+   * Clear all values from storage.
+   */
+  public clear() {
+    try {
+      this.interface.clear();
+    } catch (_err) {
+      // Ignore errors
+    }
+  }
 }
 
 /**
@@ -73,13 +86,13 @@ class Storage {
  * when localStorage is not available.
  */
 class MemoryStorage {
-  private data = {};
+  private data: Record<string, string> = {};
 
   getItem(key: string) {
     return this.data[key] || null;
   }
 
-  setItem(key: string, value: any) {
+  setItem(key: string, value: Primitive) {
     return (this.data[key] = String(value));
   }
 

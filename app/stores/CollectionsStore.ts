@@ -1,45 +1,27 @@
 import invariant from "invariant";
-import concat from "lodash/concat";
-import find from "lodash/find";
-import last from "lodash/last";
+import isEmpty from "lodash/isEmpty";
+import orderBy from "lodash/orderBy";
 import sortBy from "lodash/sortBy";
-import { computed, action } from "mobx";
+import { computed, action, runInAction } from "mobx";
 import {
   CollectionPermission,
-  FileOperationFormat,
-  NavigationNode,
+  CollectionStatusFilter,
+  type FileOperationFormat,
+  SubscriptionType,
 } from "@shared/types";
 import Collection from "~/models/Collection";
+import type { PaginationParams, Properties } from "~/types";
 import { client } from "~/utils/ApiClient";
-import { AuthorizationError, NotFoundError } from "~/utils/errors";
-import BaseStore from "./BaseStore";
-import RootStore from "./RootStore";
+import type RootStore from "./RootStore";
+import Store from "./base/Store";
 
-enum DocumentPathItemType {
-  Collection = "collection",
-  Document = "document",
-}
-
-export type DocumentPathItem = {
-  type: DocumentPathItemType;
-  id: string;
-  collectionId: string;
-  title: string;
-  url: string;
-};
-
-export type DocumentPath = DocumentPathItem & {
-  path: DocumentPathItem[];
-};
-
-export default class CollectionsStore extends BaseStore<Collection> {
+export default class CollectionsStore extends Store<Collection> {
   constructor(rootStore: RootStore) {
     super(rootStore, Collection);
   }
 
   /**
-   * Returns the currently active collection, or undefined if not in the context
-   * of a collection.
+   * Returns the currently active collection, or undefined if not in the context of a collection.
    *
    * @returns The active Collection or undefined
    */
@@ -51,14 +33,19 @@ export default class CollectionsStore extends BaseStore<Collection> {
   }
 
   @computed
+  get allActive() {
+    return this.orderedData.filter((c) => c.isActive);
+  }
+
+  @computed
   get orderedData(): Collection[] {
     let collections = Array.from(this.data.values());
     collections = collections
       .filter((collection) => !collection.deletedAt)
-      .filter(
-        (collection) =>
-          this.rootStore.policies.abilities(collection.id).readDocument
-      );
+      .filter((collection) => {
+        const can = this.rootStore.policies.abilities(collection.id);
+        return isEmpty(can) || can.readDocument;
+      });
     return collections.sort((a, b) => {
       if (a.index === b.index) {
         return a.updatedAt > b.updatedAt ? -1 : 1;
@@ -68,6 +55,27 @@ export default class CollectionsStore extends BaseStore<Collection> {
     });
   }
 
+  /**
+   * Returns all collections that are require explicit permission to access.
+   */
+  @computed
+  get private(): Collection[] {
+    return this.all.filter((collection) => collection.isPrivate);
+  }
+
+  /**
+   * Returns all collections that are accessible by default.
+   */
+  @computed
+  get nonPrivate(): Collection[] {
+    return this.all.filter(
+      (collection) => collection.isActive && !collection.isPrivate
+    );
+  }
+
+  /**
+   * Returns all collections that are accessible to the current user.
+   */
   @computed
   get all(): Collection[] {
     return sortBy(
@@ -76,61 +84,14 @@ export default class CollectionsStore extends BaseStore<Collection> {
     );
   }
 
-  /**
-   * List of paths to each of the documents, where paths are composed of id and title/name pairs
-   */
-  @computed
-  get pathsToDocuments(): DocumentPath[] {
-    const results: DocumentPathItem[][] = [];
-
-    const travelDocuments = (
-      documentList: NavigationNode[],
-      collectionId: string,
-      path: DocumentPathItem[]
-    ) =>
-      documentList.forEach((document: NavigationNode) => {
-        const { id, title, url } = document;
-        const node = {
-          type: DocumentPathItemType.Document,
-          id,
-          collectionId,
-          title,
-          url,
-        };
-        results.push(concat(path, node));
-        travelDocuments(document.children, collectionId, concat(path, [node]));
-      });
-
-    if (this.isLoaded) {
-      this.data.forEach((collection) => {
-        const { id, name, url } = collection;
-        const node = {
-          type: DocumentPathItemType.Collection,
-          id,
-          collectionId: id,
-          title: name,
-          url,
-        };
-        results.push([node]);
-
-        if (collection.documents) {
-          travelDocuments(collection.documents, id, [node]);
-        }
-      });
-    }
-
-    return results.map((result) => {
-      const tail = last(result) as DocumentPathItem;
-      return { ...tail, path: result };
-    });
-  }
-
   @action
-  import = async (attachmentId: string, format?: string) => {
+  import = async (
+    attachmentId: string,
+    options: { format?: string; permission?: CollectionPermission | null }
+  ) => {
     await client.post("/collections.import", {
-      type: "outline",
-      format,
       attachmentId,
+      ...options,
     });
   };
 
@@ -148,14 +109,38 @@ export default class CollectionsStore extends BaseStore<Collection> {
     }
   };
 
-  async update(params: Record<string, any>): Promise<Collection> {
+  @action
+  archive = async (collection: Collection) => {
+    const res = await client.post("/collections.archive", {
+      id: collection.id,
+    });
+    runInAction("Collection#archive", () => {
+      invariant(res?.data, "Data should be available");
+      this.add(res.data);
+      this.addPolicies(res.policies);
+    });
+  };
+
+  @action
+  restore = async (collection: Collection) => {
+    const res = await client.post("/collections.restore", {
+      id: collection.id,
+    });
+    runInAction("Collection#restore", () => {
+      invariant(res?.data, "Data should be available");
+      this.add(res.data);
+      this.addPolicies(res.policies);
+    });
+  };
+
+  async update(params: Properties<Collection>): Promise<Collection> {
     const result = await super.update(params);
 
     // If we're changing sharing permissions on the collection then we need to
     // remove all locally cached policies for documents in the collection as they
     // are now invalid
     if (params.sharing !== undefined) {
-      this.rootStore.documents.inCollection(params.id).forEach((document) => {
+      this.rootStore.documents.inCollection(result.id).forEach((document) => {
         this.rootStore.policies.remove(document.id);
       });
     }
@@ -164,32 +149,47 @@ export default class CollectionsStore extends BaseStore<Collection> {
   }
 
   @action
-  async fetch(
-    id: string,
-    options: Record<string, any> = {}
-  ): Promise<Collection> {
-    const item = this.get(id) || this.getByUrl(id);
-    if (item && !options.force) {
-      return item;
-    }
+  fetchNamedPage = async (
+    request = "list",
+    options:
+      | (PaginationParams & { statusFilter: CollectionStatusFilter[] })
+      | undefined
+  ): Promise<Collection[]> => {
     this.isFetching = true;
 
     try {
-      const res = await client.post(`/collections.info`, {
-        id,
+      const res = await client.post(`/collections.${request}`, options);
+      invariant(res?.data, "Collection list not available");
+      runInAction("CollectionsStore#fetchNamedPage", () => {
+        res.data.forEach(this.add);
+        this.addPolicies(res.policies);
+        this.isLoaded = true;
       });
-      invariant(res?.data, "Collection not available");
-      this.addPolicies(res.policies);
-      return this.add(res.data);
-    } catch (err) {
-      if (err instanceof AuthorizationError || err instanceof NotFoundError) {
-        this.remove(id);
-      }
-
-      throw err;
+      return res.data;
     } finally {
       this.isFetching = false;
     }
+  };
+
+  @action
+  fetchArchived = async (options?: PaginationParams): Promise<Collection[]> =>
+    this.fetchNamedPage("list", {
+      ...options,
+      statusFilter: [CollectionStatusFilter.Archived],
+    });
+
+  get(id: string = ""): Collection | undefined {
+    return (
+      this.data.get(id) ??
+      this.orderedData.find((collection) => id.endsWith(collection.urlId))
+    );
+  }
+
+  @computed
+  get archived(): Collection[] {
+    return orderBy(this.orderedData, "archivedAt", "desc").filter(
+      (c) => c.isArchived && !c.isDeleted
+    );
   }
 
   @computed
@@ -201,47 +201,48 @@ export default class CollectionsStore extends BaseStore<Collection> {
     );
   }
 
-  star = async (collection: Collection) => {
+  star = async (collection: Collection, index?: string) => {
     await this.rootStore.stars.create({
       collectionId: collection.id,
+      index,
     });
   };
 
   unstar = async (collection: Collection) => {
     const star = this.rootStore.stars.orderedData.find(
-      (star) => star.collectionId === collection.id
+      (s) => s.collectionId === collection.id
     );
     await star?.delete();
   };
 
-  getPathForDocument(documentId: string): DocumentPath | undefined {
-    return this.pathsToDocuments.find((path) => path.id === documentId);
-  }
+  subscribe = (collection: Collection) =>
+    this.rootStore.subscriptions.create({
+      collectionId: collection.id,
+      event: SubscriptionType.Document,
+    });
 
-  titleForDocument(documentPath: string): string | undefined {
-    const path = this.pathsToDocuments.find(
-      (path) => path.url === documentPath
+  unsubscribe = (collection: Collection) => {
+    const subscription = this.rootStore.subscriptions.getByCollectionId(
+      collection.id
     );
-    if (path) {
-      return path.title;
-    }
 
-    return;
+    return subscription?.delete();
+  };
+
+  @computed
+  get navigationNodes() {
+    return this.orderedData.map((collection) => collection.asNavigationNode);
   }
 
-  getByUrl(url: string): Collection | null | undefined {
-    return find(this.orderedData, (col: Collection) => url.endsWith(col.urlId));
-  }
-
-  delete = async (collection: Collection) => {
+  async delete(collection: Collection) {
     await super.delete(collection);
     await this.rootStore.documents.fetchRecentlyUpdated();
     await this.rootStore.documents.fetchRecentlyViewed();
-  };
+  }
 
-  export = (format: FileOperationFormat, includeAttachments: boolean) =>
-    client.post("/collections.export_all", {
-      format,
-      includeAttachments,
-    });
+  export = (options: {
+    format: FileOperationFormat;
+    includeAttachments: boolean;
+    includePrivate: boolean;
+  }) => client.post("/collections.export_all", options);
 }

@@ -1,34 +1,18 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="{lang}">
   <head>
     <title>{title}</title>
     <meta name="theme-color" content="#FFF" />
     <meta name="slack-app-id" content="{slack-app-id}" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content"
+    />
     <meta name="color-scheme" content="light dark" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="description" content="{description}" />
-    <link rel="manifest" href="{cdn-url}/static/manifest.webmanifest" />
-    <link rel="canonical" href="{canonical-url}" data-react-helmet="true" />
-    {prefetch}
-    <link
-      rel="shortcut icon"
-      type="image/png"
-      href="{shortcut-icon}"
-      sizes="32x32"
-    />
-    <link
-      rel="apple-touch-icon"
-      type="image/png"
-      href="{cdn-url}/static/images/apple-touch-icon.png"
-      sizes="192x192"
-    />
-    <link
-      rel="search"
-      type="application/opensearchdescription+xml"
-      href="{cdn-url}/opensearch.xml"
-      title="Outline"
-    />
+    <meta name="darkreader-lock" />
+    {head-tags}
     <style>
       @font-face {
         font-family: "Inter";
@@ -57,10 +41,26 @@
         height: 100%;
       }
 
+      @media print {
+        body {
+          display: block;
+        }
+      }
+
       #root {
         flex: 1;
         min-height: 100%;
         width: 100%;
+      }
+
+      .screenreader-only {
+        clip: rect(0 0 0 0);
+        clip-path: inset(50%);
+        height: 1px;
+        overflow: hidden;
+        position: absolute;
+        white-space: nowrap;
+        width: 1px;
       }
     </style>
   </head>
@@ -81,5 +81,6 @@
       }
     </script>
     {script-tags}
+    <div class="screenreader-only">{content}</div>
   </body>
 </html>

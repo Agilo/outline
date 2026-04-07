@@ -1,6 +1,6 @@
-import { LocationDescriptor } from "history";
+import type { LocationDescriptor, LocationDescriptorObject } from "history";
 import * as React from "react";
-import { match, NavLink, Route } from "react-router-dom";
+import { type match, NavLink, Route } from "react-router-dom";
 
 type Props = React.ComponentProps<typeof NavLink> & {
   children?: (
@@ -9,10 +9,14 @@ type Props = React.ComponentProps<typeof NavLink> & {
           [x: string]: string | undefined;
         }>
       | boolean
-      | null
+      | null,
+    location: LocationDescriptorObject
   ) => React.ReactNode;
+  /** If true, the tab will only be active if the path matches exactly */
   exact?: boolean;
+  /** CSS properties to apply to the link when it is active */
   activeStyle?: React.CSSProperties;
+  /** The path to match against the current location */
   to: LocationDescriptor;
 };
 
@@ -25,7 +29,10 @@ function NavLinkWithChildrenFunc(
       {({ match, location }) => (
         <NavLink {...rest} to={to} exact={exact} ref={ref}>
           {children
-            ? children(rest.isActive ? rest.isActive(match, location) : match)
+            ? children(
+                rest.isActive ? rest.isActive(match, location) : match,
+                location
+              )
             : null}
         </NavLink>
       )}

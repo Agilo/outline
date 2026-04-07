@@ -1,8 +1,8 @@
-import crypto from "crypto";
-import fs from "fs";
-import path from "path";
-import { URL } from "url";
-import util from "util";
+import crypto from "node:crypto";
+import { URL } from "node:url";
+import { subMinutes } from "date-fns";
+import type { InferAttributes, InferCreationAttributes } from "sequelize";
+import { type FindOptions, type SaveOptions } from "sequelize";
 import { Op } from "sequelize";
 import {
   Column,
@@ -12,38 +12,53 @@ import {
   Table,
   Unique,
   IsIn,
+  IsDate,
   HasMany,
   Scopes,
   Is,
   DataType,
   IsUUID,
-  IsUrl,
   AllowNull,
   AfterUpdate,
+  BeforeUpdate,
+  BeforeCreate,
+  IsNumeric,
 } from "sequelize-typescript";
+import { isEmail } from "validator";
 import { TeamPreferenceDefaults } from "@shared/constants";
-import {
-  CollectionPermission,
-  TeamPreference,
-  TeamPreferences,
-} from "@shared/types";
+import type { TeamPreferences } from "@shared/types";
+import { TeamPreference, UserRole } from "@shared/types";
 import { getBaseDomain, RESERVED_SUBDOMAINS } from "@shared/utils/domains";
+import { attachmentRedirectRegex } from "@shared/utils/ProsemirrorHelper";
+import { parseEmail } from "@shared/utils/email";
+import { TeamValidation } from "@shared/validations";
 import env from "@server/env";
+import { ValidationError } from "@server/errors";
 import DeleteAttachmentTask from "@server/queues/tasks/DeleteAttachmentTask";
 import parseAttachmentIds from "@server/utils/parseAttachmentIds";
 import Attachment from "./Attachment";
 import AuthenticationProvider from "./AuthenticationProvider";
 import Collection from "./Collection";
 import Document from "./Document";
+import Share from "./Share";
 import TeamDomain from "./TeamDomain";
 import User from "./User";
 import ParanoidModel from "./base/ParanoidModel";
 import Fix from "./decorators/Fix";
 import IsFQDN from "./validators/IsFQDN";
+import IsUrlOrRelativePath from "./validators/IsUrlOrRelativePath";
 import Length from "./validators/Length";
 import NotContainsUrl from "./validators/NotContainsUrl";
+import { SkipChangeset } from "./decorators/Changeset";
 
-const readFile = util.promisify(fs.readFile);
+/**
+ * Flags that are available for setting on the team.
+ */
+export enum TeamFlag {
+  MarkedSafe = "markedSafe",
+}
+
+const avatarRedirectPattern = new RegExp(attachmentRedirectRegex.source, "i");
 
 @Scopes(() => ({
   withDomains: {
@@ -60,19 +75,38 @@ const readFile = util.promisify(fs.readFile);
 }))
 @Table({ tableName: "teams", modelName: "team" })
 @Fix
-class Team extends ParanoidModel {
+class Team extends ParanoidModel<
+  InferAttributes<Team>,
+  Partial<InferCreationAttributes<Team>>
+> {
   @NotContainsUrl
-  @Length({ min: 2, max: 255, msg: "name must be between 2 to 255 characters" })
+  @Length({
+    min: 1,
+    max: TeamValidation.maxNameLength,
+    msg: `Team name must be between 1 and ${TeamValidation.maxNameLength} characters`,
+  })
   @Column
   name: string;
+
+  @AllowNull
+  @Length({
+    max: TeamValidation.maxDescriptionLength,
+    msg: `Team description must be ${TeamValidation.maxDescriptionLength} characters or less`,
+  })
+  @Column(DataType.TEXT)
+  description: string | null;
 
   @IsLowercase
   @Unique
   @Length({
-    min: 2,
-    max: env.isCloudHosted ? 32 : 255,
-    msg: `subdomain must be between 2 and ${
-      env.isCloudHosted ? 32 : 255
+    min: TeamValidation.minSubdomainLength,
+    max: env.isCloudHosted
+      ? TeamValidation.maxSubdomainLength
+      : TeamValidation.maxSubdomainSelfHostedLength,
+    msg: `subdomain must be between ${TeamValidation.minSubdomainLength} and ${
+      env.isCloudHosted
+        ? TeamValidation.maxSubdomainLength
+        : TeamValidation.maxSubdomainSelfHostedLength
     } characters`,
   })
   @Is({
@@ -97,7 +131,7 @@ class Team extends ParanoidModel {
   defaultCollectionId: string | null;
 
   @AllowNull
-  @IsUrl
+  @IsUrlOrRelativePath
   @Length({ max: 4096, msg: "avatarUrl must be 4096 characters or less" })
   @Column(DataType.STRING)
   get avatarUrl() {
@@ -114,6 +148,37 @@ class Team extends ParanoidModel {
     this.setDataValue("avatarUrl", value);
   }
 
+  /**
+   * Returns a directly-accessible URL for the team's avatar suitable for use
+   * in contexts without authentication. Attachment is loaded and a signed (or
+   * canonical) URL is returned; any other URL is returned unchanged.
+   *
+   * @returns A promise resolving to a direct URL, or null when no avatar is set.
+   */
+  async publicAvatarUrl(): Promise<string | null> {
+    const url = this.avatarUrl;
+    if (!url) {
+      return null;
+    }
+
+    const match = avatarRedirectPattern.exec(url);
+    if (!match?.groups?.id) {
+      return url;
+    }
+
+    const attachment = await Attachment.findOne({
+      where: { id: match.groups.id, teamId: this.id },
+    });
+
+    if (!attachment) {
+      return url;
+    }
+
+    return attachment.isStoredInPublicBucket
+      ? attachment.canonicalUrl
+      : await attachment.signedUrl;
+  }
+
   @Default(true)
   @Column
   sharing: boolean;
@@ -122,7 +187,6 @@ class Team extends ParanoidModel {
   @Column
   inviteRequired: boolean;
 
-  @Default(true)
   @Column(DataType.JSONB)
   signupQueryParams: { [key: string]: string } | null;
 
@@ -132,22 +196,67 @@ class Team extends ParanoidModel {
 
   @Default(true)
   @Column
+  passkeysEnabled: boolean;
+
+  @Default(true)
+  @Column
   documentEmbeds: boolean;
 
   @Default(true)
   @Column
   memberCollectionCreate: boolean;
 
-  @Default("member")
-  @IsIn([["viewer", "member"]])
+  @Default(true)
   @Column
-  defaultUserRole: string;
+  memberTeamCreate: boolean;
+
+  @Default(UserRole.Member)
+  @IsIn([[UserRole.Viewer, UserRole.Member]])
+  @Column(DataType.STRING)
+  defaultUserRole: UserRole;
+
+  /** Approximate size in bytes of all attachments in the team. */
+  @IsNumeric
+  @Column(DataType.BIGINT)
+  @SkipChangeset
+  approximateTotalAttachmentsSize: number;
+
+  @AllowNull
+  @Length({
+    max: TeamValidation.maxGuidanceMCPLength,
+    msg: `MCP guidance must be ${TeamValidation.maxGuidanceMCPLength} characters or less`,
+  })
+  @Column(DataType.TEXT)
+  guidanceMCP: string | null;
 
   @AllowNull
   @Column(DataType.JSONB)
   preferences: TeamPreferences | null;
 
+  @IsDate
+  @Column
+  suspendedAt: Date | null;
+
+  @Column(DataType.JSONB)
+  flags: { [key in TeamFlag]?: number } | null;
+
+  @IsDate
+  @Column
+  @SkipChangeset
+  lastActiveAt: Date | null;
+
+  @Column(DataType.ARRAY(DataType.STRING))
+  @SkipChangeset
+  previousSubdomains: string[] | null;
+
   // getters
+
+  /**
+   * Returns whether the team has been suspended and is no longer accessible.
+   */
+  get isSuspended(): boolean {
+    return !!this.suspendedAt;
+  }
 
   /**
    * Returns whether the team has email login enabled. For self-hosted installs
@@ -156,9 +265,7 @@ class Team extends ParanoidModel {
    * @return {boolean} Whether to show email login options
    */
   get emailSigninEnabled(): boolean {
-    return (
-      this.guestSignin && (!!env.SMTP_HOST || env.ENVIRONMENT === "development")
-    );
+    return this.guestSignin && env.EMAIL_ENABLED;
   }
 
   get url() {
@@ -207,8 +314,11 @@ class Team extends ParanoidModel {
     if (!this.preferences) {
       this.preferences = {};
     }
-    this.preferences[preference] = value;
-    this.changed("preferences", true);
+
+    this.preferences = {
+      ...this.preferences,
+      [preference]: value,
+    };
 
     return this.preferences;
   };
@@ -224,59 +334,78 @@ class Team extends ParanoidModel {
     TeamPreferenceDefaults[preference] ??
     false;
 
-  provisionFirstCollection = async (userId: string) => {
-    await this.sequelize!.transaction(async (transaction) => {
-      const collection = await Collection.create(
-        {
-          name: "Welcome",
-          description: `This collection is a quick guide to what ${env.APP_NAME} is all about. Feel free to delete this collection once your team is up to speed with the basics!`,
-          teamId: this.id,
-          createdById: userId,
-          sort: Collection.DEFAULT_SORT,
-          permission: CollectionPermission.ReadWrite,
-        },
-        {
-          transaction,
-        }
-      );
+  /**
+   * Team flags are for storing information on a team record that is not visible
+   * to the team members.
+   *
+   * @param flag The flag to set
+   * @param value Set the flag to true/false
+   * @returns The current team flags
+   */
+  public setFlag = (flag: TeamFlag, value = true) => {
+    if (!this.flags) {
+      this.flags = {};
+    }
+    const binary = value ? 1 : 0;
+    if (this.flags[flag] !== binary) {
+      this.flags = {
+        ...this.flags,
+        [flag]: binary,
+      };
+    }
 
-      // For the first collection we go ahead and create some intitial documents to get
-      // the team started. You can edit these in /server/onboarding/x.md
-      const onboardingDocs = [
-        "Integrations & API",
-        "Our Editor",
-        "Getting Started",
-        "What is Outline",
-      ];
+    return this.flags;
+  };
 
-      for (const title of onboardingDocs) {
-        const text = await readFile(
-          path.join(process.cwd(), "server", "onboarding", `${title}.md`),
-          "utf8"
-        );
-        const document = await Document.create(
-          {
-            version: 2,
-            isWelcome: true,
-            parentDocumentId: null,
-            collectionId: collection.id,
-            teamId: collection.teamId,
-            userId: collection.createdById,
-            lastModifiedById: collection.createdById,
-            createdById: collection.createdById,
-            title,
-            text,
-          },
-          { transaction }
-        );
-        await document.publish(collection.createdById, collection.id, {
-          transaction,
-        });
-      }
+  /**
+   * Returns the content of the given team flag.
+   *
+   * @param flag The flag to retrieve
+   * @returns The flag value
+   */
+  public getFlag = (flag: TeamFlag) => this.flags?.[flag] ?? 0;
+
+  /**
+   * Team flags are for storing information on a team record that is not visible
+   * to the team members.
+   *
+   * @param flag The flag to set
+   * @param value The amount to increment by, defaults to 1
+   * @returns The current team flags
+   */
+  public incrementFlag = (flag: TeamFlag, value = 1) => {
+    if (!this.flags) {
+      this.flags = {};
+    }
+    this.flags = {
+      ...this.flags,
+      [flag]: (this.flags[flag] ?? 0) + value,
+    };
+    return this.flags;
+  };
+
+  /**
+   * Updates the lastActiveAt timestamp to the current time.
+   *
+   * @param force Whether to force the update even if the last update was recent
+   * @returns A promise that resolves with the updated team
+   */
+  public updateActiveAt = async (force = false) => {
+    const fiveMinutesAgo = subMinutes(new Date(), 5);
+
+    // ensure this is updated only every few minutes otherwise
+    // we'll be constantly writing to the DB as API requests happen
+    if (!this.lastActiveAt || this.lastActiveAt < fiveMinutesAgo || force) {
+      this.lastActiveAt = new Date();
+    }
+
+    // Save only writes to the database if there are changes
+    return this.save({
+      hooks: false,
     });
   };
 
-  public collectionIds = async function (this: Team, paranoid = true) {
+  public collectionIds = async function (paranoid = true) {
     const models = await Collection.findAll({
       attributes: ["id"],
       where: {
@@ -294,14 +423,20 @@ class Team extends ParanoidModel {
    * Find whether the passed domain can be used to sign-in to this team. Note
    * that this method always returns true if no domain restrictions are set.
    *
-   * @param domain The domain to check
+   * @param domainOrEmail The domain or email to check
    * @returns True if the domain is allowed to sign-in to this team
    */
   public isDomainAllowed = async function (
     this: Team,
-    domain: string
+    domainOrEmail: string
   ): Promise<boolean> {
     const allowedDomains = (await this.$get("allowedDomains")) || [];
+
+    let domain = domainOrEmail;
+    if (isEmail(domainOrEmail)) {
+      const parsed = parseEmail(domainOrEmail);
+      domain = parsed.domain;
+    }
 
     return (
       allowedDomains.length === 0 ||
@@ -328,16 +463,64 @@ class Team extends ParanoidModel {
 
   // hooks
 
+  @BeforeCreate
+  static async setPreferences(model: Team) {
+    // Set here rather than in TeamPreferenceDefaults as we only want to enable by default for new
+    // workspaces.
+    model.setPreference(TeamPreference.MembersCanInvite, true);
+
+    // Set last active at on creation.
+    model.lastActiveAt = new Date();
+
+    return model;
+  }
+
+  @BeforeUpdate
+  static async checkDomain(model: Team, options: SaveOptions) {
+    if (!model.domain) {
+      return model;
+    }
+
+    model.domain = model.domain.toLowerCase();
+
+    const count = await Share.count({
+      ...options,
+      where: {
+        domain: model.domain,
+      },
+    });
+
+    if (count > 0) {
+      throw ValidationError("Domain is already in use");
+    }
+
+    return model;
+  }
+
+  @BeforeUpdate
+  static async savePreviousSubdomain(model: Team) {
+    const previousSubdomain = model.previous("subdomain");
+    if (previousSubdomain && previousSubdomain !== model.subdomain) {
+      model.previousSubdomains = model.previousSubdomains || [];
+
+      if (!model.previousSubdomains.includes(previousSubdomain)) {
+        // Add the previous subdomain to the list of previous subdomains
+        // upto a maximum of 3 previous subdomains
+        model.previousSubdomains.push(previousSubdomain);
+        if (model.previousSubdomains.length > 3) {
+          model.previousSubdomains.shift();
+        }
+      }
+    }
+
+    return model;
+  }
+
   @AfterUpdate
   static deletePreviousAvatar = async (model: Team) => {
-    if (
-      model.previous("avatarUrl") &&
-      model.previous("avatarUrl") !== model.avatarUrl
-    ) {
-      const attachmentIds = parseAttachmentIds(
-        model.previous("avatarUrl"),
-        true
-      );
+    const previousAvatarUrl = model.previous("avatarUrl");
+    if (previousAvatarUrl && previousAvatarUrl !== model.avatarUrl) {
+      const attachmentIds = parseAttachmentIds(previousAvatarUrl, true);
       if (!attachmentIds.length) {
         return;
       }
@@ -350,13 +533,68 @@ class Team extends ParanoidModel {
       });
 
       if (attachment) {
-        await DeleteAttachmentTask.schedule({
+        await new DeleteAttachmentTask().schedule({
           attachmentId: attachment.id,
           teamId: model.id,
         });
       }
     }
   };
+
+  /**
+   * Find a team by its custom domain. The input is normalized by stripping
+   * protocol, port, path, and lowercasing to match the stored format.
+   *
+   * @param domain the domain to search for.
+   * @param options additional find options to pass to the query.
+   * @returns the team with the given domain, or null if not found.
+   */
+  static async findByDomain(domain: string, options?: FindOptions<Team>) {
+    const normalized = domain
+      .replace(/(https?:)?\/\//, "")
+      .split(/[/:?]/)[0]
+      .toLowerCase();
+
+    return this.findOne({
+      ...options,
+      where: { ...options?.where, domain: normalized },
+    });
+  }
+
+  /**
+   * Find a team by its current or previous subdomain.
+   *
+   * @param subdomain - The subdomain to search for.
+   * @returns The team with the given or previous subdomain, or null if not found.
+   */
+  static async findBySubdomain(subdomain: string) {
+    // Preference is always given to the team with the subdomain currently
+    // otherwise we can try and find a team that previously used the subdomain.
+    return (
+      (await this.findOne({
+        where: {
+          subdomain,
+        },
+      })) || (await this.findByPreviousSubdomain(subdomain))
+    );
+  }
+
+  /**
+   * Find a team by its previous subdomain.
+   *
+   * @param previousSubdomain - The previous subdomain to search for.
+   * @returns The team with the given previous subdomain, or null if not found.
+   */
+  static async findByPreviousSubdomain(previousSubdomain: string) {
+    return this.findOne({
+      where: {
+        previousSubdomains: {
+          [Op.contains]: [previousSubdomain],
+        },
+      },
+      order: [["updatedAt", "DESC"]],
+    });
+  }
 }
 
 export default Team;

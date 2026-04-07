@@ -2,17 +2,18 @@ import { differenceInMilliseconds } from "date-fns";
 import { Op } from "sequelize";
 import { IntegrationService, IntegrationType } from "@shared/types";
 import { Minute } from "@shared/utils/time";
-import env from "@server/env";
 import { Document, Integration, Collection, Team } from "@server/models";
 import BaseProcessor from "@server/queues/processors/BaseProcessor";
-import {
+import type {
   DocumentEvent,
   IntegrationEvent,
   RevisionEvent,
   Event,
 } from "@server/types";
 import fetch from "@server/utils/fetch";
-import presentMessageAttachment from "../presenters/messageAttachment";
+import { sleep } from "@shared/utils/timers";
+import env from "../env";
+import { presentMessageAttachment } from "../presenters/messageAttachment";
 
 export default class SlackProcessor extends BaseProcessor {
   static applicableEvents: Event["name"][] = [
@@ -25,6 +26,8 @@ export default class SlackProcessor extends BaseProcessor {
     switch (event.name) {
       case "documents.publish":
       case "revisions.create":
+        // wait a few seconds to give the document summary chance to be generated
+        await sleep(5000);
         return this.documentUpdated(event);
 
       case "integrations.create":
@@ -69,7 +72,7 @@ export default class SlackProcessor extends BaseProcessor {
           {
             color: collection.color,
             title: collection.name,
-            title_link: `${env.URL}${collection.url}`,
+            title_link: `${env.URL}${collection.path}`,
             text: collection.description,
           },
         ],
@@ -79,8 +82,7 @@ export default class SlackProcessor extends BaseProcessor {
 
   async documentUpdated(event: DocumentEvent | RevisionEvent) {
     // never send notifications when batch importing documents
-    // @ts-expect-error ts-migrate(2339) FIXME: Property 'data' does not exist on type 'DocumentEv... Remove this comment to see the full error message
-    if (event.data && event.data.source === "import") {
+    if (event.name === "documents.publish" && event.data?.source === "import") {
       return;
     }
     const [document, team] = await Promise.all([
@@ -101,7 +103,7 @@ export default class SlackProcessor extends BaseProcessor {
     if (
       event.name === "revisions.create" &&
       differenceInMilliseconds(document.updatedAt, document.publishedAt) <
-        Minute
+        Minute.ms
     ) {
       return;
     }

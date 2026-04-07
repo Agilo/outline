@@ -1,6 +1,6 @@
 import { WebhookSubscription } from "@server/models";
 import BaseProcessor from "@server/queues/processors/BaseProcessor";
-import { Event } from "@server/types";
+import type { Event } from "@server/types";
 import DeliverWebhookTask from "../tasks/DeliverWebhookTask";
 
 export default class WebhookProcessor extends BaseProcessor {
@@ -24,7 +24,10 @@ export default class WebhookProcessor extends BaseProcessor {
 
     await Promise.all(
       applicableSubscriptions.map((subscription) =>
-        DeliverWebhookTask.schedule({ event, subscriptionId: subscription.id })
+        new DeliverWebhookTask().schedule({
+          event,
+          subscriptionId: subscription.id,
+        })
       )
     );
   }

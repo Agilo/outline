@@ -1,74 +1,76 @@
 import { observer } from "mobx-react";
 import { PlusIcon } from "outline-icons";
-import * as React from "react";
+import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { MenuButton, useMenuState } from "reakit/Menu";
-import styled from "styled-components";
-import { ellipsis } from "@shared/styles";
 import Button from "~/components/Button";
-import ContextMenu from "~/components/ContextMenu";
-import Header from "~/components/ContextMenu/Header";
-import Template from "~/components/ContextMenu/Template";
 import CollectionIcon from "~/components/Icons/CollectionIcon";
+import { DropdownMenu } from "~/components/Menu/DropdownMenu";
+import TeamLogo from "~/components/TeamLogo";
+import {
+  ActionSeparator,
+  createActionGroup,
+  createInternalLinkAction,
+} from "~/actions";
+import { DocumentSection } from "~/actions/sections";
 import useCurrentTeam from "~/hooks/useCurrentTeam";
+import { useMenuAction } from "~/hooks/useMenuAction";
 import usePolicy from "~/hooks/usePolicy";
 import useStores from "~/hooks/useStores";
-import { MenuItem } from "~/types";
-import { newDocumentPath } from "~/utils/routeHelpers";
+import { newTemplatePath } from "~/utils/routeHelpers";
+import { AvatarSize } from "~/components/Avatar";
 
 function NewTemplateMenu() {
-  const menu = useMenuState({
-    modal: true,
-  });
   const { t } = useTranslation();
   const team = useCurrentTeam();
   const { collections, policies } = useStores();
   const can = usePolicy(team);
 
-  const items = React.useMemo(
+  const collectionActions = useMemo(
     () =>
-      collections.orderedData.reduce<MenuItem[]>((filtered, collection) => {
-        const can = policies.abilities(collection.id);
-
-        if (can.update) {
-          filtered.push({
-            type: "route",
-            to: newDocumentPath(collection.id, {
-              template: true,
-            }),
-            title: <CollectionName>{collection.name}</CollectionName>,
-            icon: <CollectionIcon collection={collection} />,
-          });
-        }
-
-        return filtered;
-      }, []),
-    [collections.orderedData, policies]
+      collections.orderedData.map((collection) => {
+        const canCollection = policies.abilities(collection.id);
+        return createInternalLinkAction({
+          name: collection.name,
+          section: DocumentSection,
+          icon: <CollectionIcon collection={collection} />,
+          visible: !!canCollection.createTemplate,
+          to: newTemplatePath(collection.id),
+        });
+      }),
+    [policies, collections.orderedData]
   );
 
-  if (!can.createDocument || items.length === 0) {
-    return null;
-  }
+  const allActions = useMemo(
+    () => [
+      createInternalLinkAction({
+        name: t("Save in workspace"),
+        section: DocumentSection,
+        icon: <TeamLogo model={team} size={AvatarSize.Small} />,
+        visible: can.createTemplate,
+        to: newTemplatePath(),
+      }),
+      ActionSeparator,
+      createActionGroup({
+        name: t("Choose a collection"),
+        actions: collectionActions,
+      }),
+    ],
+    [t, team, can, collectionActions]
+  );
+
+  const rootAction = useMenuAction(allActions);
+
+  useEffect(() => {
+    void collections.fetchPage({
+      limit: 100,
+    });
+  }, [collections]);
 
   return (
-    <>
-      <MenuButton {...menu}>
-        {(props) => (
-          <Button icon={<PlusIcon />} {...props}>
-            {t("New template")}…
-          </Button>
-        )}
-      </MenuButton>
-      <ContextMenu aria-label={t("New template")} {...menu}>
-        <Header>{t("Choose a collection")}</Header>
-        <Template {...menu} items={items} />
-      </ContextMenu>
-    </>
+    <DropdownMenu action={rootAction} align="end" ariaLabel={t("New template")}>
+      <Button icon={<PlusIcon />}>{t("New template")}…</Button>
+    </DropdownMenu>
   );
 }
-
-const CollectionName = styled.div`
-  ${ellipsis()}
-`;
 
 export default observer(NewTemplateMenu);

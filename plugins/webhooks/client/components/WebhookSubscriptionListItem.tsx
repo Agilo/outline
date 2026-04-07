@@ -2,7 +2,7 @@ import { EditIcon, TrashIcon } from "outline-icons";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import styled from "styled-components";
-import WebhookSubscription from "~/models/WebhookSubscription";
+import type WebhookSubscription from "~/models/WebhookSubscription";
 import Badge from "~/components/Badge";
 import Button from "~/components/Button";
 import ListItem from "~/components/List/Item";
@@ -25,7 +25,6 @@ const WebhookSubscriptionListItem = ({ webhook }: Props) => {
   const showDeletionConfirmation = React.useCallback(() => {
     dialogs.openModal({
       title: t("Delete webhook"),
-      isCentered: true,
       content: (
         <WebhookSubscriptionRevokeDialog
           onSubmit={dialogs.closeAllModals}
@@ -67,6 +66,7 @@ const WebhookSubscriptionListItem = ({ webhook }: Props) => {
             title={t("Edit webhook")}
             onRequestClose={handleEditModalClose}
             isOpen={editModalOpen}
+            width="480px"
           >
             <WebhookSubscriptionEdit
               onSubmit={handleEditModalClose}

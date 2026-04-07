@@ -13,7 +13,8 @@ describe("auth/redirect", () => {
       }
     );
     expect(res.status).toEqual(302);
-    expect(res.headers.get("location").endsWith("/home")).toBeTruthy();
+    expect(res.headers.get("location")).not.toBeNull();
+    expect(res.headers.get("location")!.endsWith("/home")).toBeTruthy();
   });
 
   it("should redirect to first collection", async () => {
@@ -28,6 +29,18 @@ describe("auth/redirect", () => {
       }
     );
     expect(res.status).toEqual(302);
-    expect(res.headers.get("location").endsWith(collection.url)).toBeTruthy();
+    expect(res.headers.get("location")).not.toBeNull();
+    expect(res.headers.get("location")!.includes(collection.path)).toBeTruthy();
+  });
+
+  it("should prevent token extension by rejecting JWT tokens", async () => {
+    const user = await buildUser();
+    const jwtToken = user.getJwtToken();
+
+    const res = await server.get(`/auth/redirect?token=${jwtToken}`, {
+      redirect: "manual",
+    });
+
+    expect(res.status).toEqual(401);
   });
 });

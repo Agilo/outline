@@ -1,45 +1,31 @@
-import Token from "markdown-it/lib/token";
-import {
+import type { Token } from "markdown-it";
+import type {
   NodeSpec,
   Node as ProsemirrorNode,
   NodeType,
   Schema,
 } from "prosemirror-model";
-import { Command, TextSelection } from "prosemirror-state";
-import { Primitive } from "utility-types";
-import Suggestion from "../extensions/Suggestion";
-import { nameToEmoji } from "../lib/emoji";
-import { MarkdownSerializerState } from "../lib/markdown/serializer";
-import { SuggestionsMenuType } from "../plugins/Suggestions";
+import type { Command } from "prosemirror-state";
+import { Plugin, TextSelection } from "prosemirror-state";
+import type { Primitive } from "utility-types";
+import Extension from "../lib/Extension";
+import { getEmojiFromName, loadEmojiData } from "../lib/emoji";
+import type { MarkdownSerializerState } from "../lib/markdown/serializer";
 import emojiRule from "../rules/emoji";
+import { isUUID } from "validator";
+import type { ComponentProps } from "../types";
+import { CustomEmoji } from "../../components/CustomEmoji";
 
-/**
- * Languages using the colon character with a space infront in standard
- * punctuation. In this case the trigger is only matched once there is additional
- * text after the colon.
- */
-const languagesUsingColon = ["fr"];
-
-export default class Emoji extends Suggestion {
-  get type() {
-    return "node";
+export default class Emoji extends Extension {
+  constructor() {
+    super();
+    // Begin loading emoji data as soon as this extension is instantiated so
+    // it is available by the time the editor renders emoji nodes.
+    void loadEmojiData();
   }
 
-  get defaultOptions() {
-    const languageIsUsingColon =
-      typeof window === "undefined"
-        ? false
-        : languagesUsingColon.includes(window.navigator.language.slice(0, 2));
-
-    return {
-      type: SuggestionsMenuType.Emoji,
-      openRegex: new RegExp(
-        `(?:^|\\s):([0-9a-zA-Z_+-]+)${languageIsUsingColon ? "+" : "?"}$`
-      ),
-      closeRegex:
-        /(?:^|\s):(([0-9a-zA-Z_+-]*\s+)|(\s+[0-9a-zA-Z_+-]+)|[^0-9a-zA-Z_+-]+)$/,
-      enabledInTable: true,
-    };
+  get type() {
+    return "node";
   }
 
   get name() {
@@ -49,11 +35,9 @@ export default class Emoji extends Suggestion {
   get schema(): NodeSpec {
     return {
       attrs: {
-        style: {
-          default: "",
-        },
         "data-name": {
-          default: undefined,
+          default: "grey_question",
+          validate: "string",
         },
       },
       inline: true,
@@ -63,33 +47,91 @@ export default class Emoji extends Suggestion {
       selectable: false,
       parseDOM: [
         {
+          priority: 100,
           tag: "strong.emoji",
           preserveWhitespace: "full",
-          getAttrs: (dom: HTMLElement) => ({
-            "data-name": dom.dataset.name,
-          }),
+          getAttrs: (dom: HTMLElement) =>
+            dom.dataset.name
+              ? {
+                  "data-name": dom.dataset.name,
+                }
+              : false,
         },
       ],
       toDOM: (node) => {
-        if (nameToEmoji[node.attrs["data-name"]]) {
-          return [
-            "strong",
-            {
-              class: `emoji ${node.attrs["data-name"]}`,
-              "data-name": node.attrs["data-name"],
-            },
-            nameToEmoji[node.attrs["data-name"]],
-          ];
-        }
-        return ["strong", { class: "emoji" }, `:${node.attrs["data-name"]}:`];
+        const name = node.attrs["data-name"];
+
+        return [
+          "strong",
+          {
+            class: `emoji ${name}`,
+            "data-name": name,
+          },
+          getEmojiFromName(name),
+        ];
       },
-      toPlainText: (node) => nameToEmoji[node.attrs["data-name"]],
+      leafText: (node) => {
+        const name = node.attrs["data-name"];
+        // Custom emojis are stored as UUIDs, preserve the shortcode format
+        // so they can be rendered by EmojiText component
+        if (isUUID(name)) {
+          return `:${name}:`;
+        }
+        return getEmojiFromName(name);
+      },
     };
   }
 
   get rulePlugins() {
     return [emojiRule];
   }
+
+  get plugins() {
+    return [
+      new Plugin({
+        props: {
+          // Placing the caret infront of an emoji is tricky as click events directly
+          // on the emoji will not behave the same way as clicks on text characters, this
+          // plugin ensures that clicking on an emoji behaves more naturally.
+          handleClickOn: (view, _pos, node, nodePos, event) => {
+            if (node.type.name === this.name) {
+              const element = event.target as HTMLElement;
+              const rect = element.getBoundingClientRect();
+              const clickX = event.clientX - rect.left;
+              const side = clickX < rect.width / 2 ? -1 : 1;
+
+              // If the click is in the left half of the emoji, place the caret before it
+              const tr = view.state.tr.setSelection(
+                TextSelection.near(
+                  view.state.doc.resolve(
+                    side === -1 ? nodePos : nodePos + node.nodeSize
+                  ),
+                  side
+                )
+              );
+              view.dispatch(tr);
+              return true;
+            }
+
+            return false;
+          },
+        },
+      }),
+    ];
+  }
+
+  component = (props: ComponentProps) => {
+    const name = props.node.attrs["data-name"];
+    return (
+      <strong className="emoji" data-name={name}>
+        {isUUID(name) ? (
+          <CustomEmoji value={name} size="1em" />
+        ) : (
+          getEmojiFromName(name)
+        )}
+      </strong>
+    );
+  };
 
   commands({ type }: { type: NodeType; schema: Schema }) {
     return (attrs: Record<string, Primitive>): Command =>

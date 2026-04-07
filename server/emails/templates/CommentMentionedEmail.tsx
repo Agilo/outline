@@ -1,13 +1,12 @@
-import inlineCss from "inline-css";
 import * as React from "react";
 import { NotificationEventType } from "@shared/types";
-import { Day } from "@shared/utils/time";
-import env from "@server/env";
-import { Collection, Comment, Document } from "@server/models";
-import DocumentHelper from "@server/models/helpers/DocumentHelper";
+import type { Collection } from "@server/models";
+import { Comment, Document } from "@server/models";
 import NotificationSettingsHelper from "@server/models/helpers/NotificationSettingsHelper";
-import ProsemirrorHelper from "@server/models/helpers/ProsemirrorHelper";
-import BaseEmail, { EmailProps } from "./BaseEmail";
+import { ProsemirrorHelper } from "@server/models/helpers/ProsemirrorHelper";
+import { can } from "@server/policies";
+import type { EmailProps } from "./BaseEmail";
+import BaseEmail, { EmailMessageCategory } from "./BaseEmail";
 import Body from "./components/Body";
 import Button from "./components/Button";
 import Diff from "./components/Diff";
@@ -35,13 +34,16 @@ type BeforeSend = {
 type Props = InputProps & BeforeSend;
 
 /**
- * Email sent to a user when a new comment is created in a document they are
- * subscribed to.
+ * Email sent to a user when they are mentioned in a comment.
  */
 export default class CommentMentionedEmail extends BaseEmail<
   InputProps,
   BeforeSend
 > {
+  protected get category() {
+    return EmailMessageCategory.Notification;
+  }
+
   protected async beforeSend(props: InputProps) {
     const { documentId, commentId } = props;
     const document = await Document.unscoped().findByPk(documentId);
@@ -54,34 +56,18 @@ export default class CommentMentionedEmail extends BaseEmail<
       return false;
     }
 
-    const comment = await Comment.findByPk(commentId);
-    if (!comment) {
+    const [comment, team] = await Promise.all([
+      Comment.findByPk(commentId),
+      document.$get("team"),
+    ]);
+    if (!comment || !team) {
       return false;
     }
 
-    let body;
-    let content = ProsemirrorHelper.toHTML(
-      ProsemirrorHelper.toProsemirror(comment.data),
-      {
-        centered: false,
-      }
+    const body = await this.htmlForData(
+      team,
+      ProsemirrorHelper.toProsemirror(comment.data)
     );
-
-    content = await DocumentHelper.attachmentsToSignedUrls(
-      content,
-      document.teamId,
-      (4 * Day) / 1000
-    );
-
-    if (content) {
-      // inline all css so that it works in as many email providers as possible.
-      body = await inlineCss(content, {
-        url: env.URL,
-        applyStyleTags: true,
-        applyLinkTags: false,
-        removeStyleTags: true,
-      });
-    }
 
     return {
       document,
@@ -98,12 +84,23 @@ export default class CommentMentionedEmail extends BaseEmail<
     );
   }
 
-  protected subject({ actorName, document }: Props) {
-    return `${actorName} mentioned you in “${document.title}”`;
+  protected replyTo({ notification }: Props) {
+    if (notification?.user && notification.actor?.email) {
+      if (can(notification.user, "readEmail", notification.actor)) {
+        return notification.actor.email;
+      }
+    }
+    return;
+  }
+
+  protected subject({ document }: Props) {
+    return this.t("Mentioned you in “{{ documentTitle }}”", {
+      documentTitle: document.titleWithDefault,
+    });
   }
 
   protected preview({ actorName }: Props): string {
-    return `${actorName} mentioned you in a thread`;
+    return this.t("{{ actorName }} mentioned you in a thread", { actorName });
   }
 
   protected fromName({ actorName }: Props): string {
@@ -117,12 +114,18 @@ export default class CommentMentionedEmail extends BaseEmail<
     commentId,
     collection,
   }: Props): string {
-    return `
-${actorName} mentioned you in a comment on "${document.title}"${
-      collection.name ? `in the ${collection.name} collection` : ""
-    }.
+    const action = this.t(
+      "{{ actorName }} mentioned you in a comment on “{{ documentTitle }}”",
+      { actorName, documentTitle: document.titleWithDefault }
+    );
+    const inCollection = collection.name
+      ? ` ${this.t("in the {{ collectionName }} collection", { collectionName: collection.name })}`
+      : "";
 
-Open Thread: ${teamUrl}${document.url}?commentId=${commentId}
+    return `
+${action}${inCollection}.
+
+${this.t("Open Thread")}: ${teamUrl}${document.url}?commentId=${commentId}
 `;
   }
 
@@ -141,16 +144,23 @@ Open Thread: ${teamUrl}${document.url}?commentId=${commentId}
     return (
       <EmailTemplate
         previewText={this.preview(props)}
-        goToAction={{ url: threadLink, name: "View Thread" }}
+        goToAction={{ url: threadLink, name: this.t("View Thread") }}
       >
         <Header />
 
         <Body>
-          <Heading>{document.title}</Heading>
+          <Heading>{document.titleWithDefault}</Heading>
           <p>
-            {actorName} mentioned you in a comment on{" "}
-            <a href={threadLink}>{document.title}</a>{" "}
-            {collection.name ? `in the ${collection.name} collection` : ""}.
+            {this.t("{{ actorName }} mentioned you in a comment on", {
+              actorName,
+            })}{" "}
+            <a href={threadLink}>{document.titleWithDefault}</a>{" "}
+            {collection.name
+              ? this.t("in the {{ collectionName }} collection", {
+                  collectionName: collection.name,
+                })
+              : ""}
+            .
           </p>
           {body && (
             <>
@@ -162,11 +172,14 @@ Open Thread: ${teamUrl}${document.url}?commentId=${commentId}
             </>
           )}
           <p>
-            <Button href={threadLink}>Open Thread</Button>
+            <Button href={threadLink}>{this.t("Open Thread")}</Button>
           </p>
         </Body>
 
-        <Footer unsubscribeUrl={unsubscribeUrl} />
+        <Footer
+          unsubscribeUrl={unsubscribeUrl}
+          unsubscribeText={this.t("Unsubscribe from these emails")}
+        />
       </EmailTemplate>
     );
   }

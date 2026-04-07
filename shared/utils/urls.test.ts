@@ -1,13 +1,15 @@
+import env from "../env";
 import * as urlsUtils from "./urls";
 import { urlRegex } from "./urls";
 
-describe("IsUrl Method", () => {
+describe("isUrl", () => {
   it("should return false for invalid url", () => {
     expect(urlsUtils.isUrl("")).toBe(false);
     expect(urlsUtils.isUrl("#invalidurl")).toBe(false);
     expect(urlsUtils.isUrl("mailto:")).toBe(false);
     expect(urlsUtils.isUrl("sms:")).toBe(false);
     expect(urlsUtils.isUrl("://")).toBe(false);
+    expect(urlsUtils.isUrl("www.example.com")).toBe(false);
   });
 
   it("should return true for valid urls", () => {
@@ -16,12 +18,98 @@ describe("IsUrl Method", () => {
     expect(urlsUtils.isUrl("seafile://openfile")).toBe(true);
     expect(urlsUtils.isUrl("figma://launch")).toBe(true);
     expect(urlsUtils.isUrl("outline:https://getoutline.com")).toBe(true);
+    expect(urlsUtils.isUrl("www.example.com", { requireProtocol: false })).toBe(
+      true
+    );
+  });
+
+  describe("requireHttps option", () => {
+    it("should reject HTTP URLs when requireHttps is true", () => {
+      expect(
+        urlsUtils.isUrl("http://example.com", { requireHttps: true })
+      ).toBe(false);
+      expect(
+        urlsUtils.isUrl("http://example.com/callback", { requireHttps: true })
+      ).toBe(false);
+      expect(
+        urlsUtils.isUrl("http://localhost:3000/auth", { requireHttps: true })
+      ).toBe(false);
+    });
+
+    it("should accept HTTPS URLs when requireHttps is true", () => {
+      expect(
+        urlsUtils.isUrl("https://example.com", { requireHttps: true })
+      ).toBe(true);
+      expect(
+        urlsUtils.isUrl("https://example.com/callback", { requireHttps: true })
+      ).toBe(true);
+      expect(
+        urlsUtils.isUrl("https://localhost:3000/auth", { requireHttps: true })
+      ).toBe(true);
+    });
+
+    it("should accept HTTP URLs when requireHttps is false or not specified", () => {
+      expect(urlsUtils.isUrl("http://example.com")).toBe(true);
+      expect(
+        urlsUtils.isUrl("http://example.com", { requireHttps: false })
+      ).toBe(true);
+    });
+
+    it("should allow custom protocols when requireHttps is true", () => {
+      expect(
+        urlsUtils.isUrl("seafile://openfile", { requireHttps: true })
+      ).toBe(true);
+      expect(urlsUtils.isUrl("figma://launch", { requireHttps: true })).toBe(
+        true
+      );
+      expect(urlsUtils.isUrl("myapp://callback", { requireHttps: true })).toBe(
+        true
+      );
+    });
   });
 });
 
-describe("isInternalUrl Method", () => {
+describe("isBase64Url", () => {
+  it("should return false for invalid url", () => {
+    expect(urlsUtils.isBase64Url("")).toBe(false);
+    expect(urlsUtils.isBase64Url("#invalidurl")).toBe(false);
+    expect(urlsUtils.isBase64Url("http://example.com")).toBe(false);
+    expect(urlsUtils.isBase64Url("https://www.example.com")).toBe(false);
+    expect(urlsUtils.isBase64Url("seafile://openfile")).toBe(false);
+    expect(urlsUtils.isBase64Url("figma://launch")).toBe(false);
+    expect(urlsUtils.isBase64Url("outline:https://getoutline.com")).toBe(false);
+    expect(urlsUtils.isBase64Url("://")).toBe(false);
+  });
+
+  it("should return true for valid urls", () => {
+    expect(
+      urlsUtils.isBase64Url(
+        "data:image/png;base64,R0lGODlhPQBEAPeoAJosM//AwO/AwHVYZ/z595kzAP/s7P+goOXMv8+fhw/v739/f+8PD98fH/8mJl+fn/9ZWb8/PzWlwv///6wWGbImAPgTEMImIN9gUFCEm/gDALULDN8PAD6atYdCTX9gUNKlj8wZAKUsAOzZz+UMAOsJAP/Z2ccMDA8PD/95eX5NWvsJCOVNQPtfX/8zM8+QePLl38MGBr8JCP+zs9myn/8GBqwpAP/GxgwJCPny78lzYLgjAJ8vAP9fX/+MjMUcAN8zM/9wcM8ZGcATEL+QePdZWf/29uc/P9cmJu9MTDImIN+/r7+/vz8/P8VNQGNugV8AAF9fX8swMNgTAFlDOICAgPN"
+      )
+    ).toBeTruthy();
+    expect(
+      urlsUtils.isBase64Url(
+        "data:image/gif;base64,npkM+fOqD6DDj1aZpITp0dtGCDhr+fVuCu3zlg49ijaokTZTo27uG7Gjn2P+hI8+PDPERoUB318bWbfAJ5sUNFcuGRTYUqV/3ogfXp1rWlMc6awJjiAAd2fm4ogXjz56aypOoIde4OE5u/F9x199dlXnnGiHZWEYbGpsAEA3QXYnHwEFliKAgswgJ8LPeiUXGwedCAKABACCN+EA1pYIIYaFlcDhytd51sGAJbo3onOpajiihlO92KHGaUXGwWjUBChjSPiWJuOO/LYIm4v1tXfE6J4gCSJEZ7YgRYUNrkji9P55sF/ogxw5ZkSqIDaZBV6aSGYq/lGZplndkckZ98xoICbTcIJGQAZc"
+      )
+    ).toBeTruthy();
+  });
+});
+
+describe("isInternalUrl", () => {
+  beforeEach(() => {
+    env.URL = "https://example.com:3000";
+  });
+
   it("should return false if empty string", () => {
     expect(urlsUtils.isInternalUrl("")).toBe(false);
+  });
+
+  it("should return false if port is different", () => {
+    expect(urlsUtils.isInternalUrl("https://example.com:4000")).toBe(false);
+  });
+
+  it("should return false if port is missing", () => {
+    expect(urlsUtils.isInternalUrl("https://example.com")).toBe(false);
   });
 
   it("should return true if starting with relative path", () => {
@@ -29,7 +117,7 @@ describe("isInternalUrl Method", () => {
   });
 });
 
-describe("isExternalUrl Method", () => {
+describe("isExternalUrl", () => {
   it("should return false if empty url", () => {
     expect(urlsUtils.isExternalUrl("")).toBe(false);
   });
@@ -39,7 +127,7 @@ describe("isExternalUrl Method", () => {
   });
 });
 
-describe("sanitizeUrl Method", () => {
+describe("sanitizeUrl", () => {
   it("should return undefined if not url", () => {
     expect(urlsUtils.sanitizeUrl(undefined)).toBeUndefined();
     expect(urlsUtils.sanitizeUrl(null)).toBeUndefined();
@@ -112,5 +200,12 @@ describe("#urlRegex", () => {
   it("should return corresponding regex otherwise", () => {
     const regex = urlRegex("https://docs.google.com");
     expect(regex?.source).toBe(/https:\/\/docs\.google\.com/.source);
+    expect(regex?.test("https://docs.google.com")).toBe(true);
+    expect(regex?.test("https://docs.google.com/")).toBe(true);
+    expect(regex?.test("https://docs.google.com/d/123")).toBe(true);
+    expect(regex?.test("http://google.com")).toBe(false);
+    expect(regex?.test("http://docs.google.com")).toBe(false);
+    expect(regex?.test("http://docs.google.com/")).toBe(false);
+    expect(regex?.test("http://docs.google.com/d/123")).toBe(false);
   });
 });

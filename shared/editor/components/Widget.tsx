@@ -1,27 +1,45 @@
 import * as React from "react";
-import styled, { css, DefaultTheme, ThemeProps } from "styled-components";
+import styled, { css } from "styled-components";
 import { s } from "../../styles";
 import { sanitizeUrl } from "../../utils/urls";
+import Flex from "../../components/Flex";
+import { EditorStyleHelper } from "../styles/EditorStyleHelper";
 
 type Props = {
+  /** Icon to display on the left side of the widget */
   icon: React.ReactNode;
+  /** Title of the widget */
   title: React.ReactNode;
+  /** Context, displayed to right of title */
   context?: React.ReactNode;
+  /** URL to open when the widget is clicked */
   href: string;
+  /** Whether the widget is currently selected */
   isSelected: boolean;
+  /** Children to display to the right of the context */
   children?: React.ReactNode;
+  /** Callback fired when the widget is double clicked */
+  onDoubleClick?: React.MouseEventHandler<HTMLAnchorElement>;
+  /** Callback fired when the widget is clicked */
   onMouseDown?: React.MouseEventHandler<HTMLAnchorElement>;
+  /** Callback fired when the widget is clicked */
+  onClick?: React.MouseEventHandler<HTMLAnchorElement>;
 };
 
-export default function Widget(props: Props & ThemeProps<DefaultTheme>) {
+export default function Widget(props: Props) {
+  const className = props.isSelected
+    ? "ProseMirror-selectednode widget"
+    : "widget";
+
   return (
     <Wrapper
-      className={
-        props.isSelected ? "ProseMirror-selectednode widget" : "widget"
-      }
+      className={className}
+      target="_blank"
       href={sanitizeUrl(props.href)}
       rel="noreferrer nofollow"
+      onDoubleClick={props.onDoubleClick}
       onMouseDown={props.onMouseDown}
+      onClick={props.onClick}
     >
       {props.icon}
       <Preview>
@@ -43,25 +61,34 @@ const Children = styled.div`
   }
 `;
 
-const Title = styled.strong`
+export const Title = styled.strong`
   font-weight: 500;
   font-size: 14px;
+  line-height: 28px;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  user-select: none;
   color: ${s("text")};
 `;
 
-const Preview = styled.div`
-  gap: 8px;
-  display: flex;
-  flex-direction: row;
+export const Preview = styled(Flex).attrs({
+  gap: 8,
+  align: "center",
+})`
   flex-grow: 1;
-  align-items: center;
   color: ${s("textTertiary")};
 `;
 
-const Subtitle = styled.span`
+export const Subtitle = styled.span`
   font-size: 13px;
+  line-height: 28px;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  flex-shrink: 0;
+  user-select: none;
   color: ${s("textTertiary")} !important;
-  line-height: 0;
 `;
 
 const Wrapper = styled.a`
@@ -72,10 +99,10 @@ const Wrapper = styled.a`
   color: ${s("text")} !important;
   box-shadow: 0 0 0 1px ${s("divider")};
   white-space: nowrap;
-  border-radius: 8px;
-  padding: 6px 8px;
+  border-radius: ${EditorStyleHelper.blockRadius};
+  padding: ${EditorStyleHelper.blockRadius};
   max-width: 840px;
-  cursor: default;
+  cursor: var(--pointer);
 
   user-select: none;
   text-overflow: ellipsis;
@@ -88,7 +115,7 @@ const Wrapper = styled.a`
       &:active {
         cursor: pointer !important;
         text-decoration: none !important;
-        background: ${s("secondaryBackground")};
+        background: ${s("backgroundSecondary")};
 
         ${Children} {
           opacity: 1;

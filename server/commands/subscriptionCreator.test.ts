@@ -1,17 +1,51 @@
+import { SubscriptionType } from "@shared/types";
+import { createContext } from "@server/context";
 import { Subscription, Event } from "@server/models";
 import { sequelize } from "@server/storage/database";
-import { buildDocument, buildUser } from "@server/test/factories";
-import { setupTestDatabase } from "@server/test/support";
+import {
+  buildCollection,
+  buildDocument,
+  buildUser,
+} from "@server/test/factories";
 import subscriptionCreator from "./subscriptionCreator";
-import subscriptionDestroyer from "./subscriptionDestroyer";
-
-setupTestDatabase();
 
 describe("subscriptionCreator", () => {
   const ip = "127.0.0.1";
-  const subscribedEvent = "documents.update";
+  const subscribedEvent = SubscriptionType.Document;
 
-  it("should create a subscription", async () => {
+  it("should create a document subscription for the whole collection", async () => {
+    const user = await buildUser();
+
+    const collection = await buildCollection({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+
+    const subscription = await sequelize.transaction(async (transaction) =>
+      subscriptionCreator({
+        ctx: createContext({ user, transaction, ip }),
+        collectionId: collection.id,
+        event: SubscriptionType.Document,
+      })
+    );
+
+    const event = await Event.findOne({
+      where: {
+        teamId: user.teamId,
+      },
+    });
+
+    expect(subscription.collectionId).toEqual(collection.id);
+    expect(subscription.documentId).toBeNull();
+    expect(subscription.userId).toEqual(user.id);
+    expect(event?.name).toEqual("subscriptions.create");
+    expect(event?.modelId).toEqual(subscription.id);
+    expect(event?.actorId).toEqual(subscription.userId);
+    expect(event?.userId).toEqual(subscription.userId);
+    expect(event?.collectionId).toEqual(subscription.collectionId);
+  });
+
+  it("should create a document subscription", async () => {
     const user = await buildUser();
 
     const document = await buildDocument({
@@ -21,17 +55,20 @@ describe("subscriptionCreator", () => {
 
     const subscription = await sequelize.transaction(async (transaction) =>
       subscriptionCreator({
-        user,
+        ctx: createContext({ user, transaction, ip }),
         documentId: document.id,
         event: subscribedEvent,
-        ip,
-        transaction,
       })
     );
 
-    const event = await Event.findOne();
+    const event = await Event.findOne({
+      where: {
+        teamId: user.teamId,
+      },
+    });
 
     expect(subscription.documentId).toEqual(document.id);
+    expect(subscription.collectionId).toBeNull();
     expect(subscription.userId).toEqual(user.id);
     expect(event?.name).toEqual("subscriptions.create");
     expect(event?.modelId).toEqual(subscription.id);
@@ -56,11 +93,9 @@ describe("subscriptionCreator", () => {
 
     const subscription1 = await sequelize.transaction(async (transaction) =>
       subscriptionCreator({
-        user,
+        ctx: createContext({ user, transaction, ip }),
         documentId: document.id,
         event: subscribedEvent,
-        ip,
-        transaction,
       })
     );
 
@@ -91,21 +126,14 @@ describe("subscriptionCreator", () => {
 
     const subscription0 = await sequelize.transaction(async (transaction) =>
       subscriptionCreator({
-        user,
+        ctx: createContext({ user, transaction, ip }),
         documentId: document.id,
         event: subscribedEvent,
-        ip,
-        transaction,
       })
     );
 
     await sequelize.transaction(async (transaction) =>
-      subscriptionDestroyer({
-        user,
-        subscription: subscription0,
-        ip,
-        transaction,
-      })
+      subscription0.destroyWithCtx(createContext({ user, transaction, ip }))
     );
 
     expect(subscription0.id).toBeDefined();
@@ -115,15 +143,17 @@ describe("subscriptionCreator", () => {
 
     const subscription1 = await sequelize.transaction(async (transaction) =>
       subscriptionCreator({
-        user,
+        ctx: createContext({ user, transaction, ip }),
         documentId: document.id,
         event: subscribedEvent,
-        ip,
-        transaction,
       })
     );
 
-    const events = await Event.count();
+    const events = await Event.count({
+      where: {
+        teamId: user.teamId,
+      },
+    });
 
     // 3 events. 1 create, 1 destroy and 1 re-create.
     expect(events).toEqual(3);
@@ -148,26 +178,26 @@ describe("subscriptionCreator", () => {
 
     const subscription0 = await sequelize.transaction(async (transaction) =>
       subscriptionCreator({
-        user,
+        ctx: createContext({ user, transaction, ip }),
         documentId: document.id,
         event: subscribedEvent,
-        ip,
-        transaction,
       })
     );
 
     const subscription1 = await sequelize.transaction(async (transaction) =>
       subscriptionCreator({
-        user,
+        ctx: createContext({ user, transaction, ip }),
         documentId: document.id,
         event: subscribedEvent,
-        ip,
-        transaction,
       })
     );
 
     // Should emit 1 event instead of 2.
-    const events = await Event.count();
+    const events = await Event.count({
+      where: {
+        teamId: user.teamId,
+      },
+    });
     expect(events).toEqual(1);
 
     expect(subscription0.documentId).toEqual(document.id);
@@ -189,21 +219,14 @@ describe("subscriptionCreator", () => {
 
     const subscription0 = await sequelize.transaction(async (transaction) =>
       subscriptionCreator({
-        user,
+        ctx: createContext({ user, transaction, ip }),
         documentId: document.id,
         event: subscribedEvent,
-        ip,
-        transaction,
       })
     );
 
     await sequelize.transaction(async (transaction) =>
-      subscriptionDestroyer({
-        user,
-        subscription: subscription0,
-        ip,
-        transaction,
-      })
+      subscription0.destroyWithCtx(createContext({ user, transaction, ip }))
     );
 
     expect(subscription0.id).toBeDefined();
@@ -213,17 +236,20 @@ describe("subscriptionCreator", () => {
 
     const subscription1 = await sequelize.transaction(async (transaction) =>
       subscriptionCreator({
-        user,
+        ctx: createContext({ user, transaction, ip }),
         documentId: document.id,
         event: subscribedEvent,
-        ip,
-        transaction,
       })
     );
 
     // Should emit 3 events.
     // 2 create, 1 destroy.
-    const events = await Event.findAll();
+    const events = await Event.findAll({
+      where: {
+        teamId: user.teamId,
+      },
+      order: [["createdAt", "ASC"]],
+    });
     expect(events.length).toEqual(3);
 
     expect(events[0].name).toEqual("subscriptions.create");
@@ -252,15 +278,17 @@ describe("subscriptionCreator", () => {
 
     const subscription0 = await sequelize.transaction(async (transaction) =>
       subscriptionCreator({
-        user,
+        ctx: createContext({ user, transaction, ip }),
         documentId: document.id,
         event: subscribedEvent,
-        ip,
-        transaction,
       })
     );
 
-    const events = await Event.count();
+    const events = await Event.count({
+      where: {
+        teamId: user.teamId,
+      },
+    });
     expect(events).toEqual(1);
 
     expect(subscription0.documentId).toEqual(document.id);

@@ -20,14 +20,14 @@ type Props = {
   description: string;
 };
 
-const HoverPreviewLink = React.forwardRef(function _HoverPreviewLink(
+const HoverPreviewLink = React.forwardRef(function HoverPreviewLink_(
   { url, thumbnailUrl, title, description }: Props,
   ref: React.Ref<HTMLDivElement>
 ) {
   return (
     <Preview as="a" href={url} target="_blank" rel="noopener noreferrer">
       <Flex column ref={ref}>
-        {thumbnailUrl ? <Thumbnail src={thumbnailUrl} alt={""} /> : null}
+        {thumbnailUrl ? <Thumbnail src={thumbnailUrl} alt="" /> : null}
         <Card>
           <CardContent>
             <Flex column>

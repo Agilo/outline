@@ -1,13 +1,51 @@
 import passport from "@outlinewiki/koa-passport";
-import { Context } from "koa";
+import type { Context } from "koa";
 import { InternalOAuthError } from "passport-oauth2";
 import { Client } from "@shared/types";
+import { parseDomain } from "@shared/utils/domains";
 import env from "@server/env";
 import { AuthenticationError } from "@server/errors";
 import Logger from "@server/logging/Logger";
-import { AuthenticationResult } from "@server/types";
+import { Team } from "@server/models";
+import type { AuthenticationResult } from "@server/types";
 import { signIn } from "@server/utils/authentication";
 import { parseState } from "@server/utils/passport";
+
+/**
+ * Validates that a host from the OAuth state is a trusted domain. For
+ * cloud-hosted deployments, ensures the host is either a known subdomain of
+ * the base domain or a registered custom domain.
+ *
+ * @param host the host to validate.
+ * @returns the host if trusted, otherwise falls back to the base domain from env.URL.
+ */
+async function getValidatedHost(host: string): Promise<string> {
+  const fallback = new URL(env.URL).host;
+
+  if (!env.isCloudHosted) {
+    return host;
+  }
+
+  if (!host) {
+    return fallback;
+  }
+
+  const domain = parseDomain(host);
+
+  // Subdomains of the base domain are trusted
+  if (!domain.custom) {
+    return domain.host;
+  }
+
+  // Custom domains must be registered to a team
+  const team = await Team.findByDomain(domain.host);
+  if (team) {
+    return domain.host;
+  }
+
+  // Unrecognized host, fall back to the base app URL
+  return fallback;
+}
 
 export default function createMiddleware(providerName: string) {
   return function passportMiddleware(ctx: Context) {
@@ -25,8 +63,8 @@ export default function createMiddleware(providerName: string) {
 
           if (err.id) {
             const notice = err.id.replace(/_/g, "-");
-            const redirectUrl = err.redirectUrl ?? "/";
-            const hasQueryString = redirectUrl?.includes("?");
+            const redirectPath = err.redirectPath ?? "/";
+            const hasQueryString = redirectPath?.includes("?");
 
             // Every authentication action is routed through the apex domain.
             // But when there is an error, we want to redirect the user on the
@@ -35,24 +73,26 @@ export default function createMiddleware(providerName: string) {
             // get original host
             const stateString = ctx.cookies.get("state");
             const state = stateString ? parseState(stateString) : undefined;
-            const host = state?.host ?? ctx.hostname;
 
-            // form a URL object with the err.redirectUrl and replace the host
+            // form a URL object with the err.redirectPath and replace the host
             const reqProtocol =
               state?.client === Client.Desktop ? "outline" : ctx.protocol;
-            const requestHost = ctx.get("host");
-            const url = new URL(
-              `${reqProtocol}://${requestHost}${redirectUrl}`
-            );
 
-            url.host = host;
+            const requestHost = await getValidatedHost(
+              state?.host ?? ctx.hostname
+            );
+            const url = new URL(
+              env.isCloudHosted
+                ? `${reqProtocol}://${requestHost}${redirectPath}`
+                : `${env.URL}${redirectPath}`
+            );
 
             return ctx.redirect(
               `${url.toString()}${hasQueryString ? "&" : "?"}notice=${notice}`
             );
           }
 
-          if (env.ENVIRONMENT === "development") {
+          if (env.isDevelopment) {
             throw err;
           }
 
@@ -86,7 +126,7 @@ export default function createMiddleware(providerName: string) {
         }
 
         if (result.user.isSuspended) {
-          return ctx.redirect("/?notice=suspended");
+          return ctx.redirect("/?notice=user-suspended");
         }
 
         await signIn(ctx, providerName, result);

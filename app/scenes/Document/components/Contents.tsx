@@ -1,51 +1,62 @@
+import { observer } from "mobx-react";
 import { transparentize } from "polished";
-import * as React from "react";
+import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import styled from "styled-components";
 import breakpoint from "styled-components-breakpoint";
-import { s } from "@shared/styles";
-import Text from "~/components/Text";
+import { EmojiText } from "@shared/components/EmojiText";
+import { EditorStyleHelper } from "@shared/editor/styles/EditorStyleHelper";
+import { depths, hideScrollbars, s } from "@shared/styles";
+import { useDocumentContext } from "~/components/DocumentContext";
 import useWindowScrollPosition from "~/hooks/useWindowScrollPosition";
+import { decodeURIComponentSafe } from "~/utils/urls";
 
 const HEADING_OFFSET = 20;
 
-type Props = {
-  isFullWidth: boolean;
-  headings: {
-    title: string;
-    level: number;
-    id: string;
-  }[];
-};
-
-export default function Contents({ headings, isFullWidth }: Props) {
-  const [activeSlug, setActiveSlug] = React.useState<string>();
-  const position = useWindowScrollPosition({
+function Contents() {
+  const [activeSlug, setActiveSlug] = useState<string>();
+  const scrollPosition = useWindowScrollPosition({
     throttle: 100,
   });
+  const { headings } = useDocumentContext();
+  const itemRefs = useRef<Record<string, HTMLLIElement | null>>({});
 
-  React.useEffect(() => {
+  useEffect(() => {
+    let activeId = headings.length > 0 ? headings[0].id : undefined;
+
     for (let key = 0; key < headings.length; key++) {
       const heading = headings[key];
       const element = window.document.getElementById(
-        decodeURIComponent(heading.id)
+        decodeURIComponentSafe(heading.id)
       );
 
       if (element) {
         const bounding = element.getBoundingClientRect();
-
         if (bounding.top > HEADING_OFFSET) {
-          const last = headings[Math.max(0, key - 1)];
-          setActiveSlug(last.id);
-          return;
+          break;
         }
+        activeId = heading.id;
       }
     }
-  }, [position, headings]);
+
+    if (activeSlug !== activeId) {
+      setActiveSlug(activeId);
+    }
+  }, [scrollPosition, headings, activeSlug]);
+
+  useEffect(() => {
+    const activeItem = activeSlug ? itemRefs.current[activeSlug] : undefined;
+
+    if (activeItem) {
+      activeItem.scrollIntoView({
+        block: "nearest",
+      });
+    }
+  }, [activeSlug]);
 
   // calculate the minimum heading level and adjust all the headings to make
   // that the top-most. This prevents the contents from being weirdly indented
-  // if all of the headings in the document are level 3, for example.
+  // if all of the headings in the document start at level 3, for example.
   const minHeading = headings.reduce(
     (memo, heading) => (heading.level < memo ? heading.level : memo),
     Infinity
@@ -53,71 +64,56 @@ export default function Contents({ headings, isFullWidth }: Props) {
   const headingAdjustment = minHeading - 1;
   const { t } = useTranslation();
 
+  if (headings.length === 0) {
+    return <StickyWrapper />;
+  }
+
   return (
-    <Wrapper isFullWidth={isFullWidth}>
-      <Sticky>
-        <Heading>{t("Contents")}</Heading>
-        {headings.length ? (
-          <List>
-            {headings
-              .filter((heading) => heading.level < 4)
-              .map((heading) => (
-                <ListItem
-                  key={heading.id}
-                  level={heading.level - headingAdjustment}
-                  active={activeSlug === heading.id}
-                >
-                  <Link href={`#${heading.id}`}>{heading.title}</Link>
-                </ListItem>
-              ))}
-          </List>
-        ) : (
-          <Empty>
-            {t("Headings you add to the document will appear here")}
-          </Empty>
-        )}
-      </Sticky>
-    </Wrapper>
+    <StickyWrapper>
+      <Heading>{t("Contents")}</Heading>
+      <List>
+        {headings
+          .filter((heading) => heading.level < 4)
+          .map((heading) => (
+            <ListItem
+              key={heading.id}
+              ref={(el) => (itemRefs.current[heading.id] = el)}
+              level={heading.level - headingAdjustment}
+              active={activeSlug === heading.id}
+            >
+              <Link href={`#${heading.id}`}>
+                <EmojiText>{heading.title}</EmojiText>
+              </Link>
+            </ListItem>
+          ))}
+      </List>
+    </StickyWrapper>
   );
 }
 
-const Wrapper = styled.div<{ isFullWidth: boolean }>`
-  width: 256px;
+const StickyWrapper = styled.div`
   display: none;
-
-  ${breakpoint("tablet")`
-    display: block;
-  `};
-
-  ${(props) =>
-    !props.isFullWidth &&
-    breakpoint("desktopLarge")`
-    transform: translateX(-256px);
-    width: 0;
-    `}
-`;
-
-const Sticky = styled.div`
   position: sticky;
-  top: 80px;
-  max-height: calc(100vh - 80px);
+  top: 90px;
+  max-height: calc(100vh - 90px);
+  width: ${EditorStyleHelper.tocWidth}px;
 
-  background: ${s("background")};
-  transition: ${s("backgroundTransition")};
+  ${hideScrollbars()}
 
-  margin-top: 72px;
-  margin-right: 52px;
-  min-width: 204px;
-  width: 228px;
-  min-height: 40px;
+  padding: 0 16px;
   overflow-y: auto;
-  padding: 4px 16px;
   border-radius: 8px;
+  background: ${s("background")};
 
   @supports (backdrop-filter: blur(20px)) {
     backdrop-filter: blur(20px);
     background: ${(props) => transparentize(0.2, props.theme.background)};
   }
+
+  ${breakpoint("tablet")`
+    display: block;
+    z-index: ${depths.toc};
+  `};
 `;
 
 const Heading = styled.h3`
@@ -125,19 +121,14 @@ const Heading = styled.h3`
   font-weight: 600;
   color: ${s("textTertiary")};
   letter-spacing: 0.03em;
-`;
-
-const Empty = styled(Text)`
-  margin: 1em 0 4em;
-  padding-right: 2em;
-  font-size: 14px;
+  margin-top: 10px;
 `;
 
 const ListItem = styled.li<{ level: number; active?: boolean }>`
   margin-left: ${(props) => (props.level - 1) * 10}px;
   margin-bottom: 8px;
-  padding-right: 2em;
   line-height: 1.3;
+  word-break: break-word;
 
   a {
     font-weight: ${(props) => (props.active ? "600" : "inherit")};
@@ -158,3 +149,5 @@ const List = styled.ol`
   padding: 0;
   list-style: none;
 `;
+
+export default observer(Contents);

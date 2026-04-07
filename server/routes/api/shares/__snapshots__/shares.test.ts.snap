@@ -1,15 +1,6 @@
-// Jest Snapshot v1, https://goo.gl/fbAQLP
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
 
 exports[`#shares.create should require authentication 1`] = `
-{
-  "error": "authentication_required",
-  "message": "Authentication required",
-  "ok": false,
-  "status": 401,
-}
-`;
-
-exports[`#shares.info should require authentication 1`] = `
 {
   "error": "authentication_required",
   "message": "Authentication required",

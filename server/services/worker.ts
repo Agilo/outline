@@ -1,6 +1,9 @@
+import env from "@server/env";
 import Logger from "@server/logging/Logger";
-import { setResource } from "@server/logging/tracer";
+import { setResource, addTags } from "@server/logging/tracer";
 import { traceFunction } from "@server/logging/tracing";
+import HealthMonitor from "@server/queues/HealthMonitor";
+import type { Event } from "@server/types";
 import { initI18n } from "@server/utils/i18n";
 import {
   globalEventQueue,
@@ -11,18 +14,19 @@ import {
 import processors from "../queues/processors";
 import tasks from "../queues/tasks";
 
-export default function init() {
-  void initI18n();
+export default async function init() {
+  await initI18n();
 
   // This queue processes the global event bus
-  globalEventQueue
+  globalEventQueue()
     .process(
+      env.WORKER_CONCURRENCY_EVENTS,
       traceFunction({
         serviceName: "worker",
         spanName: "process",
         isRoot: true,
       })(async function (job) {
-        const event = job.data;
+        const event = job.data as Event;
         let err;
 
         setResource(`Event.${event.name}`);
@@ -48,12 +52,12 @@ export default function init() {
             if (name === "WebsocketsProcessor") {
               // websockets are a special case on their own queue because they must
               // only be consumed by the websockets service rather than workers.
-              await websocketQueue.add(job.data);
+              await websocketQueue().add(job.data);
             } else if (
               ProcessorClass.applicableEvents.includes(event.name) ||
               ProcessorClass.applicableEvents.includes("*")
             ) {
-              await processorEventQueue.add({ event, name });
+              await processorEventQueue().add({ event, name });
             }
           } catch (error) {
             Logger.error(
@@ -76,8 +80,9 @@ export default function init() {
 
   // Jobs for individual processors are processed here. Only applicable events
   // as unapplicable events were filtered in the global event queue above.
-  processorEventQueue
+  processorEventQueue()
     .process(
+      env.WORKER_CONCURRENCY_EVENTS,
       traceFunction({
         serviceName: "worker",
         spanName: "process",
@@ -87,6 +92,7 @@ export default function init() {
         const ProcessorClass = processors[name];
 
         setResource(`Processor.${name}`);
+        addTags({ event });
 
         if (!ProcessorClass) {
           throw new Error(
@@ -94,6 +100,7 @@ export default function init() {
           );
         }
 
+        // @ts-expect-error We will not instantiate an abstract class
         const processor = new ProcessorClass();
 
         if (processor.perform) {
@@ -104,6 +111,11 @@ export default function init() {
           try {
             await processor.perform(event);
           } catch (err) {
+            // last attempt has failed.
+            if (job.attemptsMade + 1 >= (job.opts.attempts || 1)) {
+              await processor.onFailed(event).catch(); // suppress exception from 'onFailed'.
+            }
+
             Logger.error(
               `Error processing ${event.name} in ${name}`,
               err,
@@ -119,8 +131,9 @@ export default function init() {
     });
 
   // Jobs for async tasks are processed here.
-  taskQueue
+  taskQueue()
     .process(
+      env.WORKER_CONCURRENCY_TASKS,
       traceFunction({
         serviceName: "worker",
         spanName: "process",
@@ -130,6 +143,7 @@ export default function init() {
         const TaskClass = tasks[name];
 
         setResource(`Task.${name}`);
+        addTags({ props });
 
         if (!TaskClass) {
           throw new Error(
@@ -139,11 +153,17 @@ export default function init() {
 
         Logger.info("worker", `${name} running`, props);
 
+        // @ts-expect-error We will not instantiate an abstract class
         const task = new TaskClass();
 
         try {
-          await task.perform(props);
+          return await task.perform(props);
         } catch (err) {
+          // last attempt has failed.
+          if (job.attemptsMade + 1 >= (job.opts.attempts || 1)) {
+            await task.onFailed(props).catch(); // suppress exception from 'onFailed'.
+          }
+
           Logger.error(`Error processing task in ${name}`, err, props);
           throw err;
         }
@@ -152,4 +172,8 @@ export default function init() {
     .catch((err) => {
       Logger.fatal("Error starting taskQueue", err);
     });
+
+  HealthMonitor.start(globalEventQueue());
+  HealthMonitor.start(processorEventQueue());
+  HealthMonitor.start(taskQueue());
 }

@@ -1,6 +1,16 @@
-import { ResolvedPos, MarkType } from "prosemirror-model";
+import type { NodeAttrMark } from "@shared/editor/types";
+import type { ResolvedPos, MarkType } from "prosemirror-model";
+import type { NodeSelection } from "prosemirror-state";
 
-export default function getMarkRange($pos?: ResolvedPos, type?: MarkType) {
+/**
+ * Returns the mark of type along with its range for a given ResolvedPos,
+ * or false if the mark is not found.
+ *
+ * @param $pos The ResolvedPos to check.
+ * @param type The MarkType to look for.
+ * @returns An object containing the from and to positions and the mark, or false.
+ */
+export function getMarkRange($pos?: ResolvedPos, type?: MarkType) {
   if (!$pos || !type) {
     return false;
   }
@@ -10,7 +20,7 @@ export default function getMarkRange($pos?: ResolvedPos, type?: MarkType) {
     return false;
   }
 
-  const mark = start.node.marks.find((mark) => mark.type === type);
+  const mark = start.node.marks.find((m) => m.type === type);
   if (!mark) {
     return false;
   }
@@ -37,4 +47,27 @@ export default function getMarkRange($pos?: ResolvedPos, type?: MarkType) {
   }
 
   return { from: startPos, to: endPos, mark };
+}
+
+/**
+ * Returns the mark of type along with its range for a given NodeSelection,
+ * or false if the mark is not found.
+ *
+ * @param selection The NodeSelection to check.
+ * @param type The MarkType to look for.
+ * @returns An object containing the from and to positions and the mark, or false.
+ */
+export function getMarkRangeNodeSelection(
+  selection: NodeSelection,
+  type: MarkType
+) {
+  const mark = (selection.node.attrs.marks ?? []).find(
+    (mark: NodeAttrMark) => mark.type === type.name
+  );
+
+  if (!mark) {
+    return false;
+  }
+
+  return { from: selection.from, to: selection.to, mark };
 }

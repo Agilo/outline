@@ -1,4 +1,4 @@
-import React from "react";
+import * as React from "react";
 import styled from "styled-components";
 import { s } from "@shared/styles";
 import Flex from "./Flex";
@@ -11,7 +11,7 @@ type Props = {
 };
 
 const Notice: React.FC<Props> = ({ children, icon, description }: Props) => (
-  <Container>
+  <Container as="div">
     <Flex as="span" gap={8}>
       {icon}
       <span>
@@ -39,7 +39,7 @@ const Container = styled(Text)`
   border-radius: 4px;
   position: relative;
   font-size: 14px;
-  margin: 1em 0 0;
+  margin: 1em 0;
 
   svg {
     flex-shrink: 0;

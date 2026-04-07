@@ -1,10 +1,11 @@
 import uniq from "lodash/uniq";
-import { QueryTypes } from "sequelize";
+import { Op, QueryTypes } from "sequelize";
 import Logger from "@server/logging/Logger";
 import { Document, Attachment } from "@server/models";
+import { DocumentHelper } from "@server/models/helpers/DocumentHelper";
+import { ProsemirrorHelper } from "@server/models/helpers/ProsemirrorHelper";
 import DeleteAttachmentTask from "@server/queues/tasks/DeleteAttachmentTask";
 import { sequelize } from "@server/storage/database";
-import parseAttachmentIds from "@server/utils/parseAttachmentIds";
 
 export default async function documentPermanentDeleter(documents: Document[]) {
   const activeDocument = documents.find((doc) => !doc.deletedAt);
@@ -25,7 +26,9 @@ export default async function documentPermanentDeleter(documents: Document[]) {
 
   for (const document of documents) {
     // Find any attachments that are referenced in the text content
-    const attachmentIdsInText = parseAttachmentIds(document.text);
+    const attachmentIdsInText = ProsemirrorHelper.parseAttachmentIds(
+      DocumentHelper.toProsemirror(document)
+    );
 
     // Find any attachments that were originally uploaded to this document
     const attachmentIdsForDocument = (
@@ -64,7 +67,7 @@ export default async function documentPermanentDeleter(documents: Document[]) {
             "commands",
             `Attachment ${attachmentId} scheduled for deletion`
           );
-          await DeleteAttachmentTask.schedule({
+          await new DeleteAttachmentTask().schedule({
             attachmentId,
             teamId: document.teamId,
           });
@@ -73,9 +76,25 @@ export default async function documentPermanentDeleter(documents: Document[]) {
     );
   }
 
+  const documentIds = documents.map((document) => document.id);
+  await Document.update(
+    {
+      parentDocumentId: null,
+    },
+    {
+      where: {
+        parentDocumentId: {
+          [Op.in]: documentIds,
+        },
+      },
+      paranoid: false,
+    }
+  );
+
   return Document.scope("withDrafts").destroy({
     where: {
-      id: documents.map((document) => document.id),
+      id: documentIds,
+      deletedAt: { [Op.ne]: null },
     },
     force: true,
   });

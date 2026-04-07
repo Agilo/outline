@@ -1,4 +1,4 @@
-/* eslint-disable no-console */
+/* oxlint-disable no-console */
 import * as Sentry from "@sentry/react";
 import env from "~/env";
 
@@ -8,7 +8,10 @@ type LogCategory =
   | "editor"
   | "router"
   | "collaboration"
-  | "misc";
+  | "misc"
+  | "store"
+  | "plugins"
+  | "policies";
 
 type Extra = Record<string, any>;
 

@@ -1,14 +1,15 @@
-import { NodeType } from "prosemirror-model";
-import { wrapInList, liftListItem } from "prosemirror-schema-list";
-import { Command } from "prosemirror-state";
-import chainTransactions from "../lib/chainTransactions";
+import type { NodeType } from "prosemirror-model";
+import { liftListItem, wrapInList } from "prosemirror-schema-list";
+import type { Command } from "prosemirror-state";
+import { chainTransactions } from "../lib/chainTransactions";
 import { findParentNode } from "../queries/findParentNode";
-import isList from "../queries/isList";
+import { isList } from "../queries/isList";
 import clearNodes from "./clearNodes";
 
 export default function toggleList(
   listType: NodeType,
-  itemType: NodeType
+  itemType: NodeType,
+  listStyle?: string
 ): Command {
   return (state, dispatch) => {
     const { schema, selection } = state;
@@ -25,31 +26,53 @@ export default function toggleList(
     );
 
     if (range.depth >= 1 && parentList && range.depth - parentList.depth <= 1) {
-      if (parentList.node.type === listType) {
+      const currentStyle = parentList.node.attrs.listStyle;
+      const differentListStyle = currentStyle && currentStyle !== listStyle;
+
+      if (
+        parentList.node.type === listType &&
+        (!differentListStyle || !listStyle)
+      ) {
         return liftListItem(itemType)(state, dispatch);
+      }
+
+      const currentItemType = parentList.node.content.firstChild?.type;
+      const differentType = currentItemType && currentItemType !== itemType;
+
+      if (differentType) {
+        return chainTransactions(
+          clearNodes(),
+          wrapInList(listType, { listStyle })
+        )(state, dispatch);
       }
 
       if (
         isList(parentList.node, schema) &&
         listType.validContent(parentList.node.content)
       ) {
-        tr.setNodeMarkup(parentList.pos, listType);
+        tr.doc.nodesBetween(
+          parentList.pos,
+          parentList.pos + parentList.node.nodeSize,
+          (node, pos) => {
+            if (isList(node, schema)) {
+              tr.setNodeMarkup(pos, listType, listStyle ? { listStyle } : {});
+            }
+          }
+        );
 
-        if (dispatch) {
-          dispatch(tr);
-        }
-
+        dispatch?.(tr);
         return false;
       }
     }
 
-    const canWrapInList = wrapInList(listType)(state);
+    const attrs = listStyle ? { listStyle } : undefined;
+    const canWrapInList = wrapInList(listType, attrs)(state);
 
     if (canWrapInList) {
-      return wrapInList(listType)(state, dispatch);
+      return wrapInList(listType, attrs)(state, dispatch);
     }
 
-    return chainTransactions(clearNodes(), wrapInList(listType))(
+    return chainTransactions(clearNodes(), wrapInList(listType, attrs))(
       state,
       dispatch
     );

@@ -1,75 +1,86 @@
 import { observer } from "mobx-react";
 import { GlobeIcon } from "outline-icons";
-import * as React from "react";
-import { useTranslation, Trans } from "react-i18next";
-import { usePopoverState, PopoverDisclosure } from "reakit/Popover";
-import Document from "~/models/Document";
+import { Suspense, useCallback, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type Document from "~/models/Document";
 import Button from "~/components/Button";
-import Popover from "~/components/Popover";
-import Tooltip from "~/components/Tooltip";
-import useCurrentTeam from "~/hooks/useCurrentTeam";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "~/components/primitives/Popover";
+import useMobile from "~/hooks/useMobile";
+import useShareDataLoader from "~/hooks/useShareDataLoader";
 import useStores from "~/hooks/useStores";
-import SharePopover from "./SharePopover";
+import { preventDefault } from "~/utils/events";
+import lazyWithRetry from "~/utils/lazyWithRetry";
+
+const SharePopover = lazyWithRetry(
+  () => import("~/components/Sharing/Document")
+);
 
 type Props = {
+  /** Document being shared */
   document: Document;
 };
 
 function ShareButton({ document }: Props) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
   const { shares } = useStores();
-  const team = useCurrentTeam();
+  const isMobile = useMobile();
   const share = shares.getByDocumentId(document.id);
-  const sharedParent = shares.getByDocumentParents(document.id);
-  const isPubliclyShared =
-    team.sharing &&
-    (share?.published || (sharedParent?.published && !document.isDraft));
+  const sharedParent = shares.getByDocumentParents(document);
+  const domain = share?.domain || sharedParent?.domain;
+  const { preload, loading, reset } = useShareDataLoader({ document });
 
-  const popover = usePopoverState({
-    gutter: 0,
-    placement: "bottom-end",
-    unstable_fixed: true,
-  });
+  const handleOpenChange = useCallback(
+    (isOpen: boolean) => {
+      setOpen(isOpen);
+      if (isOpen) {
+        preload();
+      } else {
+        reset();
+      }
+    },
+    [preload, reset]
+  );
+
+  const closePopover = useCallback(() => {
+    handleOpenChange(false);
+  }, [handleOpenChange]);
+
+  if (isMobile) {
+    return null;
+  }
+
+  const icon = document.isPubliclyShared ? <GlobeIcon /> : undefined;
 
   return (
-    <>
-      <PopoverDisclosure {...popover}>
-        {(props) => (
-          <Tooltip
-            tooltip={
-              isPubliclyShared ? (
-                <Trans>
-                  Anyone with the link <br />
-                  can view this document
-                </Trans>
-              ) : (
-                ""
-              )
-            }
-            delay={500}
-            placement="bottom"
-          >
-            <Button
-              icon={isPubliclyShared ? <GlobeIcon /> : undefined}
-              neutral
-              {...props}
-            >
-              {t("Share")}
-            </Button>
-          </Tooltip>
-        )}
-      </PopoverDisclosure>
-
-      <Popover {...popover} aria-label={t("Share")}>
-        <SharePopover
-          document={document}
-          share={share}
-          sharedParent={sharedParent}
-          onRequestClose={popover.hide}
-          visible={popover.visible}
-        />
-      </Popover>
-    </>
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger>
+        <Button icon={icon} neutral onMouseEnter={preload}>
+          {t("Share")} {domain && <>&middot; {domain}</>}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        aria-label={t("Share")}
+        width={400}
+        minHeight={175}
+        side="bottom"
+        align="end"
+        onEscapeKeyDown={preventDefault}
+      >
+        <Suspense fallback={null}>
+          <SharePopover
+            document={document}
+            onRequestClose={closePopover}
+            visible={open}
+            loading={loading}
+          />
+        </Suspense>
+      </PopoverContent>
+    </Popover>
   );
 }
 

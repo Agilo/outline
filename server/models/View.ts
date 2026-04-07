@@ -1,4 +1,9 @@
-import { FindOrCreateOptions, Op } from "sequelize";
+import type {
+  FindOrCreateOptions,
+  InferAttributes,
+  InferCreationAttributes,
+} from "sequelize";
+import { Op } from "sequelize";
 import {
   BelongsTo,
   Column,
@@ -8,10 +13,13 @@ import {
   DataType,
   Scopes,
 } from "sequelize-typescript";
+import type { APIContext } from "@server/types";
 import Document from "./Document";
+import Event from "./Event";
 import User from "./User";
 import IdModel from "./base/IdModel";
 import Fix from "./decorators/Fix";
+import { SkipChangeset } from "./decorators/Changeset";
 
 @Scopes(() => ({
   withUser: () => ({
@@ -26,12 +34,16 @@ import Fix from "./decorators/Fix";
 }))
 @Table({ tableName: "views", modelName: "view" })
 @Fix
-class View extends IdModel {
+class View extends IdModel<
+  InferAttributes<View>,
+  Partial<InferCreationAttributes<View>>
+> {
   @Column
   lastEditingAt: Date | null;
 
   @Default(1)
   @Column(DataType.INTEGER)
+  @SkipChangeset
   count: number;
 
   // associations
@@ -51,21 +63,39 @@ class View extends IdModel {
   documentId: string;
 
   static async incrementOrCreate(
+    ctx: APIContext,
     where: {
       userId: string;
       documentId: string;
     },
-    options?: FindOrCreateOptions
+    options?: FindOrCreateOptions<InferAttributes<View>>
   ) {
-    const [model, created] = await this.findOrCreate({
-      ...options,
+    // Try to increment existing record
+    const [[models]] = await this.increment("count", {
       where,
+      ...options,
     });
 
-    if (!created) {
-      model.count += 1;
-      await model.save(options);
+    // @ts-expect-error Return type of increment is incorrect
+    let model = models?.[0] as View | undefined;
+
+    if (model) {
+      // Manually create event to match createWithCtx behavior
+      await Event.createFromContext(ctx, {
+        name: "views.create",
+        modelId: model.id,
+        userId: model.userId,
+        documentId: model.documentId,
+      });
+      return model;
     }
+
+    // If no record exists, create a new one
+    model = await this.createWithCtx(ctx, {
+      ...where,
+      count: 1,
+      ...options?.defaults,
+    });
 
     return model;
   }
@@ -82,7 +112,6 @@ class View extends IdModel {
       include: [
         {
           model: User,
-          paranoid: false,
           required: true,
           ...(includeSuspended
             ? {}

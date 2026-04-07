@@ -1,11 +1,15 @@
 import { subMinutes } from "date-fns";
-import invariant from "invariant";
 import JWT from "jsonwebtoken";
+import type { FindOptions } from "sequelize";
 import { Team, User } from "@server/models";
-import { AuthenticationError } from "../errors";
+import { AuthenticationError, UserSuspendedError } from "../errors";
+import type { Context } from "koa";
 
-function getJWTPayload(token: string) {
+export function getJWTPayload(token: string) {
   let payload;
+  if (!token) {
+    throw AuthenticationError("Missing token");
+  }
 
   try {
     payload = JWT.decode(token);
@@ -15,15 +19,24 @@ function getJWTPayload(token: string) {
     }
 
     return payload as JWT.JwtPayload;
-  } catch (err) {
-    throw AuthenticationError("Unable to decode JWT token");
+  } catch (_err) {
+    throw AuthenticationError("Unable to decode token");
   }
 }
 
+/**
+ * Retrieves the user associated with a JWT token, validating the token's type and expiration.
+ *
+ * @param token The JWT token to validate and extract the user from.
+ * @param allowedTypes An array of allowed token types (default: ["session", "transfer"]). The token's type must be included in this array to be considered valid.
+ * @returns An object containing the user associated with the token and an optional service string if included in the token's payload.
+ * @throws AuthenticationError if the token is missing, invalid, expired, or if the token's type is not allowed.
+ * @throws UserSuspendedError if the user associated with the token is suspended.
+ */
 export async function getUserForJWT(
   token: string,
   allowedTypes = ["session", "transfer"]
-): Promise<User> {
+): Promise<{ user: User; service?: string }> {
   const payload = getJWTPayload(token);
 
   if (!allowedTypes.includes(payload.type)) {
@@ -50,6 +63,15 @@ export async function getUserForJWT(
     throw AuthenticationError("Invalid token");
   }
 
+  if (user.isSuspended) {
+    const suspendingAdmin = user.suspendedById
+      ? await User.findByPk(user.suspendedById)
+      : undefined;
+    throw UserSuspendedError({
+      adminEmail: suspendingAdmin?.email || undefined,
+    });
+  }
+
   if (payload.type === "transfer") {
     // If the user has made a single API request since the transfer token was
     // created then it's no longer valid, they'll need to sign in again.
@@ -64,14 +86,20 @@ export async function getUserForJWT(
 
   try {
     JWT.verify(token, user.jwtSecret);
-  } catch (err) {
+  } catch (_err) {
     throw AuthenticationError("Invalid token");
   }
 
-  return user;
+  return {
+    user,
+    service: payload.service as string | undefined,
+  };
 }
 
-export async function getUserForEmailSigninToken(token: string): Promise<User> {
+export async function getUserForEmailSigninToken(
+  ctx: Context,
+  token: string
+): Promise<User> {
   const payload = getJWTPayload(token);
 
   if (payload.type !== "email-signin") {
@@ -85,14 +113,51 @@ export async function getUserForEmailSigninToken(token: string): Promise<User> {
     }
   }
 
-  const user = await User.scope("withTeam").findByPk(payload.id);
-  invariant(user, "User not found");
+  if (payload.ip !== ctx.request.ip) {
+    throw AuthenticationError("Token mismatch");
+  }
+
+  const user = await User.scope("withTeam").findByPk(payload.id, {
+    rejectOnEmpty: true,
+  });
 
   try {
     JWT.verify(token, user.jwtSecret);
-  } catch (err) {
+  } catch (_err) {
     throw AuthenticationError("Invalid token");
   }
 
   return user;
+}
+
+export async function getDetailsForEmailUpdateToken(
+  token: string,
+  options: FindOptions<User> = {}
+): Promise<{ user: User; email: string }> {
+  const payload = getJWTPayload(token);
+
+  if (payload.type !== "email-update") {
+    throw AuthenticationError("Invalid token");
+  }
+
+  // check the token is within it's expiration time
+  if (payload.createdAt) {
+    if (new Date(payload.createdAt) < subMinutes(new Date(), 10)) {
+      throw AuthenticationError("Expired token");
+    }
+  }
+
+  const email = payload.email;
+  const user = await User.findByPk(payload.id, {
+    rejectOnEmpty: true,
+    ...options,
+  });
+
+  try {
+    JWT.verify(token, user.jwtSecret);
+  } catch (_err) {
+    throw AuthenticationError("Invalid token");
+  }
+
+  return { user, email };
 }

@@ -1,10 +1,12 @@
+import { EmbedDescriptor } from "../embeds";
 import filterExcessSeparators from "./filterExcessSeparators";
 
-const embedDescriptor = {
+const embedDescriptor = new EmbedDescriptor({
+  id: "test",
+  title: "Test",
   icon: () => null,
-  matcher: () => true,
   component: () => null,
-};
+});
 
 describe("filterExcessSeparators", () => {
   test("filter hanging end separators", () => {

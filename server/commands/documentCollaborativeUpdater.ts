@@ -1,30 +1,39 @@
-import { yDocToProsemirrorJSON } from "@getoutline/y-prosemirror";
+import isEqual from "fast-deep-equal";
 import uniq from "lodash/uniq";
-import { Node } from "prosemirror-model";
+import { yDocToProsemirrorJSON } from "y-prosemirror";
 import * as Y from "yjs";
-import { schema, serializer } from "@server/editor";
+import type { ProsemirrorData } from "@shared/types";
 import Logger from "@server/logging/Logger";
 import { Document, Event } from "@server/models";
 import { sequelize } from "@server/storage/database";
+import { AuthenticationType } from "@server/types";
+import semver from "semver";
 
 type Props = {
-  /** The document ID to update */
+  /** The document ID to update. */
   documentId: string;
-  /** Current collaobrative state */
+  /** Current collaobrative state. */
   ydoc: Y.Doc;
-  /** The user ID that is performing the update, if known */
-  userId?: string;
-  /** Whether the last connection to the document left */
+  /** The user IDs that have modified the document since it was last persisted. */
+  sessionCollaboratorIds: string[];
+  /** Whether the last connection to the document left. */
   isLastConnection: boolean;
+  /** The client version, if available. */
+  clientVersion: string | null;
 };
 
 export default async function documentCollaborativeUpdater({
   documentId,
   ydoc,
-  userId,
+  sessionCollaboratorIds,
   isLastConnection,
+  clientVersion,
 }: Props) {
   return sequelize.transaction(async (transaction) => {
+    await sequelize.query(`SET LOCAL lock_timeout = '15s';`, {
+      transaction,
+    });
+
     const document = await Document.unscoped()
       .scope("withoutState")
       .findOne({
@@ -41,10 +50,13 @@ export default async function documentCollaborativeUpdater({
       });
 
     const state = Y.encodeStateAsUpdate(ydoc);
-    const node = Node.fromJSON(schema, yDocToProsemirrorJSON(ydoc, "default"));
-    const text = serializer.serialize(node, undefined);
-    const isUnchanged = document.text === text;
-    const lastModifiedById = userId ?? document.lastModifiedById;
+    const content = yDocToProsemirrorJSON(ydoc, "default") as ProsemirrorData;
+    const isUnchanged = isEqual(document.content, content);
+    const isDeleted = !!document.deletedAt;
+    const lastModifiedById = isDeleted
+      ? document.lastModifiedById
+      : (sessionCollaboratorIds[sessionCollaboratorIds.length - 1] ??
+        document.lastModifiedById);
 
     if (isUnchanged) {
       return;
@@ -58,17 +70,35 @@ export default async function documentCollaborativeUpdater({
     // extract collaborators from doc user data
     const pud = new Y.PermanentUserData(ydoc);
     const pudIds = Array.from(pud.clients.values());
-    const collaboratorIds = uniq([...document.collaboratorIds, ...pudIds]);
+    const collaboratorIds = uniq([
+      ...document.collaboratorIds,
+      ...sessionCollaboratorIds,
+      ...pudIds,
+    ]);
+
+    // Either the client or server version could be null, or they could both be
+    // set. In that case we want to use the greater (newer) version.
+    const editorVersion =
+      document.editorVersion && clientVersion
+        ? semver.gt(clientVersion, document.editorVersion)
+          ? clientVersion
+          : document.editorVersion
+        : clientVersion
+          ? clientVersion
+          : document.editorVersion;
 
     await document.update(
       {
-        text,
+        content,
         state: Buffer.from(state),
         lastModifiedById,
         collaboratorIds,
+        editorVersion,
       },
       {
         transaction,
+        // Hooks MUST NOT be called or the AfterUpdate hook in Document model may
+        // result in infinite processing.
         hooks: false,
       }
     );
@@ -79,6 +109,7 @@ export default async function documentCollaborativeUpdater({
       collectionId: document.collectionId,
       teamId: document.teamId,
       actorId: lastModifiedById,
+      authType: AuthenticationType.APP,
       data: {
         multiplayer: true,
         title: document.title,

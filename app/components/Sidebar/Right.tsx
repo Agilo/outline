@@ -7,22 +7,24 @@ import { depths, s } from "@shared/styles";
 import ErrorBoundary from "~/components/ErrorBoundary";
 import Flex from "~/components/Flex";
 import ResizeBorder from "~/components/Sidebar/components/ResizeBorder";
-import useMobile from "~/hooks/useMobile";
 import useStores from "~/hooks/useStores";
+import useWindowScrollbarWidth from "~/hooks/useWindowScrollbarWidth";
 import { sidebarAppearDuration } from "~/styles/animations";
 
-type Props = React.HTMLAttributes<HTMLDivElement> & {
+interface Props extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;
   border?: boolean;
-};
+  /** When true, skip the entrance animation and render at full width immediately. */
+  skipInitialAnimation?: boolean;
+}
 
-function Right({ children, border, className }: Props) {
+function Right({ children, border, className, skipInitialAnimation }: Props) {
   const theme = useTheme();
   const { ui } = useStores();
   const [isResizing, setResizing] = React.useState(false);
-  const isMobile = useMobile();
   const maxWidth = theme.sidebarMaxWidth;
   const minWidth = theme.sidebarMinWidth + 16; // padding
+  const windowScrollbarWidth = useWindowScrollbarWidth();
 
   const handleDrag = React.useCallback(
     (event: MouseEvent) => {
@@ -32,13 +34,13 @@ function Right({ children, border, className }: Props) {
         Math.min(window.innerWidth - event.pageX, maxWidth),
         minWidth
       );
-      ui.setRightSidebarWidth(width);
+      ui.set({ sidebarRightWidth: width });
     },
     [minWidth, maxWidth, ui]
   );
 
   const handleReset = React.useCallback(() => {
-    ui.setRightSidebarWidth(theme.sidebarRightWidth);
+    ui.set({ sidebarRightWidth: theme.sidebarRightWidth });
   }, [ui, theme.sidebarRightWidth]);
 
   const handleStopDrag = React.useCallback(() => {
@@ -50,7 +52,8 @@ function Right({ children, border, className }: Props) {
     }
   }, []);
 
-  const handleMouseDown = React.useCallback(() => {
+  const handleMouseDown = React.useCallback((event) => {
+    event.preventDefault();
     setResizing(true);
   }, []);
 
@@ -67,19 +70,21 @@ function Right({ children, border, className }: Props) {
   }, [isResizing, handleDrag, handleStopDrag]);
 
   const style = React.useMemo(
-    () =>
-      isMobile
-        ? { width: "80%" }
-        : {
-            width: `${ui.sidebarRightWidth}px`,
-          },
-    [isMobile, ui.sidebarRightWidth]
+    () => ({
+      width: windowScrollbarWidth
+        ? `${ui.sidebarRightWidth - windowScrollbarWidth}px`
+        : `${ui.sidebarRightWidth}px`,
+    }),
+    [ui.sidebarRightWidth, windowScrollbarWidth]
   );
 
   const animationProps = {
-    initial: {
-      width: 0,
-    },
+    initial: skipInitialAnimation
+      ? false
+      : {
+          width: 0,
+          opacity: 0.9,
+        },
     animate: {
       transition: isResizing
         ? { duration: 0 }
@@ -89,23 +94,29 @@ function Right({ children, border, className }: Props) {
             duration: sidebarAppearDuration / 1000,
           },
       width: ui.sidebarRightWidth,
+      opacity: 1,
     },
     exit: {
       width: 0,
+      opacity: 0,
     },
   };
 
   return (
-    <Sidebar {...animationProps} $border={border} className={className}>
+    <Sidebar
+      {...animationProps}
+      $border={border}
+      className={className}
+      role="complementary"
+      aria-label="Right sidebar"
+    >
       <Position style={style} column>
         <ErrorBoundary>{children}</ErrorBoundary>
-        {!isMobile && (
-          <ResizeBorder
-            onMouseDown={handleMouseDown}
-            onDoubleClick={handleReset}
-            dir="right"
-          />
-        )}
+        <ResizeBorder
+          onMouseDown={handleMouseDown}
+          onDoubleClick={handleReset}
+          dir="right"
+        />
       </Position>
     </Sidebar>
   );
@@ -115,6 +126,7 @@ const Position = styled(Flex)`
   position: fixed;
   top: 0;
   bottom: 0;
+  max-width: 80%;
 `;
 
 const Sidebar = styled(m.div)<{
@@ -126,7 +138,7 @@ const Sidebar = styled(m.div)<{
   max-width: 80%;
   border-left: 1px solid ${s("divider")};
   transition: border-left 100ms ease-in-out;
-  z-index: 1;
+  z-index: ${depths.sidebar};
 
   ${breakpoint("mobile", "tablet")`
     display: flex;
@@ -134,7 +146,7 @@ const Sidebar = styled(m.div)<{
     top: 0;
     right: 0;
     bottom: 0;
-    z-index: ${depths.sidebar};
+    z-index: ${depths.mobileSidebar};
   `}
 
   ${breakpoint("tablet")`

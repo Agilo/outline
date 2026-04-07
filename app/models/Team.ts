@@ -1,18 +1,20 @@
 import { computed, observable } from "mobx";
 import { TeamPreferenceDefaults } from "@shared/constants";
-import { TeamPreference, TeamPreferences } from "@shared/types";
+import type { TeamPreference, TeamPreferences, UserRole } from "@shared/types";
 import { stringToColor } from "@shared/utils/color";
-import BaseModel from "./BaseModel";
+import Model from "./base/Model";
 import Field from "./decorators/Field";
 
-class Team extends BaseModel {
-  @Field
-  @observable
-  id: string;
+class Team extends Model {
+  static modelName = "Team";
 
   @Field
   @observable
   name: string;
+
+  @Field
+  @observable
+  description: string | null;
 
   @Field
   @observable
@@ -44,7 +46,15 @@ class Team extends BaseModel {
 
   @Field
   @observable
+  memberTeamCreate: boolean;
+
+  @Field
+  @observable
   guestSignin: boolean;
+
+  @Field
+  @observable
+  passkeysEnabled: boolean;
 
   @Field
   @observable
@@ -52,14 +62,20 @@ class Team extends BaseModel {
 
   @Field
   @observable
-  defaultUserRole: string;
+  defaultUserRole: UserRole;
+
+  @Field
+  @observable
+  guidanceMCP: string | null;
 
   @Field
   @observable
   preferences: TeamPreferences | null;
 
+  @observable
   domain: string | null | undefined;
 
+  @observable
   url: string;
 
   @Field
@@ -78,7 +94,7 @@ class Team extends BaseModel {
 
   @computed
   get initial(): string {
-    return this.name ? this.name[0] : "?";
+    return (this.name ? this.name[0] : "?").toUpperCase();
   }
 
   /**
@@ -102,10 +118,10 @@ class Team extends BaseModel {
   /**
    * Set the value for a specific preference key.
    *
-   * @param key The TeamPreference key to retrieve
-   * @param value The value to set
+   * @param key The TeamPreference key to set.
+   * @param value The value to set.
    */
-  setPreference(key: TeamPreference, value: boolean) {
+  setPreference<T extends TeamPreference>(key: T, value: TeamPreferences[T]) {
     this.preferences = {
       ...this.preferences,
       [key]: value,

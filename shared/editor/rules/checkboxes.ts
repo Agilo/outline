@@ -1,5 +1,5 @@
-import MarkdownIt from "markdown-it";
-import Token from "markdown-it/lib/token";
+import type { Token } from "markdown-it";
+import type MarkdownIt from "markdown-it";
 
 const CHECKBOX_REGEX = /\[(X|\s|_|-)\]\s(.*)?/i;
 
@@ -16,10 +16,10 @@ function isParagraph(token: Token | void): boolean {
 }
 
 function isListItem(token: Token | void): boolean {
-  return (
-    !!token &&
-    (token.type === "list_item_open" || token.type === "checkbox_item_open")
-  );
+  // Only match list_item_open, not checkbox_item_open - items that are already
+  // checkbox_item_open have been processed (e.g., by the tables rule for
+  // checkboxes in table cells) and should not be processed again.
+  return !!token && token.type === "list_item_open";
 }
 
 function looksLikeChecklist(tokens: Token[], index: number) {
@@ -56,9 +56,9 @@ export default function markdownItCheckbox(md: MarkdownIt): void {
 
     // work backwards through the tokens and find text that looks like a checkbox
     for (let i = tokens.length - 1; i > 0; i--) {
-      const matches = looksLikeChecklist(tokens, i);
-      if (matches) {
-        const value = matches[1];
+      const matchesChecklist = looksLikeChecklist(tokens, i);
+      if (matchesChecklist) {
+        const value = matchesChecklist[1];
         const checked = value.toLowerCase() === "x";
 
         // convert surrounding list tokens
@@ -73,7 +73,7 @@ export default function markdownItCheckbox(md: MarkdownIt): void {
         // remove [ ] [x] from list item label – must use the content from the
         // child for escaped characters to be unescaped correctly.
         const tokenChildren = tokens[i].children;
-        if (tokenChildren) {
+        if (tokenChildren && tokenChildren[0].type === "text") {
           const contentMatches = tokenChildren[0].content.match(CHECKBOX_REGEX);
 
           if (contentMatches) {
@@ -93,10 +93,16 @@ export default function markdownItCheckbox(md: MarkdownIt): void {
 
         // close the list item
         let j = i;
-        while (tokens[j].type !== "list_item_close") {
+        while (
+          tokens[j] &&
+          tokens[j].type !== "list_item_close" &&
+          tokens[j].type !== "checkbox_item_close"
+        ) {
           j++;
         }
-        tokens[j].type = "checkbox_item_close";
+        if (tokens[j]) {
+          tokens[j].type = "checkbox_item_close";
+        }
       }
     }
 

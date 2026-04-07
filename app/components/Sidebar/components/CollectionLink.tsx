@@ -1,35 +1,45 @@
-import { Location } from "history";
+import type { Location } from "history";
 import { observer } from "mobx-react";
 import { PlusIcon } from "outline-icons";
 import * as React from "react";
-import { useDrop } from "react-dnd";
 import { useTranslation } from "react-i18next";
+import { mergeRefs } from "react-merge-refs";
 import { useHistory } from "react-router-dom";
-import { NavigationNode } from "@shared/types";
-import Collection from "~/models/Collection";
-import Document from "~/models/Document";
-import DocumentReparent from "~/scenes/DocumentReparent";
+import { UserPreference } from "@shared/types";
+import { ProsemirrorHelper } from "@shared/utils/ProsemirrorHelper";
+import { CollectionValidation, DocumentValidation } from "@shared/validations";
+import type Collection from "~/models/Collection";
+import type Document from "~/models/Document";
+import type { RefHandle } from "~/components/EditableTitle";
+import EditableTitle from "~/components/EditableTitle";
 import Fade from "~/components/Fade";
 import CollectionIcon from "~/components/Icons/CollectionIcon";
 import NudeButton from "~/components/NudeButton";
-import { createDocument } from "~/actions/definitions/documents";
-import useActionContext from "~/hooks/useActionContext";
+import Tooltip from "~/components/Tooltip";
 import useBoolean from "~/hooks/useBoolean";
+import useCurrentUser from "~/hooks/useCurrentUser";
 import usePolicy from "~/hooks/usePolicy";
 import useStores from "~/hooks/useStores";
 import CollectionMenu from "~/menus/CollectionMenu";
+import { documentEditPath } from "~/utils/routeHelpers";
+import { useDropToChangeCollection } from "../hooks/useDragAndDrop";
 import DropToImport from "./DropToImport";
-import EditableTitle from "./EditableTitle";
 import Relative from "./Relative";
-import SidebarLink, { DragObject } from "./SidebarLink";
-import { useStarredContext } from "./StarredContext";
+import type { SidebarContextType } from "./SidebarContext";
+import { useSidebarContext } from "./SidebarContext";
+import SidebarLink from "./SidebarLink";
+import { useCollectionMenuAction } from "~/hooks/useCollectionMenuAction";
+import { ActionContextProvider } from "~/hooks/useActionContext";
+import CollectionLinkChildren from "./CollectionLinkChildren";
 
 type Props = {
   collection: Collection;
   expanded?: boolean;
-  onDisclosureClick: (ev?: React.MouseEvent<HTMLButtonElement>) => void;
+  onDisclosureClick: (ev?: React.MouseEvent<HTMLElement>) => void;
   activeDocument: Document | undefined;
   isDraggingAnyCollection?: boolean;
+  depth?: number;
+  onClick?: () => void;
 };
 
 const CollectionLink: React.FC<Props> = ({
@@ -37,140 +47,142 @@ const CollectionLink: React.FC<Props> = ({
   expanded,
   onDisclosureClick,
   isDraggingAnyCollection,
+  depth,
+  onClick,
 }: Props) => {
-  const itemRef = React.useRef<
-    NavigationNode & { depth: number; active: boolean; collectionId: string }
-  >();
-  const { dialogs, documents, collections } = useStores();
   const [menuOpen, handleMenuOpen, handleMenuClose] = useBoolean();
   const [isEditing, setIsEditing] = React.useState(false);
+  const { documents } = useStores();
+  const history = useHistory();
   const can = usePolicy(collection);
   const { t } = useTranslation();
-  const history = useHistory();
-  const inStarredSection = useStarredContext();
+  const sidebarContext = useSidebarContext();
+  const user = useCurrentUser();
+  const editableTitleRef = React.useRef<RefHandle>(null);
 
   const handleTitleChange = React.useCallback(
     async (name: string) => {
       await collection.save({
         name,
       });
-      history.replace(collection.url, history.location.state);
     },
-    [collection, history]
+    [collection]
   );
 
-  // Drop to re-parent document
-  const [{ isOver, canDrop }, drop] = useDrop({
-    accept: "document",
-    drop: async (item: DragObject, monitor) => {
-      const { id, collectionId } = item;
-      if (monitor.didDrop()) {
-        return;
-      }
-      if (!collection) {
-        return;
-      }
+  const handleExpand = React.useCallback(() => {
+    if (!expanded) {
+      onDisclosureClick();
+    }
+  }, [expanded, onDisclosureClick]);
 
-      const document = documents.get(id);
-      if (collection.id === collectionId && !document?.parentDocumentId) {
-        return;
-      }
-
-      const prevCollection = collections.get(collectionId);
-
-      if (
-        prevCollection &&
-        prevCollection.permission === null &&
-        prevCollection.permission !== collection.permission &&
-        !document?.isDraft
-      ) {
-        itemRef.current = item;
-
-        dialogs.openModal({
-          title: t("Move document"),
-          content: (
-            <DocumentReparent
-              item={item}
-              collection={collection}
-              onSubmit={dialogs.closeAllModals}
-              onCancel={dialogs.closeAllModals}
-            />
-          ),
-        });
-      } else {
-        await documents.move(id, collection.id);
-
-        if (!expanded) {
-          onDisclosureClick();
-        }
-      }
-    },
-    canDrop: () => can.createDocument,
-    collect: (monitor) => ({
-      isOver: !!monitor.isOver({
-        shallow: true,
-      }),
-      canDrop: monitor.canDrop(),
-    }),
-  });
-
-  const handleTitleEditing = React.useCallback((isEditing: boolean) => {
-    setIsEditing(isEditing);
-  }, []);
+  const parentRef = React.useRef<HTMLDivElement>(null);
+  const [{ isOver, canDrop }, dropRef] = useDropToChangeCollection(
+    collection,
+    handleExpand,
+    parentRef
+  );
 
   const handlePrefetch = React.useCallback(() => {
     void collection.fetchDocuments();
   }, [collection]);
 
-  const context = useActionContext({
-    activeCollectionId: collection.id,
-    inStarredSection,
+  const handleRename = React.useCallback(() => {
+    editableTitleRef.current?.setIsEditing(true);
+  }, [editableTitleRef]);
+
+  const newChildTitleRef = React.useRef<RefHandle>(null);
+  const [isAddingNewChild, setIsAddingNewChild, closeAddingNewChild] =
+    useBoolean();
+
+  const handleNewDoc = React.useCallback(
+    async (input) => {
+      try {
+        newChildTitleRef.current?.setIsEditing(false);
+        const newDocument = await documents.create(
+          {
+            collectionId: collection.id,
+            title: input,
+            fullWidth: user.getPreference(UserPreference.FullWidthDocuments),
+            data: ProsemirrorHelper.getEmptyDocument(),
+          },
+          { publish: true }
+        );
+        collection?.addDocument(newDocument);
+
+        closeAddingNewChild();
+        history.push({
+          pathname: documentEditPath(newDocument),
+          state: { sidebarContext },
+        });
+      } catch (_err) {
+        newChildTitleRef.current?.setIsEditing(true);
+      }
+    },
+    [user, sidebarContext, closeAddingNewChild, history, collection, documents]
+  );
+
+  const contextMenuAction = useCollectionMenuAction({
+    collectionId: collection.id,
+    onRename: handleRename,
   });
 
   return (
-    <>
-      <Relative ref={drop}>
+    <ActionContextProvider value={{ activeModels: [collection] }}>
+      <Relative ref={mergeRefs([parentRef, dropRef])}>
         <DropToImport collectionId={collection.id}>
           <SidebarLink
+            onClick={onClick}
             to={{
-              pathname: collection.url,
-              state: { starred: inStarredSection },
+              pathname: collection.path,
+              state: { sidebarContext },
             }}
             expanded={expanded}
             onDisclosureClick={onDisclosureClick}
             onClickIntent={handlePrefetch}
+            contextAction={contextMenuAction}
             icon={
               <CollectionIcon collection={collection} expanded={expanded} />
             }
-            showActions={menuOpen}
+            $showActions={menuOpen}
             isActiveDrop={isOver && canDrop}
-            isActive={(match, location: Location<{ starred?: boolean }>) =>
-              !!match && location.state?.starred === inStarredSection
-            }
+            isActive={(
+              match,
+              location: Location<{ sidebarContext?: SidebarContextType }>
+            ) => !!match && location.state?.sidebarContext === sidebarContext}
             label={
               <EditableTitle
                 title={collection.name}
                 onSubmit={handleTitleChange}
-                onEditing={handleTitleEditing}
+                onEditing={setIsEditing}
                 canUpdate={can.update}
+                maxLength={CollectionValidation.maxNameLength}
+                ref={editableTitleRef}
               />
             }
+            ellipsis={!isEditing}
             exact={false}
-            depth={0}
+            depth={depth ? depth : 0}
             menu={
               !isEditing &&
               !isDraggingAnyCollection && (
                 <Fade>
-                  <NudeButton
-                    tooltip={{ tooltip: t("New doc"), delay: 500 }}
-                    action={createDocument}
-                    context={context}
-                    hideOnActionDisabled
-                  >
-                    <PlusIcon />
-                  </NudeButton>
+                  {can.createDocument && (
+                    <Tooltip content={t("New doc")} delay={500}>
+                      <NudeButton
+                        aria-label={t("New nested document")}
+                        onClick={(ev) => {
+                          ev.preventDefault();
+                          setIsAddingNewChild();
+                          handleExpand();
+                        }}
+                      >
+                        <PlusIcon />
+                      </NudeButton>
+                    </Tooltip>
+                  )}
                   <CollectionMenu
                     collection={collection}
+                    onRename={handleRename}
                     onOpen={handleMenuOpen}
                     onClose={handleMenuClose}
                   />
@@ -180,7 +192,32 @@ const CollectionLink: React.FC<Props> = ({
           />
         </DropToImport>
       </Relative>
-    </>
+      <CollectionLinkChildren
+        collection={collection}
+        expanded={!!expanded}
+        prefetchDocument={documents.prefetchDocument}
+      >
+        {isAddingNewChild ? (
+          <SidebarLink
+            depth={2}
+            isActive={() => true}
+            ellipsis={false}
+            label={
+              <EditableTitle
+                title=""
+                canUpdate
+                isEditing
+                placeholder={`${t("New doc")}…`}
+                onCancel={closeAddingNewChild}
+                onSubmit={handleNewDoc}
+                maxLength={DocumentValidation.maxTitleLength}
+                ref={newChildTitleRef}
+              />
+            }
+          />
+        ) : undefined}
+      </CollectionLinkChildren>
+    </ActionContextProvider>
   );
 };
 

@@ -1,3 +1,5 @@
+import type { InferAttributes, InferCreationAttributes } from "sequelize";
+import { type SaveOptions } from "sequelize";
 import {
   ForeignKey,
   BelongsTo,
@@ -9,14 +11,21 @@ import {
   Default,
   AllowNull,
   Is,
+  Unique,
+  BeforeUpdate,
 } from "sequelize-typescript";
-import { SHARE_URL_SLUG_REGEX } from "@shared/utils/urlHelpers";
+import { UrlHelper } from "@shared/utils/UrlHelper";
+import env from "@server/env";
+import { ValidationError } from "@server/errors";
+import type { APIContext } from "@server/types";
 import Collection from "./Collection";
 import Document from "./Document";
 import Team from "./Team";
 import User from "./User";
 import IdModel from "./base/IdModel";
 import Fix from "./decorators/Fix";
+import IsFQDN from "./validators/IsFQDN";
+import Length from "./validators/Length";
 
 @DefaultScope(() => ({
   include: [
@@ -25,11 +34,16 @@ import Fix from "./decorators/Fix";
       paranoid: false,
     },
     {
+      association: "collection",
+      required: false,
+    },
+    {
       association: "document",
       required: false,
     },
     {
       association: "team",
+      required: true,
     },
   ],
 }))
@@ -37,12 +51,40 @@ import Fix from "./decorators/Fix";
   withCollectionPermissions: (userId: string) => ({
     include: [
       {
-        model: Document.scope("withDrafts"),
+        attributes: [
+          "id",
+          "name",
+          "permission",
+          "sharing",
+          "urlId",
+          "teamId",
+          "deletedAt",
+        ],
+        model: Collection.scope({
+          method: ["withMembership", userId],
+        }),
+        as: "collection",
+      },
+      {
+        model: Document.scope([
+          "withDrafts",
+          {
+            method: ["withMembership", userId],
+          },
+        ]),
         paranoid: true,
         as: "document",
         include: [
           {
-            attributes: ["id", "permission", "sharing", "teamId", "deletedAt"],
+            attributes: [
+              "id",
+              "name",
+              "permission",
+              "urlId",
+              "sharing",
+              "teamId",
+              "deletedAt",
+            ],
             model: Collection.scope({
               method: ["withMembership", userId],
             }),
@@ -62,7 +104,10 @@ import Fix from "./decorators/Fix";
 }))
 @Table({ tableName: "shares", modelName: "share" })
 @Fix
-class Share extends IdModel {
+class Share extends IdModel<
+  InferAttributes<Share>,
+  Partial<InferCreationAttributes<Share>>
+> {
   @Column
   published: boolean;
 
@@ -82,11 +127,57 @@ class Share extends IdModel {
 
   @AllowNull
   @Is({
-    args: SHARE_URL_SLUG_REGEX,
+    args: UrlHelper.SHARE_URL_SLUG_REGEX,
     msg: "Must be only alphanumeric and dashes",
   })
   @Column
   urlId: string | null | undefined;
+
+  @Unique
+  @Length({ max: 255, msg: "domain must be 255 characters or less" })
+  @IsFQDN
+  @Column
+  domain: string | null;
+
+  @Default(false)
+  @Column
+  allowIndexing: boolean;
+
+  @Default(true)
+  @Column
+  allowSubscriptions: boolean;
+
+  @Default(false)
+  @Column
+  showLastUpdated: boolean;
+
+  @Default(false)
+  @Column
+  showTOC: boolean;
+
+  // hooks
+
+  @BeforeUpdate
+  static async checkDomain(model: Share, options: SaveOptions) {
+    if (!model.domain) {
+      return model;
+    }
+
+    model.domain = model.domain.toLowerCase();
+
+    const count = await Team.count({
+      ...options,
+      where: {
+        domain: model.domain,
+      },
+    });
+
+    if (count > 0) {
+      throw ValidationError("Domain is already in use");
+    }
+
+    return model;
+  }
 
   // getters
 
@@ -95,6 +186,11 @@ class Share extends IdModel {
   }
 
   get canonicalUrl() {
+    if (this.domain) {
+      const url = new URL(env.URL);
+      return `${url.protocol}//${this.domain}${url.port ? `:${url.port}` : ""}`;
+    }
+
     return this.urlId
       ? `${this.team.url}/s/${this.urlId}`
       : `${this.team.url}/s/${this.id}`;
@@ -123,17 +219,25 @@ class Share extends IdModel {
   @Column(DataType.UUID)
   teamId: string;
 
+  @BelongsTo(() => Collection, "collectionId")
+  collection: Collection | null;
+
+  @ForeignKey(() => Collection)
+  @Column(DataType.UUID)
+  collectionId: string | null;
+
   @BelongsTo(() => Document, "documentId")
   document: Document | null;
 
   @ForeignKey(() => Document)
   @Column(DataType.UUID)
-  documentId: string;
+  documentId: string | null;
 
-  revoke(userId: string) {
+  revoke(ctx: APIContext) {
+    const { user } = ctx.state.auth;
     this.revokedAt = new Date();
-    this.revokedById = userId;
-    return this.save();
+    this.revokedById = user.id;
+    return this.saveWithCtx(ctx, undefined, { name: "revoke" });
   }
 }
 

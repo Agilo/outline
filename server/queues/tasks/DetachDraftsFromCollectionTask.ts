@@ -2,12 +2,13 @@ import { Op } from "sequelize";
 import documentMover from "@server/commands/documentMover";
 import { Collection, Document, User } from "@server/models";
 import { sequelize } from "@server/storage/database";
-import BaseTask from "./BaseTask";
+import { BaseTask } from "./base/BaseTask";
+import { createContext } from "@server/context";
 
 type Props = {
   collectionId: string;
   actorId: string;
-  ip: string;
+  ip: string | null;
 };
 
 export default class DetachDraftsFromCollectionTask extends BaseTask<Props> {
@@ -19,14 +20,17 @@ export default class DetachDraftsFromCollectionTask extends BaseTask<Props> {
       User.findByPk(props.actorId),
     ]);
 
-    if (!actor || !collection || !collection.deletedAt) {
+    if (
+      !actor ||
+      !collection ||
+      !(collection.deletedAt || collection.archivedAt)
+    ) {
       return;
     }
 
     const documents = await Document.scope("withDrafts").findAll({
       where: {
         collectionId: props.collectionId,
-        template: false,
         publishedAt: {
           [Op.is]: null,
         },
@@ -35,13 +39,16 @@ export default class DetachDraftsFromCollectionTask extends BaseTask<Props> {
     });
 
     return sequelize.transaction(async (transaction) => {
+      const ctx = createContext({
+        user: actor,
+        ip: props.ip,
+        transaction,
+      });
+
       for (const document of documents) {
-        await documentMover({
+        await documentMover(ctx, {
           document,
-          user: actor,
-          ip: props.ip,
           collectionId: null,
-          transaction,
         });
       }
     });

@@ -1,8 +1,5 @@
-import {
-  IRateLimiterStoreOptions,
-  RateLimiterRedis,
-  RateLimiterMemory,
-} from "rate-limiter-flexible";
+import type { IRateLimiterStoreOptions } from "rate-limiter-flexible";
+import { RateLimiterRedis, RateLimiterMemory } from "rate-limiter-flexible";
 import env from "@server/env";
 import Redis from "@server/storage/redis";
 
@@ -20,13 +17,20 @@ export default class RateLimiter {
     duration: env.RATE_LIMITER_DURATION_WINDOW,
   });
 
-  static readonly defaultRateLimiter = new RateLimiterRedis({
-    storeClient: Redis.defaultClient,
-    points: env.RATE_LIMITER_REQUESTS,
-    duration: env.RATE_LIMITER_DURATION_WINDOW,
-    keyPrefix: this.RATE_LIMITER_REDIS_KEY_PREFIX,
-    insuranceLimiter: this.insuranceRateLimiter,
-  });
+  private static _defaultRateLimiter: RateLimiterRedis | undefined;
+
+  static get defaultRateLimiter(): RateLimiterRedis {
+    if (!this._defaultRateLimiter) {
+      this._defaultRateLimiter = new RateLimiterRedis({
+        storeClient: Redis.defaultClient,
+        points: env.RATE_LIMITER_REQUESTS,
+        duration: env.RATE_LIMITER_DURATION_WINDOW,
+        keyPrefix: this.RATE_LIMITER_REDIS_KEY_PREFIX,
+        insuranceLimiter: this.insuranceRateLimiter,
+      });
+    }
+    return this._defaultRateLimiter;
+  }
 
   static getRateLimiter(path: string): RateLimiterRedis {
     return this.rateLimiterMap.get(path) || this.defaultRateLimiter;
@@ -75,6 +79,11 @@ export const RateLimiterStrategy = {
   OneHundredPerHour: {
     duration: 3600,
     requests: 100,
+  },
+  /** Allows fifty requests per hour, per IP address */
+  FiftyPerHour: {
+    duration: 3600,
+    requests: 50,
   },
   /** Allows ten requests per hour, per IP address */
   TenPerHour: {

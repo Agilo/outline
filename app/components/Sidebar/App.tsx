@@ -1,42 +1,31 @@
 import { observer } from "mobx-react";
-import {
-  EditIcon,
-  SearchIcon,
-  ShapesIcon,
-  HomeIcon,
-  SidebarIcon,
-} from "outline-icons";
-import * as React from "react";
+import { SearchIcon, HomeIcon, SidebarIcon } from "outline-icons";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
 import { useTranslation } from "react-i18next";
 import styled from "styled-components";
-import Flex from "~/components/Flex";
+import { metaDisplay } from "@shared/utils/keyboard";
 import Scrollable from "~/components/Scrollable";
-import Text from "~/components/Text";
 import { inviteUser } from "~/actions/definitions/users";
 import useCurrentTeam from "~/hooks/useCurrentTeam";
 import useCurrentUser from "~/hooks/useCurrentUser";
 import usePolicy from "~/hooks/usePolicy";
 import useStores from "~/hooks/useStores";
-import OrganizationMenu from "~/menus/OrganizationMenu";
-import { metaDisplay } from "~/utils/keyboard";
-import {
-  homePath,
-  draftsPath,
-  templatesPath,
-  searchPath,
-} from "~/utils/routeHelpers";
+import TeamMenu from "~/menus/TeamMenu";
+import { homePath, searchPath } from "~/utils/routeHelpers";
 import TeamLogo from "../TeamLogo";
 import Tooltip from "../Tooltip";
 import Sidebar from "./Sidebar";
 import ArchiveLink from "./components/ArchiveLink";
 import Collections from "./components/Collections";
+import { DraftsLink } from "./components/DraftsLink";
 import DragPlaceholder from "./components/DragPlaceholder";
 import HistoryNavigation from "./components/HistoryNavigation";
 import Section from "./components/Section";
+import SharedWithMe from "./components/SharedWithMe";
 import SidebarAction from "./components/SidebarAction";
-import SidebarButton, { SidebarButtonProps } from "./components/SidebarButton";
+import SidebarButton from "./components/SidebarButton";
 import SidebarLink from "./components/SidebarLink";
 import Starred from "./components/Starred";
 import ToggleButton from "./components/ToggleButton";
@@ -44,21 +33,22 @@ import TrashLink from "./components/TrashLink";
 
 function AppSidebar() {
   const { t } = useTranslation();
-  const { documents, ui } = useStores();
+  const { documents, ui, collections } = useStores();
   const team = useCurrentTeam();
   const user = useCurrentUser();
   const can = usePolicy(team);
 
-  React.useEffect(() => {
+  useEffect(() => {
+    void collections.fetchAll();
+
     if (!user.isViewer) {
       void documents.fetchDrafts();
-      void documents.fetchTemplates();
     }
-  }, [documents, user.isViewer]);
+  }, [documents, collections, user.isViewer]);
 
-  const [dndArea, setDndArea] = React.useState();
-  const handleSidebarRef = React.useCallback((node) => setDndArea(node), []);
-  const html5Options = React.useMemo(
+  const [dndArea, setDndArea] = useState();
+  const handleSidebarRef = useCallback((node) => setDndArea(node), []);
+  const html5Options = useMemo(
     () => ({
       rootElement: dndArea,
     }),
@@ -66,41 +56,45 @@ function AppSidebar() {
   );
 
   return (
-    <Sidebar ref={handleSidebarRef}>
+    <Sidebar hidden={!ui.readyToShow} ref={handleSidebarRef}>
       <HistoryNavigation />
       {dndArea && (
         <DndProvider backend={HTML5Backend} options={html5Options}>
           <DragPlaceholder />
 
-          <OrganizationMenu>
-            {(props: SidebarButtonProps) => (
-              <SidebarButton
-                {...props}
-                title={team.name}
-                image={
-                  <TeamLogo
-                    model={team}
-                    size={24}
-                    alt={t("Logo")}
-                    style={{ marginLeft: 4 }}
-                  />
-                }
+          <TeamMenu>
+            <SidebarButton
+              title={team.name}
+              image={
+                <TeamLogo
+                  model={team}
+                  size={24}
+                  alt={t("Logo")}
+                  style={{ marginLeft: 4 }}
+                />
+              }
+            >
+              <Tooltip
+                content={t("Toggle sidebar")}
+                shortcut={`${metaDisplay}+.`}
               >
-                <Tooltip
-                  tooltip={t("Toggle sidebar")}
-                  shortcut={`${metaDisplay}+.`}
-                  delay={500}
-                >
-                  <ToggleButton
-                    position="bottom"
-                    image={<SidebarIcon />}
-                    onClick={ui.toggleCollapsedSidebar}
-                  />
-                </Tooltip>
-              </SidebarButton>
-            )}
-          </OrganizationMenu>
-          <Scrollable flex shadow>
+                <ToggleButton
+                  position="bottom"
+                  image={<SidebarIcon />}
+                  aria-label={
+                    ui.sidebarCollapsed
+                      ? t("Expand sidebar")
+                      : t("Collapse sidebar")
+                  }
+                  onClick={() => {
+                    ui.toggleCollapsedSidebar();
+                    (document.activeElement as HTMLElement)?.blur();
+                  }}
+                />
+              </Tooltip>
+            </SidebarButton>
+          </TeamMenu>
+          <Overflow>
             <Section>
               <SidebarLink
                 to={homePath()}
@@ -114,47 +108,26 @@ function AppSidebar() {
                 label={t("Search")}
                 exact={false}
               />
-              {can.createDocument && (
-                <SidebarLink
-                  to={draftsPath()}
-                  icon={<EditIcon />}
-                  label={
-                    <Flex align="center" justify="space-between">
-                      {t("Drafts")}
-                      <Drafts size="xsmall" type="tertiary">
-                        {documents.totalDrafts}
-                      </Drafts>
-                    </Flex>
-                  }
-                />
-              )}
+              {can.createDocument && <DraftsLink />}
             </Section>
+          </Overflow>
+          <Scrollable flex shadow>
             <Section>
               <Starred />
             </Section>
-            <Section auto>
-              <Collections />
+            <Section>
+              <SharedWithMe />
             </Section>
             <Section>
-              {can.createDocument && (
-                <>
-                  <SidebarLink
-                    to={templatesPath()}
-                    icon={<ShapesIcon />}
-                    exact={false}
-                    label={t("Templates")}
-                    active={
-                      documents.active
-                        ? documents.active.isTemplate &&
-                          !documents.active.isDeleted &&
-                          !documents.active.isArchived
-                        : undefined
-                    }
-                  />
-                  <ArchiveLink />
-                  <TrashLink />
-                </>
-              )}
+              <Collections />
+            </Section>
+            {can.createDocument && (
+              <Section auto>
+                <ArchiveLink />
+              </Section>
+            )}
+            <Section>
+              {can.createDocument && <TrashLink />}
               <SidebarAction action={inviteUser} />
             </Section>
           </Scrollable>
@@ -164,8 +137,9 @@ function AppSidebar() {
   );
 }
 
-const Drafts = styled(Text)`
-  margin: 0 4px;
+const Overflow = styled.div`
+  overflow: hidden;
+  flex-shrink: 0;
 `;
 
 export default observer(AppSidebar);

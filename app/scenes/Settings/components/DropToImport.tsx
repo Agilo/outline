@@ -1,15 +1,20 @@
 import { observer } from "mobx-react";
 import { NewDocumentIcon } from "outline-icons";
-import * as React from "react";
+import { useState, useCallback } from "react";
 import Dropzone from "react-dropzone";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import styled from "styled-components";
 import { s } from "@shared/styles";
-import { AttachmentPreset } from "@shared/types";
+import { AttachmentPreset, CollectionPermission } from "@shared/types";
+import { bytesToHumanReadable } from "@shared/utils/files";
+import Button from "~/components/Button";
 import Flex from "~/components/Flex";
+import { InputSelectPermission } from "~/components/InputSelectPermission";
 import LoadingIndicator from "~/components/LoadingIndicator";
+import Text from "~/components/Text";
 import useStores from "~/hooks/useStores";
-import useToasts from "~/hooks/useToasts";
+import { EmptySelectValue } from "~/types";
 import { uploadFile } from "~/utils/files";
 
 type Props = {
@@ -23,79 +28,101 @@ type Props = {
 function DropToImport({ disabled, onSubmit, children, format }: Props) {
   const { t } = useTranslation();
   const { collections } = useStores();
-  const { showToast } = useToasts();
-  const [isImporting, setImporting] = React.useState(false);
-
-  const handleFiles = React.useCallback(
-    async (files) => {
-      if (files.length > 1) {
-        showToast(t("Please choose a single file to import"), {
-          type: "error",
-        });
-        return;
-      }
-      const file = files[0];
-
-      setImporting(true);
-
-      try {
-        const attachment = await uploadFile(file, {
-          name: file.name,
-          preset: AttachmentPreset.Import,
-        });
-        await collections.import(attachment.id, format);
-        onSubmit();
-        showToast(
-          t("Your import is being processed, you can safely leave this page"),
-          {
-            type: "success",
-            timeout: 6000,
-          }
-        );
-      } catch (err) {
-        showToast(err.message);
-      } finally {
-        setImporting(false);
-      }
-    },
-    [t, onSubmit, collections, format, showToast]
+  const [file, setFile] = useState<File | null>(null);
+  const [isImporting, setImporting] = useState(false);
+  const [permission, setPermission] = useState<CollectionPermission | null>(
+    CollectionPermission.ReadWrite
   );
 
-  const handleRejection = React.useCallback(() => {
-    showToast(t("File not supported – please upload a valid ZIP file"), {
-      type: "error",
-    });
-  }, [t, showToast]);
+  const handleFiles = (files: File[]) => {
+    if (files.length > 1) {
+      toast.error(t("Please choose a single file to import"));
+      return;
+    }
+    setFile(files[0]);
+  };
+
+  const handleStartImport = async () => {
+    if (!file) {
+      return;
+    }
+    setImporting(true);
+
+    try {
+      const attachment = await uploadFile(file, {
+        name: file.name,
+        preset: AttachmentPreset.WorkspaceImport,
+      });
+      await collections.import(attachment.id, { format, permission });
+      onSubmit();
+      toast.message(file.name, {
+        description: t(
+          "Your import is being processed, you can safely leave this page"
+        ),
+      });
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleRejection = useCallback(() => {
+    toast.error(t("File not supported – please upload a valid ZIP file"));
+  }, [t]);
 
   if (disabled) {
     return children;
   }
 
   return (
-    <>
+    <Flex gap={8} column>
       {isImporting && <LoadingIndicator />}
-      <Dropzone
-        accept="application/zip, application/x-zip-compressed"
-        onDropAccepted={handleFiles}
-        onDropRejected={handleRejection}
-        disabled={isImporting}
-      >
-        {({ getRootProps, getInputProps, isDragActive }) => (
-          <DropzoneContainer
-            {...getRootProps()}
-            $disabled={isImporting}
-            $isDragActive={isDragActive}
-            tabIndex={-1}
-          >
-            <input {...getInputProps()} />
-            <Flex align="center" gap={4} column>
-              <Icon size={32} color="#fff" />
-              {children}
-            </Flex>
-          </DropzoneContainer>
-        )}
-      </Dropzone>
-    </>
+      <Text as="p" type="secondary">
+        <Dropzone
+          accept="application/zip, application/x-zip-compressed"
+          onDropAccepted={handleFiles}
+          onDropRejected={handleRejection}
+          disabled={isImporting}
+        >
+          {({ getRootProps, getInputProps, isDragActive }) => (
+            <DropzoneContainer
+              {...getRootProps()}
+              $disabled={isImporting}
+              $isDragActive={isDragActive}
+              tabIndex={-1}
+            >
+              <input {...getInputProps()} />
+              <Flex align="center" gap={4} column>
+                <Icon size={32} color="#fff" />
+                {file
+                  ? t(`${file.name} (${bytesToHumanReadable(file.size)})`)
+                  : children}
+              </Flex>
+            </DropzoneContainer>
+          )}
+        </Dropzone>
+      </Text>
+      <div>
+        <InputSelectPermission
+          value={permission}
+          onChange={(value: CollectionPermission | typeof EmptySelectValue) => {
+            setPermission(value === EmptySelectValue ? null : value);
+          }}
+        />
+        <Text as="span" type="secondary">
+          {t(
+            "Set the default permission level for collections created from the import"
+          )}
+          .
+        </Text>
+      </div>
+      <Flex justify="flex-end">
+        <Button disabled={!file || isImporting} onClick={handleStartImport}>
+          {isImporting ? t("Uploading") + "…" : t("Start import")}
+        </Button>
+      </Flex>
+    </Flex>
   );
 }
 
@@ -112,7 +139,7 @@ const DropzoneContainer = styled.div<{
 }>`
   background: ${(props) =>
     props.$isDragActive
-      ? props.theme.secondaryBackground
+      ? props.theme.backgroundSecondary
       : props.theme.background};
   border-radius: 8px;
   border: 1px dashed ${s("divider")};
@@ -123,7 +150,7 @@ const DropzoneContainer = styled.div<{
   opacity: ${(props) => (props.$disabled ? 0.5 : 1)};
 
   &:hover {
-    background: ${s("secondaryBackground")};
+    background: ${s("backgroundSecondary")};
   }
 `;
 

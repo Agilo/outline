@@ -1,88 +1,235 @@
 import fractionalIndex from "fractional-index";
-import { Location } from "history";
+import type { Location } from "history";
 import { observer } from "mobx-react";
 import { StarredIcon } from "outline-icons";
 import * as React from "react";
 import { useEffect, useState } from "react";
-import { useDrag, useDrop } from "react-dnd";
-import { getEmptyImage } from "react-dnd-html5-backend";
-import { useLocation } from "react-router-dom";
 import styled, { useTheme } from "styled-components";
-import Star from "~/models/Star";
+import type Star from "~/models/Star";
 import Fade from "~/components/Fade";
-import CollectionIcon from "~/components/Icons/CollectionIcon";
-import EmojiIcon from "~/components/Icons/EmojiIcon";
 import useBoolean from "~/hooks/useBoolean";
+import { useLocationSidebarContext } from "~/hooks/useLocationSidebarContext";
 import useStores from "~/hooks/useStores";
 import DocumentMenu from "~/menus/DocumentMenu";
+import {
+  useDragStar,
+  useDropToCreateStar,
+  useDropToReorderStar,
+} from "../hooks/useDragAndDrop";
+import { useSidebarLabelAndIcon } from "../hooks/useSidebarLabelAndIcon";
 import CollectionLink from "./CollectionLink";
-import CollectionLinkChildren from "./CollectionLinkChildren";
 import DocumentLink from "./DocumentLink";
+import SidebarDisclosureContext, {
+  useSidebarDisclosureState,
+} from "./SidebarDisclosureContext";
 import DropCursor from "./DropCursor";
 import Folder from "./Folder";
 import Relative from "./Relative";
+import type { SidebarContextType } from "./SidebarContext";
+import SidebarContext, { starredSidebarContext } from "./SidebarContext";
 import SidebarLink from "./SidebarLink";
+import { ActionContextProvider } from "~/hooks/useActionContext";
+import { useDocumentMenuAction } from "~/hooks/useDocumentMenuAction";
+import { type ConnectDragSource } from "react-dnd";
 
 type Props = {
   star: Star;
 };
 
-function useLocationStateStarred() {
-  const location = useLocation<{
-    starred?: boolean;
-  }>();
-  return location.state?.starred;
-}
+type StarredDocumentLinkProps = {
+  star: Star;
+  documentId: string;
+  expanded: boolean;
+  sidebarContext: SidebarContextType;
+  isDragging: boolean;
+  handleDisclosureClick: React.MouseEventHandler<HTMLElement>;
+  handlePrefetch: () => void;
+  icon: React.ReactNode;
+  label: React.ReactNode;
+  menuOpen: boolean;
+  handleMenuOpen: () => void;
+  handleMenuClose: () => void;
+  draggableRef: ConnectDragSource;
+  cursor: React.ReactNode;
+};
 
-function useLabelAndIcon({ documentId, collectionId }: Star) {
+type StarredCollectionLinkProps = {
+  star: Star;
+  collection: any;
+  expanded: boolean;
+  sidebarContext: SidebarContextType;
+  isDragging: boolean;
+  handleDisclosureClick: (ev?: React.MouseEvent<HTMLButtonElement>) => void;
+  draggableRef: ConnectDragSource;
+  cursor: React.ReactNode;
+  displayChildDocuments: boolean;
+  reorderStarProps: any;
+};
+
+const StarredDocumentLink = observer(function StarredDocumentLink({
+  star,
+  documentId,
+  expanded,
+  sidebarContext,
+  isDragging,
+  handleDisclosureClick,
+  handlePrefetch,
+  icon,
+  label,
+  menuOpen,
+  handleMenuOpen,
+  handleMenuClose,
+  draggableRef,
+  cursor,
+}: StarredDocumentLinkProps) {
   const { collections, documents } = useStores();
-  const theme = useTheme();
 
-  if (documentId) {
-    const document = documents.get(documentId);
-    if (document) {
-      return {
-        label: document.titleWithDefault,
-        icon: document.emoji ? (
-          <EmojiIcon emoji={document.emoji} />
-        ) : (
-          <StarredIcon color={theme.yellow} />
-        ),
-      };
-    }
+  const document = documents.get(documentId);
+
+  const documentCollection = document?.collectionId
+    ? collections.get(document.collectionId)
+    : undefined;
+  const childDocuments = documentCollection
+    ? documentCollection.getChildrenForDocument(documentId)
+    : [];
+  const hasChildDocuments = childDocuments.length > 0;
+  const displayChildDocuments = expanded && !isDragging;
+  const contextMenuAction = useDocumentMenuAction({ documentId });
+
+  if (!document) {
+    return null;
   }
 
-  if (collectionId) {
-    const collection = collections.get(collectionId);
-    if (collection) {
-      return {
-        label: collection.name,
-        icon: <CollectionIcon collection={collection} />,
-      };
-    }
-  }
+  return (
+    <ActionContextProvider
+      value={{
+        activeModels: [document],
+      }}
+    >
+      <Draggable key={star.id} ref={draggableRef} $isDragging={isDragging}>
+        <SidebarLink
+          depth={0}
+          to={{
+            pathname: document.url,
+            state: { sidebarContext },
+          }}
+          expanded={hasChildDocuments && !isDragging ? expanded : undefined}
+          onDisclosureClick={handleDisclosureClick}
+          onClickIntent={handlePrefetch}
+          contextAction={contextMenuAction}
+          icon={icon}
+          isActive={(
+            match,
+            location: Location<{ sidebarContext?: SidebarContextType }>
+          ) => !!match && location.state?.sidebarContext === sidebarContext}
+          label={label}
+          exact={false}
+          $showActions={menuOpen}
+          menu={
+            document && !isDragging ? (
+              <Fade>
+                <DocumentMenu
+                  document={document}
+                  onOpen={handleMenuOpen}
+                  onClose={handleMenuClose}
+                />
+              </Fade>
+            ) : undefined
+          }
+        />
+      </Draggable>
+      <SidebarContext.Provider value={sidebarContext}>
+        <Relative>
+          <Folder expanded={displayChildDocuments}>
+            {childDocuments.map((node, index) => (
+              <DocumentLink
+                key={node.id}
+                node={node}
+                collection={documentCollection}
+                activeDocument={documents.active}
+                prefetchDocument={documents.prefetchDocument}
+                isDraft={node.isDraft}
+                depth={2}
+                index={index}
+              />
+            ))}
+          </Folder>
+          {cursor}
+        </Relative>
+      </SidebarContext.Provider>
+    </ActionContextProvider>
+  );
+});
 
-  return {
-    label: "",
-    icon: <StarredIcon color={theme.yellow} />,
-  };
-}
+const StarredCollectionLink = observer(function StarredCollectionLink({
+  star,
+  collection,
+  sidebarContext,
+  isDragging,
+  handleDisclosureClick,
+  draggableRef,
+  cursor,
+  displayChildDocuments,
+  reorderStarProps,
+}: StarredCollectionLinkProps) {
+  const { documents } = useStores();
+
+  return (
+    <SidebarContext.Provider value={sidebarContext}>
+      <Draggable key={star?.id} ref={draggableRef} $isDragging={isDragging}>
+        <CollectionLink
+          collection={collection}
+          expanded={isDragging ? undefined : displayChildDocuments}
+          activeDocument={documents.active}
+          onDisclosureClick={handleDisclosureClick}
+          isDraggingAnyCollection={reorderStarProps.isDragging}
+        />
+      </Draggable>
+      <Relative>{cursor}</Relative>
+    </SidebarContext.Provider>
+  );
+});
 
 function StarredLink({ star }: Props) {
+  const theme = useTheme();
   const { ui, collections, documents } = useStores();
   const [menuOpen, handleMenuOpen, handleMenuClose] = useBoolean();
   const { documentId, collectionId } = star;
-  const collection = collections.get(collectionId);
-  const locationStateStarred = useLocationStateStarred();
+  const collection = collectionId ? collections.get(collectionId) : undefined;
+  const locationSidebarContext = useLocationSidebarContext();
+  const sidebarContext = starredSidebarContext(
+    star.documentId ?? star.collectionId ?? ""
+  );
   const [expanded, setExpanded] = useState(
-    star.collectionId === ui.activeCollectionId && !!locationStateStarred
+    (star.documentId
+      ? star.documentId === ui.activeDocumentId
+      : star.collectionId === ui.activeCollectionId) &&
+      sidebarContext === locationSidebarContext
   );
 
+  const { event: disclosureEvent, onDisclosureClick } =
+    useSidebarDisclosureState();
+
   React.useEffect(() => {
-    if (star.collectionId === ui.activeCollectionId && locationStateStarred) {
+    if (
+      star.documentId === ui.activeDocumentId &&
+      sidebarContext === locationSidebarContext
+    ) {
+      setExpanded(true);
+    } else if (
+      star.collectionId === ui.activeCollectionId &&
+      sidebarContext === locationSidebarContext
+    ) {
       setExpanded(true);
     }
-  }, [star.collectionId, ui.activeCollectionId, locationStateStarred]);
+  }, [
+    star.documentId,
+    star.collectionId,
+    ui.activeDocumentId,
+    ui.activeCollectionId,
+    sidebarContext,
+    locationSidebarContext,
+  ]);
 
   useEffect(() => {
     if (documentId) {
@@ -91,145 +238,99 @@ function StarredLink({ star }: Props) {
   }, [documentId, documents]);
 
   const handleDisclosureClick = React.useCallback(
-    (ev: React.MouseEvent<HTMLButtonElement>) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      setExpanded((prevExpanded) => !prevExpanded);
-    },
-    []
-  );
-
-  const { label, icon } = useLabelAndIcon(star);
-
-  // Draggable
-  const [{ isDragging }, drag, preview] = useDrag({
-    type: "star",
-    item: () => ({
-      star,
-      title: label,
-      icon,
-    }),
-    collect: (monitor) => ({
-      isDragging: !!monitor.isDragging(),
-    }),
-    canDrag: () => true,
-  });
-
-  React.useEffect(() => {
-    preview(getEmptyImage(), { captureDraggingState: true });
-  }, [preview]);
-
-  // Drop to reorder
-  const [{ isOverReorder, isDraggingAny }, dropToReorder] = useDrop({
-    accept: "star",
-    drop: (item: { star: Star }) => {
-      const next = star?.next();
-
-      void item.star.save({
-        index: fractionalIndex(star?.index || null, next?.index || null),
+    (ev?: React.MouseEvent<HTMLElement>) => {
+      ev?.preventDefault();
+      ev?.stopPropagation();
+      setExpanded((prevExpanded) => {
+        const willExpand = !prevExpanded;
+        onDisclosureClick(willExpand, !!ev?.altKey);
+        return willExpand;
       });
     },
-    collect: (monitor) => ({
-      isOverReorder: !!monitor.isOver(),
-      isDraggingAny: !!monitor.canDrop(),
-    }),
-  });
+    [onDisclosureClick]
+  );
+
+  const handlePrefetch = React.useCallback(() => {
+    if (documentId) {
+      void documents.prefetchDocument(documentId);
+      const document = documents.get(documentId);
+      const documentCollection = document?.collectionId
+        ? collections.get(document.collectionId)
+        : undefined;
+      void documentCollection?.fetchDocuments();
+    }
+  }, [documents, documentId, collections]);
+
+  const getIndex = () => {
+    const next = star?.next();
+    return fractionalIndex(star?.index || null, next?.index || null);
+  };
+  const { label, icon } = useSidebarLabelAndIcon(
+    star,
+    <StarredIcon color={theme.yellow} />
+  );
+  const [{ isDragging }, draggableRef] = useDragStar(star);
+  const [reorderStarProps, dropToReorderRef] = useDropToReorderStar(getIndex);
+  const [createStarProps, dropToStarRef] = useDropToCreateStar(getIndex);
 
   const displayChildDocuments = expanded && !isDragging;
 
+  const cursor = (
+    <>
+      {reorderStarProps.isDragging && (
+        <DropCursor
+          isActiveDrop={reorderStarProps.isOverCursor}
+          innerRef={dropToReorderRef}
+        />
+      )}
+      {createStarProps.isDragging && (
+        <DropCursor
+          isActiveDrop={createStarProps.isOverCursor}
+          innerRef={dropToStarRef}
+        />
+      )}
+    </>
+  );
+
   if (documentId) {
-    const document = documents.get(documentId);
-    if (!document) {
-      return null;
-    }
-
-    const { emoji } = document;
-    const label = emoji
-      ? document.title.replace(emoji, "")
-      : document.titleWithDefault;
-    const collection = document.collectionId
-      ? collections.get(document.collectionId)
-      : undefined;
-    const childDocuments = collection
-      ? collection.getDocumentChildren(documentId)
-      : [];
-    const hasChildDocuments = childDocuments.length > 0;
-
     return (
-      <>
-        <Draggable key={star.id} ref={drag} $isDragging={isDragging}>
-          <SidebarLink
-            depth={0}
-            to={{
-              pathname: document.url,
-              state: { starred: true },
-            }}
-            expanded={hasChildDocuments && !isDragging ? expanded : undefined}
-            onDisclosureClick={handleDisclosureClick}
-            icon={icon}
-            isActive={(match, location: Location<{ starred?: boolean }>) =>
-              !!match && location.state?.starred === true
-            }
-            label={label}
-            exact={false}
-            showActions={menuOpen}
-            menu={
-              document && !isDragging ? (
-                <Fade>
-                  <DocumentMenu
-                    document={document}
-                    onOpen={handleMenuOpen}
-                    onClose={handleMenuClose}
-                  />
-                </Fade>
-              ) : undefined
-            }
-          />
-        </Draggable>
-        <Relative>
-          <Folder expanded={displayChildDocuments}>
-            {childDocuments.map((node, index) => (
-              <DocumentLink
-                key={node.id}
-                node={node}
-                collection={collection}
-                activeDocument={documents.active}
-                isDraft={node.isDraft}
-                depth={2}
-                index={index}
-              />
-            ))}
-          </Folder>
-          {isDraggingAny && (
-            <DropCursor isActiveDrop={isOverReorder} innerRef={dropToReorder} />
-          )}
-        </Relative>
-      </>
+      <SidebarDisclosureContext.Provider value={disclosureEvent}>
+        <StarredDocumentLink
+          star={star}
+          documentId={documentId}
+          expanded={expanded}
+          sidebarContext={sidebarContext}
+          isDragging={isDragging}
+          handleDisclosureClick={handleDisclosureClick}
+          handlePrefetch={handlePrefetch}
+          icon={icon}
+          label={label}
+          menuOpen={menuOpen}
+          handleMenuOpen={handleMenuOpen}
+          handleMenuClose={handleMenuClose}
+          draggableRef={draggableRef}
+          cursor={cursor}
+        />
+      </SidebarDisclosureContext.Provider>
     );
   }
 
   if (collection) {
     return (
-      <>
-        <Draggable key={star?.id} ref={drag} $isDragging={isDragging}>
-          <CollectionLink
-            collection={collection}
-            expanded={isDragging ? undefined : displayChildDocuments}
-            activeDocument={documents.active}
-            onDisclosureClick={handleDisclosureClick}
-            isDraggingAnyCollection={isDraggingAny}
-          />
-        </Draggable>
-        <Relative>
-          <CollectionLinkChildren
-            collection={collection}
-            expanded={displayChildDocuments}
-          />
-          {isDraggingAny && (
-            <DropCursor isActiveDrop={isOverReorder} innerRef={dropToReorder} />
-          )}
-        </Relative>
-      </>
+      <SidebarDisclosureContext.Provider value={disclosureEvent}>
+        <StarredCollectionLink
+          star={star}
+          collection={collection}
+          expanded={expanded}
+          sidebarContext={sidebarContext}
+          isDragging={isDragging}
+          handleDisclosureClick={handleDisclosureClick}
+          draggableRef={draggableRef}
+          cursor={cursor}
+          displayChildDocuments={displayChildDocuments}
+          reorderStarProps={reorderStarProps}
+        />
+      </SidebarDisclosureContext.Provider>
     );
   }
 

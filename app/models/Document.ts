@@ -1,24 +1,43 @@
 import { addDays, differenceInDays } from "date-fns";
+import i18n, { t } from "i18next";
+import capitalize from "lodash/capitalize";
 import floor from "lodash/floor";
-import { action, autorun, computed, observable, set } from "mobx";
-import { ExportContentType } from "@shared/types";
-import type { NavigationNode } from "@shared/types";
+import { action, autorun, comparer, computed, observable, set } from "mobx";
+import type {
+  JSONObject,
+  NavigationNode,
+  ProsemirrorData,
+} from "@shared/types";
+import {
+  type ExportContentType,
+  FileOperationFormat,
+  NavigationNodeType,
+  NotificationEventType,
+} from "@shared/types";
 import Storage from "@shared/utils/Storage";
 import { isRTL } from "@shared/utils/rtl";
-import DocumentsStore from "~/stores/DocumentsStore";
+import slugify from "@shared/utils/slugify";
+import type DocumentsStore from "~/stores/DocumentsStore";
 import User from "~/models/User";
+import type { Properties } from "~/types";
 import { client } from "~/utils/ApiClient";
-import ParanoidModel from "./ParanoidModel";
-import View from "./View";
+import Collection from "./Collection";
+import type Notification from "./Notification";
+import type View from "./View";
+import ArchivableModel from "./base/ArchivableModel";
 import Field from "./decorators/Field";
+import Relation from "./decorators/Relation";
+import type { Searchable } from "./interfaces/Searchable";
 
-type SaveOptions = {
+type SaveOptions = JSONObject & {
   publish?: boolean;
   done?: boolean;
   autosave?: boolean;
 };
 
-export default class Document extends ParanoidModel {
+export default class Document extends ArchivableModel implements Searchable {
+  static modelName = "Document";
+
   constructor(fields: Record<string, any>, store: DocumentsStore) {
     super(fields, store);
 
@@ -43,9 +62,55 @@ export default class Document extends ParanoidModel {
 
   store: DocumentsStore;
 
-  @Field
-  @observable
-  id: string;
+  @observable.shallow
+  data: ProsemirrorData;
+
+  /**
+   * The original data source of the document, if imported.
+   */
+  sourceMetadata?: {
+    /**
+     * The type of importer that was used, if any. This can also be empty if an individual file was
+     * imported through drag-and-drop, for example.
+     */
+    importType?: FileOperationFormat;
+    /** The date this document was imported. */
+    importedAt?: string;
+    /** The name of the user the created the original source document. */
+    createdByName?: string;
+    /** The name of the file this document was imported from. */
+    fileName?: string;
+  };
+
+  @computed
+  get searchContent(): string {
+    return this.title;
+  }
+
+  @computed
+  get searchSuppressed(): boolean {
+    return this.isDeleted || this.isArchived;
+  }
+
+  /**
+   * The name of the original data source, if imported.
+   */
+  get sourceName() {
+    if (!this.sourceMetadata?.importType) {
+      return undefined;
+    }
+
+    switch (this.sourceMetadata.importType) {
+      case FileOperationFormat.MarkdownZip:
+        return "Markdown";
+      case FileOperationFormat.JSON:
+        return "JSON";
+      case FileOperationFormat.Notion:
+        return "Notion";
+      default:
+        return capitalize(this.sourceMetadata.importType);
+    }
+  }
 
   /**
    * The id of the collection that this document belongs to, if any.
@@ -55,10 +120,10 @@ export default class Document extends ParanoidModel {
   collectionId?: string | null;
 
   /**
-   * The text content of the document as Markdown.
+   * The collection that this document belongs to.
    */
-  @observable
-  text: string;
+  @Relation(() => Collection, { onDelete: "cascade" })
+  collection?: Collection;
 
   /**
    * The title of the document.
@@ -67,18 +132,22 @@ export default class Document extends ParanoidModel {
   @observable
   title: string;
 
+  /** The likely language of the document, in ISO 639-1 format.  */
+  language: string | undefined;
+
   /**
-   * An emoji to use as the document icon.
+   * An icon (or) emoji to use as the document icon.
    */
   @Field
   @observable
-  emoji: string | undefined | null;
+  icon?: string | null;
 
   /**
-   * Whether this is a template.
+   * The color to use for the document icon.
    */
+  @Field
   @observable
-  template: boolean;
+  color?: string | null;
 
   /**
    * Whether the document layout is displayed full page width.
@@ -107,31 +176,76 @@ export default class Document extends ParanoidModel {
   @observable
   parentDocumentId: string | undefined;
 
+  /**
+   * Parent document that this is a child of, if any.
+   */
+  @Relation(() => Document, { onArchive: "cascade", onDelete: "cascade" })
+  parentDocument?: Document;
+
   @observable
   collaboratorIds: string[];
 
-  @observable
-  createdBy: User;
+  @Relation(() => User)
+  createdBy: User | undefined;
 
+  @Relation(() => User)
   @observable
-  updatedBy: User;
+  updatedBy: User | undefined;
 
   @observable
   publishedAt: string | undefined;
 
   @observable
-  archivedAt: string;
+  popularityScore: number;
 
+  /**
+   * @deprecated Use path instead
+   */
+  @observable
   url: string;
 
+  @observable
   urlId: string;
 
+  @observable
   tasks: {
     completed: number;
     total: number;
   };
 
+  @observable
   revision: number;
+
+  /**
+   * Whether this document is contained in a collection that has been deleted.
+   */
+  @observable
+  isCollectionDeleted: boolean;
+
+  /**
+   * Array of backlink document IDs for publicly shared documents.
+   * Only populated when viewing through a share link.
+   */
+  @observable
+  backlinkIds?: string[];
+
+  /**
+   * Returns the notifications associated with this document.
+   */
+  @computed
+  get notifications(): Notification[] {
+    return this.store.rootStore.notifications.filter(
+      (notification: Notification) => notification.documentId === this.id
+    );
+  }
+
+  /**
+   * Returns the unread notifications associated with this document.
+   */
+  @computed
+  get unreadNotifications(): Notification[] {
+    return this.notifications.filter((notification) => !notification.viewedAt);
+  }
 
   /**
    * Returns the direction of the document text, either "rtl" or "ltr"
@@ -149,9 +263,29 @@ export default class Document extends ParanoidModel {
     return isRTL(this.title);
   }
 
+  /**
+   * Returns the initial character of the document title in uppercase
+   */
+  @computed
+  get initial(): string {
+    return (this.title?.charAt(0) ?? "?").toUpperCase();
+  }
+
+  @computed
+  get path(): string {
+    const prefix = "/doc";
+
+    if (!this.title) {
+      return `${prefix}/untitled-${this.urlId}`;
+    }
+
+    const slugifiedTitle = slugify(this.title);
+    return `${prefix}/${slugifiedTitle}-${this.urlId}`;
+  }
+
   @computed
   get noun(): string {
-    return this.template ? "template" : "document";
+    return t("document");
   }
 
   @computed
@@ -189,9 +323,55 @@ export default class Document extends ParanoidModel {
    */
   @computed
   get isSubscribed(): boolean {
-    return !!this.store.rootStore.subscriptions.orderedData.find(
-      (subscription) => subscription.documentId === this.id
+    return !!this.store.rootStore.subscriptions.getByDocumentId(this.id);
+  }
+
+  /**
+   * Returns whether the document is currently publicly shared, taking into account
+   * the document's and team's sharing settings.
+   *
+   * @returns True if the document is publicly shared, false otherwise.
+   */
+  get isPubliclyShared(): boolean {
+    const { shares, auth } = this.store.rootStore;
+    const share = shares.getByDocumentId(this.id);
+    const sharedParent = shares.getByDocumentParents(this);
+
+    return !!(
+      auth.team?.sharing !== false &&
+      this.collection?.sharing !== false &&
+      (share?.published || (sharedParent?.published && !this.isDraft))
     );
+  }
+
+  /**
+   * Returns the documents that link to this document.
+   * For publicly shared documents, uses the backlinkIds provided by the server.
+   * For authenticated users, uses the store's backlink data.
+   *
+   * @returns documents that link to this document.
+   */
+  @computed
+  get backlinks(): Document[] {
+    if (this.backlinkIds) {
+      return this.backlinkIds
+        .map((id) => this.store.get(id))
+        .filter(Boolean) as Document[];
+    }
+    return this.store.getBacklinkedDocuments(this.id);
+  }
+
+  /**
+   * Returns users that have been individually given access to the document.
+   *
+   * @returns users that have been individually given access to the document
+   */
+  @computed
+  get members(): User[] {
+    return this.store.rootStore.userMemberships.orderedData
+      .filter((m) => m.documentId === this.id)
+      .map((m) => m.user)
+      .filter(Boolean);
   }
 
   @computed
@@ -205,11 +385,6 @@ export default class Document extends ParanoidModel {
   }
 
   @computed
-  get isTemplate(): boolean {
-    return !!this.template;
-  }
-
-  @computed
   get isDraft(): boolean {
     return !this.publishedAt;
   }
@@ -217,11 +392,6 @@ export default class Document extends ParanoidModel {
   @computed
   get hasEmptyTitle(): boolean {
     return this.title === "";
-  }
-
-  @computed
-  get titleWithDefault(): string {
-    return this.title || "Untitled";
   }
 
   @computed
@@ -245,7 +415,7 @@ export default class Document extends ParanoidModel {
 
   @computed
   get isTasks(): boolean {
-    return !!this.tasks.total;
+    return !!this.tasks?.total;
   }
 
   @computed
@@ -257,6 +427,32 @@ export default class Document extends ParanoidModel {
     return floor((this.tasks.completed / this.tasks.total) * 100);
   }
 
+  /**
+   * Returns the path to the document, using the collection structure if available.
+   * otherwise if we're viewing a shared document we can iterate up the parentDocument tree.
+   *
+   * @returns path to the document
+   */
+  @computed
+  get pathTo() {
+    if (this.collection?.documents) {
+      return this.collection.pathToDocument(this.id);
+    }
+
+    // find root parent document we have access to
+    const path: Document[] = [this];
+
+    while (path[0]?.parentDocument) {
+      path.unshift(path[0].parentDocument);
+    }
+
+    return path.map((item) => item.asNavigationNode);
+  }
+
+  get titleWithDefault(): string {
+    return this.title || i18n.t("Untitled");
+  }
+
   @action
   updateTasks(total: number, completed: number) {
     if (total !== this.tasks.total || completed !== this.tasks.completed) {
@@ -264,18 +460,16 @@ export default class Document extends ParanoidModel {
     }
   }
 
-  @action
-  share = async () =>
-    this.store.rootStore.shares.create({
-      documentId: this.id,
-    });
-
   archive = () => this.store.archive(this);
 
   restore = (options?: { revisionId?: string; collectionId?: string }) =>
     this.store.restore(this, options);
 
-  unpublish = () => this.store.unpublish(this);
+  unpublish = (
+    options: { detach?: boolean } = {
+      detach: false,
+    }
+  ) => this.store.unpublish(this, options);
 
   @action
   enableEmbeds = () => {
@@ -307,7 +501,7 @@ export default class Document extends ParanoidModel {
   };
 
   @action
-  star = () => this.store.star(this);
+  star = (index?: string) => this.store.star(this, index);
 
   @action
   unstar = () => this.store.unstar(this);
@@ -321,12 +515,12 @@ export default class Document extends ParanoidModel {
   subscribe = () => this.store.subscribe(this);
 
   /**
-   * Unsubscribes the current user to this document.
+   * Unsubscribes the current user from this document.
    *
    * @returns A promise that resolves when the subscription is destroyed.
    */
   @action
-  unsubscribe = (userId: string) => this.store.unsubscribe(userId, this);
+  unsubscribe = () => this.store.unsubscribe(this);
 
   @action
   view = () => {
@@ -334,6 +528,20 @@ export default class Document extends ParanoidModel {
     if (this.isDeleted) {
       return;
     }
+
+    // Mark associated unread notifications as read when the document is viewed
+    this.store.rootStore.notifications
+      .filter(
+        (notification: Notification) =>
+          !notification.viewedAt &&
+          notification.documentId === this.id &&
+          [
+            NotificationEventType.AddUserToDocument,
+            NotificationEventType.UpdateDocument,
+            NotificationEventType.PublishDocument,
+          ].includes(notification.event)
+      )
+      .forEach((notification) => notification.markAsRead());
 
     this.lastViewedAt = new Date().toString();
 
@@ -348,13 +556,10 @@ export default class Document extends ParanoidModel {
   };
 
   @action
-  templatize = () => this.store.templatize(this.id);
-
-  @action
   save = async (
-    fields?: Partial<Document> | undefined,
-    options?: SaveOptions | undefined
-  ) => {
+    fields?: Properties<typeof this>,
+    options?: SaveOptions
+  ): Promise<Document> => {
     const params = fields ?? this.toAPI();
     this.isSaving = true;
 
@@ -375,15 +580,29 @@ export default class Document extends ParanoidModel {
     }
   };
 
-  move = (collectionId: string, parentDocumentId?: string | undefined) =>
-    this.store.move(this.id, collectionId, parentDocumentId);
+  move = (options: {
+    collectionId?: string | null;
+    parentDocumentId?: string;
+  }) => this.store.move({ documentId: this.id, ...options });
 
-  duplicate = () => this.store.duplicate(this);
+  duplicate = (options?: {
+    title?: string;
+    publish?: boolean;
+    recursive?: boolean;
+    collectionId?: string | null;
+    parentDocumentId?: string;
+  }) => this.store.duplicate(this, options);
 
-  getSummary = (paragraphs = 4) => {
-    const result = this.text.trim().split("\n").slice(0, paragraphs).join("\n");
-    return result;
-  };
+  /**
+   * Returns the first blocks of the document, useful for displaying a preview.
+   *
+   * @param blocks The number of blocks to return, defaults to 4.
+   * @returns A new ProseMirror document.
+   */
+  getSummary = (blocks = 4) => ({
+    ...this.data,
+    content: this.data.content?.slice(0, blocks),
+  });
 
   @computed
   get pinned(): boolean {
@@ -402,30 +621,68 @@ export default class Document extends ParanoidModel {
 
   @computed
   get isActive(): boolean {
-    return !this.isDeleted && !this.isTemplate && !this.isArchived;
+    return !this.isDeleted && !this.isArchived;
   }
 
   @computed
+  get childDocuments() {
+    return this.store.orderedData.filter(
+      (doc) =>
+        doc.parentDocumentId === this.id && this.isActive === doc.isActive
+    );
+  }
+
+  @computed({ equals: comparer.structural })
   get asNavigationNode(): NavigationNode {
     return {
+      type: NavigationNodeType.Document,
       id: this.id,
       title: this.title,
-      children: this.store.orderedData
-        .filter((doc) => doc.parentDocumentId === this.id)
-        .map((doc) => doc.asNavigationNode),
+      color: this.color ?? undefined,
+      icon: this.icon ?? undefined,
+      children: this.childDocuments.map((doc) => doc.asNavigationNode),
       url: this.url,
       isDraft: this.isDraft,
     };
   }
 
-  download = (contentType: ExportContentType) =>
+  /**
+   * Returns all children of the document.
+   * This is determined by the collection structure, or the user/group memberships in case it's a shared document.
+   *
+   * @returns An array of NavigationNode objects.
+   */
+  @computed
+  get children(): NavigationNode[] {
+    const { userMemberships, groupMemberships } = this.store.rootStore;
+    const collection = this.collection;
+
+    const membership =
+      userMemberships.getByDocumentId(this.id) ??
+      groupMemberships.getByDocumentId(this.id);
+
+    return (
+      collection?.getChildrenForDocument(this.id) ??
+      membership?.getChildrenForDocument(this.id) ??
+      []
+    );
+  }
+
+  download = ({
+    contentType,
+    includeChildDocuments,
+  }: {
+    contentType: ExportContentType;
+    includeChildDocuments?: boolean;
+  }) =>
     client.post(
       `/documents.export`,
       {
         id: this.id,
+        includeChildDocuments: includeChildDocuments ?? false,
       },
       {
-        download: true,
+        ...(includeChildDocuments ? {} : { download: true }),
         headers: {
           accept: contentType,
         },

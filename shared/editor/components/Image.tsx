@@ -1,130 +1,66 @@
-import { DownloadIcon } from "outline-icons";
+import { CrossIcon, DownloadIcon, GlobeIcon, ZoomInIcon } from "outline-icons";
 import type { EditorView } from "prosemirror-view";
 import * as React from "react";
 import styled from "styled-components";
-import breakpoint from "styled-components-breakpoint";
+import { useTranslation } from "react-i18next";
+import find from "lodash/find";
+import Flex from "../../components/Flex";
 import { s } from "../../styles";
-import { sanitizeUrl } from "../../utils/urls";
-import { ComponentProps } from "../types";
-import ImageZoom from "./ImageZoom";
+import { isExternalUrl, sanitizeUrl } from "../../utils/urls";
+import { EditorStyleHelper } from "../styles/EditorStyleHelper";
+import type { ComponentProps } from "../types";
+import { ResizeLeft, ResizeRight } from "./ResizeHandle";
+import useDragResize from "./hooks/useDragResize";
 
-type DragDirection = "left" | "right";
+type Props = ComponentProps & {
+  /** Callback triggered when the image is clicked */
+  onClick: () => void;
+  /** Callback triggered when the download button is clicked */
+  onDownload?: (event: React.MouseEvent<HTMLButtonElement>) => Promise<void>;
+  /** Callback triggered when the zoom in button is clicked */
+  onZoomIn?: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  /** Callback triggered when the image is resized */
+  onChangeSize?: (props: { width: number; height?: number }) => void;
+  /** The editor view */
+  view: EditorView;
+  children?: React.ReactElement;
+};
 
-const Image = (
-  props: ComponentProps & {
-    onClick: (event: React.MouseEvent<HTMLDivElement>) => void;
-    onDownload?: (event: React.MouseEvent<HTMLButtonElement>) => void;
-    onChangeSize?: (props: { width: number; height?: number }) => void;
-    children?: React.ReactElement;
-    view: EditorView;
-  }
-) => {
-  const { isSelected, node, isEditable } = props;
+const Image = (props: Props) => {
+  const { isSelected, node, isEditable, onChangeSize, onClick } = props;
   const { src, layoutClass } = node.attrs;
+  const { t } = useTranslation();
   const className = layoutClass ? `image image-${layoutClass}` : "image";
-  const [contentWidth, setContentWidth] = React.useState(
-    () => document.body.querySelector("#full-width-container")?.clientWidth || 0
-  );
   const [loaded, setLoaded] = React.useState(false);
+  const [error, setError] = React.useState(false);
+  const [isDownloading, setIsDownloading] = React.useState(false);
   const [naturalWidth, setNaturalWidth] = React.useState(node.attrs.width);
   const [naturalHeight, setNaturalHeight] = React.useState(node.attrs.height);
-  const [size, setSize] = React.useState({
+  const lastTapTimeRef = React.useRef(0);
+  const ref = React.useRef<HTMLDivElement>(null);
+  const {
+    width,
+    height,
+    setSize,
+    handlePointerDown,
+    handleDoubleClick,
+    dragging,
+  } = useDragResize({
     width: node.attrs.width ?? naturalWidth,
     height: node.attrs.height ?? naturalHeight,
+    naturalWidth,
+    naturalHeight,
+    gridSnap: 5,
+    onChangeSize,
+    ref,
   });
-  const [sizeAtDragStart, setSizeAtDragStart] = React.useState(size);
-  const [offset, setOffset] = React.useState(0);
-  const [dragging, setDragging] = React.useState<DragDirection>();
-  const [documentWidth, setDocumentWidth] = React.useState(
-    props.view ? getInnerWidth(props.view.dom) : 0
-  );
-  const maxWidth = layoutClass ? documentWidth / 3 : documentWidth;
+
   const isFullWidth = layoutClass === "full-width";
-  const isResizable = !!props.onChangeSize;
-
-  React.useLayoutEffect(() => {
-    if (!isResizable) {
-      return;
-    }
-
-    const handleResize = () => {
-      const contentWidth =
-        document.body.querySelector("#full-width-container")?.clientWidth || 0;
-      setContentWidth(contentWidth);
-      setDocumentWidth(props.view ? getInnerWidth(props.view.dom) : 0);
-    };
-
-    window.addEventListener("resize", handleResize);
-    return () => {
-      window.removeEventListener("resize", handleResize);
-    };
-  }, [props.view, isResizable]);
-
-  const constrainWidth = (width: number) => {
-    const minWidth = documentWidth * 0.1;
-    return Math.round(Math.min(maxWidth, Math.max(width, minWidth)));
-  };
-
-  const handlePointerMove = (event: PointerEvent) => {
-    event.preventDefault();
-
-    let diff;
-    if (dragging === "left") {
-      diff = offset - event.pageX;
-    } else {
-      diff = event.pageX - offset;
-    }
-
-    const grid = documentWidth / 10;
-    const newWidth = sizeAtDragStart.width + diff * 2;
-    const widthOnGrid = Math.round(newWidth / grid) * grid;
-    const constrainedWidth = constrainWidth(widthOnGrid);
-
-    const aspectRatio = naturalHeight / naturalWidth;
-    setSize({
-      width: constrainedWidth,
-      height: naturalWidth
-        ? Math.round(constrainedWidth * aspectRatio)
-        : undefined,
-    });
-  };
-
-  const handlePointerUp = (event: PointerEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    setOffset(0);
-    setDragging(undefined);
-    props.onChangeSize?.(size);
-
-    document.removeEventListener("mousemove", handlePointerMove);
-  };
-
-  const handlePointerDown =
-    (dragging: "left" | "right") =>
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      event.stopPropagation();
-      setSizeAtDragStart({
-        width: constrainWidth(size.width),
-        height: size.height,
-      });
-      setOffset(event.pageX);
-      setDragging(dragging);
-    };
-
-  const handleKeyDown = (event: KeyboardEvent) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-
-      setSize(sizeAtDragStart);
-      setDragging(undefined);
-    }
-  };
+  const isResizable = !!props.onChangeSize && !error;
+  const isDownloadable = !!props.onDownload && !error;
 
   React.useEffect(() => {
-    if (node.attrs.width && node.attrs.width !== size.width) {
+    if (node.attrs.width && node.attrs.width !== width) {
       setSize({
         width: node.attrs.width,
         height: node.attrs.height,
@@ -132,97 +68,169 @@ const Image = (
     }
   }, [node.attrs.width]);
 
-  React.useEffect(() => {
-    if (!isResizable) {
-      return;
-    }
-
-    if (dragging) {
-      document.body.style.cursor = "ew-resize";
-      document.addEventListener("keydown", handleKeyDown);
-      document.addEventListener("pointermove", handlePointerMove);
-      document.addEventListener("pointerup", handlePointerUp);
-    }
-
-    return () => {
-      document.body.style.cursor = "initial";
-      document.removeEventListener("keydown", handleKeyDown);
-      document.removeEventListener("pointermove", handlePointerMove);
-      document.removeEventListener("pointerup", handlePointerUp);
-    };
-  }, [dragging, handlePointerMove, handlePointerUp, isResizable]);
+  const sanitizedSrc = sanitizeUrl(src);
+  const linkMarkType = props.view.state.schema.marks.link;
+  const imgLink =
+    find(node.attrs.marks ?? [], (mark) => mark.type === linkMarkType.name)
+      ?.attrs.href ||
+    // Coalescing to `undefined` to avoid empty string in href because empty string
+    // in href still shows pointer on hover and click navigates to nowhere
+    undefined;
+  const handleOpen = React.useCallback(() => {
+    window.open(sanitizedSrc, "_blank");
+  }, [sanitizedSrc]);
 
   const widthStyle = isFullWidth
-    ? { width: contentWidth }
-    : { width: size.width || "auto" };
+    ? { width: "var(--container-width)" }
+    : { width: width || "auto" };
 
-  const containerStyle = isFullWidth
-    ? ({
-        "--offset": `${-(contentWidth - documentWidth) / 2}px`,
-      } as React.CSSProperties)
-    : undefined;
+  const handleImageTouchStart = (ev: React.TouchEvent<HTMLDivElement>) => {
+    const currentTime = Date.now();
+    const timeSinceLastTap = currentTime - lastTapTimeRef.current;
+
+    if (timeSinceLastTap < 300 && isSelected) {
+      ev.preventDefault();
+      onClick();
+    }
+
+    lastTapTimeRef.current = currentTime;
+  };
+
+  const handleImageClick = (ev: React.MouseEvent<HTMLDivElement>) => {
+    if (!isEditable || isSelected) {
+      ev.preventDefault();
+      onClick();
+    }
+  };
+
+  const handleDownload = async (ev: React.MouseEvent<HTMLButtonElement>) => {
+    ev.preventDefault();
+    if (props.onDownload) {
+      setIsDownloading(true);
+      try {
+        await props.onDownload(ev);
+      } finally {
+        setIsDownloading(false);
+      }
+    }
+  };
 
   return (
-    <div contentEditable={false} className={className} style={containerStyle}>
+    <div contentEditable={false} className={className} ref={ref}>
       <ImageWrapper
         isFullWidth={isFullWidth}
-        className={isSelected || dragging ? "ProseMirror-selectednode" : ""}
-        onClick={dragging ? undefined : props.onClick}
+        className={
+          isSelected || dragging
+            ? "image-wrapper ProseMirror-selectednode"
+            : "image-wrapper"
+        }
         style={widthStyle}
       >
-        {!dragging &&
-          size.width > 60 &&
-          size.height > 60 &&
-          props.onDownload && (
-            <Button onClick={props.onDownload}>
+        {!dragging && width > 60 && isDownloadable && (
+          <Actions>
+            {isExternalUrl(src) && (
+              <>
+                <Button onClick={handleOpen} aria-label={t("Open")}>
+                  <GlobeIcon />
+                </Button>
+                <Separator height={24} />
+              </>
+            )}
+            {imgLink && (
+              <>
+                <Button
+                  // `mousedown` on ancestor `div.ProseMirror` was preventing the `onClick` handler from firing
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={props.onZoomIn}
+                  aria-label={t("Zoom in")}
+                >
+                  <ZoomInIcon />
+                </Button>
+                <Separator height={24} />
+              </>
+            )}
+            <Button
+              onClick={handleDownload}
+              // `mousedown` on ancestor `div.ProseMirror` was preventing the `onClick` handler from firing
+              onMouseDown={(e) => e.stopPropagation()}
+              aria-label={t("Download")}
+              disabled={isDownloading}
+            >
               <DownloadIcon />
             </Button>
-          )}
-        <ImageZoom zoomMargin={24}>
-          <img
-            style={{
-              ...widthStyle,
-              display: loaded ? "block" : "none",
-            }}
-            src={sanitizeUrl(src) ?? ""}
-            onLoad={(ev: React.SyntheticEvent<HTMLImageElement>) => {
-              // For some SVG's Firefox does not provide the naturalWidth, in this
-              // rare case we need to provide a default so that the image can be
-              // seen and is not sized to 0px
-              const nw = (ev.target as HTMLImageElement).naturalWidth || 300;
-              const nh = (ev.target as HTMLImageElement).naturalHeight;
-              setNaturalWidth(nw);
-              setNaturalHeight(nh);
-              setLoaded(true);
-
-              if (!node.attrs.width) {
-                setSize((state) => ({
-                  ...state,
-                  width: nw,
-                }));
-              }
-            }}
-          />
-          {!loaded && size.width && size.height && (
+          </Actions>
+        )}
+        {error ? (
+          <Error className={EditorStyleHelper.imageHandle}>
+            <Flex gap={4} align="center">
+              <CrossIcon size={16} />
+              {width > 300 ? t("Image failed to load") : null}
+            </Flex>
+          </Error>
+        ) : (
+          <a
+            href={imgLink}
+            // Do not show hover preview when the image is selected
+            className={!isSelected ? "use-hover-preview" : ""}
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+          >
             <img
+              className={EditorStyleHelper.imageHandle}
               style={{
                 ...widthStyle,
-                display: "block",
+                display: loaded ? "block" : "none",
               }}
-              src={`data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
-                getPlaceholder(size.width, size.height)
-              )}`}
+              src={sanitizedSrc}
+              alt={node.attrs.alt || ""}
+              onError={() => {
+                setError(true);
+                setLoaded(true);
+              }}
+              onLoad={(ev: React.SyntheticEvent<HTMLImageElement>) => {
+                // For some SVG's Firefox does not provide the naturalWidth, in this
+                // rare case we need to provide a default so that the image can be
+                // seen and is not sized to 0px
+                const nw = (ev.target as HTMLImageElement).naturalWidth || 300;
+                const nh = (ev.target as HTMLImageElement).naturalHeight;
+                setNaturalWidth(nw);
+                setNaturalHeight(nh);
+                setLoaded(true);
+
+                if (!node.attrs.width) {
+                  setSize((state) => ({
+                    ...state,
+                    width: nw,
+                  }));
+                }
+              }}
+              onClick={handleImageClick}
+              onTouchStart={handleImageTouchStart}
             />
-          )}
-        </ImageZoom>
+          </a>
+        )}
+        {!loaded && width && height && (
+          <img
+            alt=""
+            style={{
+              ...widthStyle,
+              display: "block",
+            }}
+            src={`data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
+              getPlaceholder(width, height)
+            )}`}
+          />
+        )}
         {isEditable && !isFullWidth && isResizable && (
           <>
             <ResizeLeft
               onPointerDown={handlePointerDown("left")}
+              onDoubleClick={handleDoubleClick}
               $dragging={!!dragging}
             />
             <ResizeRight
               onPointerDown={handlePointerDown("right")}
+              onDoubleClick={handleDoubleClick}
               $dragging={!!dragging}
             />
           </>
@@ -235,93 +243,37 @@ const Image = (
   );
 };
 
-function getInnerWidth(element: Element) {
-  const computedStyle = window.getComputedStyle(element, null);
-  let width = element.clientWidth;
-  width -=
-    parseFloat(computedStyle.paddingLeft) +
-    parseFloat(computedStyle.paddingRight);
-
-  return width;
-}
-
 function getPlaceholder(width: number, height: number) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" />`;
 }
 
-export const Caption = styled.p`
-  border: 0;
-  display: block;
-  font-style: italic;
-  font-weight: normal;
-  color: ${s("textSecondary")};
-  padding: 8px 0 4px;
-  line-height: 16px;
-  text-align: center;
-  min-height: 1em;
-  outline: none;
-  background: none;
-  resize: none;
-  user-select: text;
-  margin: 0 !important;
-  cursor: text;
-
-  ${breakpoint("tablet")`
-    font-size: 13px;
-  `};
-
-  &:empty:not(:focus) {
-    display: none;
-  }
-
-  &:empty:before {
-    color: ${s("placeholder")};
-    content: attr(data-caption);
-    pointer-events: none;
-  }
+export const Error = styled(Flex)`
+  max-width: 100%;
+  color: ${s("textTertiary")};
+  font-size: 14px;
+  background: ${s("backgroundSecondary")};
+  border-radius: ${EditorStyleHelper.blockRadius};
+  height: 80px;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
 `;
 
-const ResizeLeft = styled.div<{ $dragging: boolean }>`
-  cursor: ew-resize;
+const Actions = styled.div`
+  display: flex;
+  align-items: center;
   position: absolute;
-  left: -4px;
-  top: 0;
-  bottom: 0;
-  width: 8px;
-  user-select: none;
-  opacity: ${(props) => (props.$dragging ? 1 : 0)};
+  top: 8px;
+  right: 8px;
+  opacity: 0;
   transition: opacity 150ms ease-in-out;
 
-  &:after {
-    content: "";
-    position: absolute;
-    left: 8px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 6px;
-    height: 15%;
-    min-height: 20px;
-    border-radius: 4px;
-    background: ${s("menuBackground")};
-    box-shadow: 0 0 0 1px ${s("textSecondary")};
-    opacity: 0.75;
-  }
-`;
-
-const ResizeRight = styled(ResizeLeft)`
-  left: initial;
-  right: -4px;
-
-  &:after {
-    left: initial;
-    right: 8px;
+  &:hover {
+    opacity: 1;
   }
 `;
 
 const Button = styled.button`
-  position: absolute;
-  top: 8px;
-  right: 8px;
   border: 0;
   margin: 0;
   padding: 0;
@@ -332,8 +284,17 @@ const Button = styled.button`
   height: 24px;
   display: inline-block;
   cursor: var(--pointer);
-  opacity: 0;
   transition: opacity 150ms ease-in-out;
+
+  &:first-child:not(:last-child) {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  &:last-child:not(:first-child) {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+  }
 
   &:active {
     transform: scale(0.98);
@@ -341,7 +302,20 @@ const Button = styled.button`
 
   &:hover {
     color: ${s("text")};
-    opacity: 1;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: wait;
+    pointer-events: none;
+
+    &:hover {
+      color: ${s("textSecondary")};
+    }
+
+    &:active {
+      transform: none;
+    }
   }
 `;
 
@@ -363,7 +337,7 @@ const ImageWrapper = styled.div<{ isFullWidth: boolean }>`
   }
 
   &:hover {
-    ${Button} {
+    ${Actions} {
       opacity: 0.9;
     }
 
@@ -371,10 +345,13 @@ const ImageWrapper = styled.div<{ isFullWidth: boolean }>`
       opacity: 1;
     }
   }
+`;
 
-  &.ProseMirror-selectednode + ${Caption} {
-    display: block;
-  }
+const Separator = styled.div<{ height?: number }>`
+  flex-shrink: 0;
+  width: 1px;
+  height: ${(props) => props.height || 28}px;
+  background: ${s("divider")};
 `;
 
 export default Image;

@@ -1,136 +1,170 @@
 import { observer } from "mobx-react";
-import { ArchiveIcon, GoToIcon, ShapesIcon, TrashIcon } from "outline-icons";
+import { ArchiveIcon, GoToIcon, TrashIcon } from "outline-icons";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import styled from "styled-components";
+import Icon from "@shared/components/Icon";
 import type { NavigationNode } from "@shared/types";
-import Document from "~/models/Document";
+import type Collection from "~/models/Collection";
+import type Document from "~/models/Document";
 import Breadcrumb from "~/components/Breadcrumb";
 import CollectionIcon from "~/components/Icons/CollectionIcon";
+import { ContextMenu } from "~/components/Menu/ContextMenu";
+import { ActionContextProvider } from "~/hooks/useActionContext";
+import { useCollectionMenuAction } from "~/hooks/useCollectionMenuAction";
+import { useDocumentMenuAction } from "~/hooks/useDocumentMenuAction";
+import { useLocationSidebarContext } from "~/hooks/useLocationSidebarContext";
+import usePolicy from "~/hooks/usePolicy";
 import useStores from "~/hooks/useStores";
-import { MenuInternalLink } from "~/types";
-import {
-  archivePath,
-  collectionPath,
-  templatesPath,
-  trashPath,
-} from "~/utils/routeHelpers";
-import EmojiIcon from "./Icons/EmojiIcon";
+import { archivePath, trashPath } from "~/utils/routeHelpers";
+import { createInternalLinkAction } from "~/actions";
+import { ActiveDocumentSection } from "~/actions/sections";
 
 type Props = {
   children?: React.ReactNode;
   document: Document;
   onlyText?: boolean;
+  reverse?: boolean;
+  /**
+   * Maximum number of items to show in the breadcrumb.
+   * If value is less than or equals to 0, no items will be shown.
+   * If value is undefined, all items will be shown.
+   */
+  maxDepth?: number;
 };
 
-function useCategory(document: Document): MenuInternalLink | null {
-  const { t } = useTranslation();
-
-  if (document.isDeleted) {
-    return {
-      type: "route",
-      icon: <TrashIcon />,
-      title: t("Trash"),
-      to: trashPath(),
-    };
-  }
-
-  if (document.isArchived) {
-    return {
-      type: "route",
-      icon: <ArchiveIcon />,
-      title: t("Archive"),
-      to: archivePath(),
-    };
-  }
-
-  if (document.isTemplate) {
-    return {
-      type: "route",
-      icon: <ShapesIcon />,
-      title: t("Templates"),
-      to: templatesPath(),
-    };
-  }
-
-  return null;
-}
-
-const DocumentBreadcrumb: React.FC<Props> = ({
-  document,
-  children,
-  onlyText,
-}: Props) => {
+function DocumentBreadcrumb(
+  { document, children, onlyText, reverse = false, maxDepth }: Props,
+  ref: React.RefObject<HTMLDivElement> | null
+) {
   const { collections } = useStores();
   const { t } = useTranslation();
-  const category = useCategory(document);
+  const sidebarContext = useLocationSidebarContext();
   const collection = document.collectionId
     ? collections.get(document.collectionId)
     : undefined;
+  const can = usePolicy(collection);
+  const depth = maxDepth === undefined ? undefined : Math.max(0, maxDepth);
 
-  let collectionNode: MenuInternalLink | undefined;
+  React.useEffect(() => {
+    void document.loadRelations({ withoutPolicies: true });
+  }, [document]);
 
-  if (collection) {
-    collectionNode = {
-      type: "route",
-      title: collection.name,
-      icon: <CollectionIcon collection={collection} expanded />,
-      to: collectionPath(collection.url),
-    };
-  } else if (document.collectionId && !collection) {
-    collectionNode = {
-      type: "route",
-      title: t("Deleted Collection"),
-      icon: undefined,
-      to: collectionPath("deleted-collection"),
-    };
-  }
+  const path = document.pathTo.slice(0, -1);
 
-  const path = React.useMemo(
-    () => collection?.pathToDocument(document.id).slice(0, -1) || [],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [collection, document, document.collectionId, document.parentDocumentId]
-  );
-
-  const items = React.useMemo(() => {
-    const output = [];
-
-    if (category) {
-      output.push(category);
+  const actions = React.useMemo(() => {
+    if (depth === 0) {
+      return [];
     }
 
-    if (collectionNode) {
-      output.push(collectionNode);
-    }
+    const outputActions = [
+      createInternalLinkAction({
+        name: t("Trash"),
+        section: ActiveDocumentSection,
+        icon: <TrashIcon />,
+        visible: document.isDeleted,
+        to: trashPath(),
+      }),
+      createInternalLinkAction({
+        name: t("Archive"),
+        section: ActiveDocumentSection,
+        icon: <ArchiveIcon />,
+        visible: document.isArchived,
+        to: archivePath(),
+      }),
+      createInternalLinkAction({
+        name: collection ? (
+          <CollectionName collection={collection} />
+        ) : undefined,
+        section: ActiveDocumentSection,
+        icon: collection ? (
+          <CollectionIcon collection={collection} expanded />
+        ) : undefined,
+        visible: !!(collection && can.readDocument),
+        to: collection
+          ? {
+              pathname: collection.path,
+              state: { sidebarContext },
+            }
+          : "",
+      }),
+      createInternalLinkAction({
+        name: t("Deleted Collection"),
+        section: ActiveDocumentSection,
+        visible: document.isCollectionDeleted,
+        to: "",
+      }),
+      ...path.map((node) => {
+        const title = node.title || t("Untitled");
+        return createInternalLinkAction({
+          name: (
+            <DocumentName
+              documentId={node.id}
+              collection={collection}
+              title={title}
+            />
+          ),
+          icon: node.icon ? (
+            <Icon
+              value={node.icon}
+              color={node.color}
+              initial={title.charAt(0).toUpperCase()}
+            />
+          ) : undefined,
+          section: ActiveDocumentSection,
+          to: {
+            pathname: node.url,
+            state: { sidebarContext },
+          },
+        });
+      }),
+    ];
 
-    path.forEach((node: NavigationNode) => {
-      output.push({
-        type: "route",
-        title: node.emoji ? (
-          <>
-            <EmojiIcon emoji={node.emoji} /> {node.title}
-          </>
-        ) : (
-          node.title
-        ),
-        to: node.url,
-      });
-    });
-    return output;
-  }, [path, category, collectionNode]);
+    return reverse
+      ? depth !== undefined
+        ? outputActions.slice(-depth)
+        : outputActions
+      : depth !== undefined
+        ? outputActions.slice(0, depth)
+        : outputActions;
+  }, [
+    t,
+    document,
+    collection,
+    can.readDocument,
+    sidebarContext,
+    path,
+    reverse,
+    depth,
+  ]);
 
   if (!collections.isLoaded) {
     return null;
   }
 
-  if (onlyText === true) {
+  if (onlyText) {
+    if (depth === 0) {
+      return <></>;
+    }
+
+    const slicedPath = reverse
+      ? path.slice(depth && -depth)
+      : path.slice(0, depth);
+
+    const showCollection =
+      collection &&
+      (!reverse || depth === undefined || slicedPath.length < depth);
+
     return (
       <>
-        {collection?.name}
-        {path.map((node: NavigationNode) => (
+        {showCollection && collection.name}
+        {slicedPath.map((node: NavigationNode, index: number) => (
           <React.Fragment key={node.id}>
-            <SmallSlash />
-            {node.title}
+            {showCollection && <SmallSlash />}
+            {node.title || t("Untitled")}
+            {!showCollection && index !== slicedPath.length - 1 && (
+              <SmallSlash />
+            )}
           </React.Fragment>
         ))}
       </>
@@ -138,11 +172,63 @@ const DocumentBreadcrumb: React.FC<Props> = ({
   }
 
   return (
-    <Breadcrumb items={items} highlightFirstItem>
+    <Breadcrumb actions={actions} ref={ref} highlightFirstItem>
       {children}
     </Breadcrumb>
   );
-};
+}
+
+/** Renders a collection name wrapped in a context menu. */
+const CollectionName = observer(function CollectionName_({
+  collection,
+}: {
+  collection: Collection;
+}) {
+  const { t } = useTranslation();
+  const menuAction = useCollectionMenuAction({
+    collectionId: collection.id,
+  });
+
+  return (
+    <ActionContextProvider value={{ activeModels: [collection] }}>
+      <ContextMenu action={menuAction} ariaLabel={t("Collection options")}>
+        <span>{collection.name}</span>
+      </ContextMenu>
+    </ActionContextProvider>
+  );
+});
+
+/** Renders a document name wrapped in a context menu. */
+const DocumentName = observer(function DocumentName_({
+  documentId,
+  collection,
+  title,
+}: {
+  documentId: string;
+  collection: Collection | undefined;
+  title: string;
+}) {
+  const { t } = useTranslation();
+  const { documents } = useStores();
+  const doc = documents.get(documentId);
+  const menuAction = useDocumentMenuAction({ documentId });
+
+  if (!doc) {
+    return <>{title}</>;
+  }
+
+  return (
+    <ActionContextProvider
+      value={{
+        activeModels: [doc, ...(collection ? [collection] : [])],
+      }}
+    >
+      <ContextMenu action={menuAction} ariaLabel={t("Document options")}>
+        <span>{title}</span>
+      </ContextMenu>
+    </ActionContextProvider>
+  );
+});
 
 const SmallSlash = styled(GoToIcon)`
   width: 12px;
@@ -154,4 +240,4 @@ const SmallSlash = styled(GoToIcon)`
   opacity: 0.5;
 `;
 
-export default observer(DocumentBreadcrumb);
+export default observer(React.forwardRef(DocumentBreadcrumb));

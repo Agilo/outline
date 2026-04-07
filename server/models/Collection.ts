@@ -1,9 +1,26 @@
+/* oxlint-disable lines-between-class-members */
+import fractionalIndex from "fractional-index";
 import find from "lodash/find";
 import findIndex from "lodash/findIndex";
+import isNil from "lodash/isNil";
 import remove from "lodash/remove";
 import uniq from "lodash/uniq";
-import randomstring from "randomstring";
-import { Identifier, Transaction, Op, FindOptions } from "sequelize";
+import type {
+  Identifier,
+  Transaction,
+  FindOptions,
+  NonNullFindOptions,
+  InferAttributes,
+  InferCreationAttributes,
+} from "sequelize";
+import {
+  EmptyResultError,
+  type CreateOptions,
+  type UpdateOptions,
+  type ScopeOptions,
+  type SaveOptions,
+  Op,
+} from "sequelize";
 import {
   Sequelize,
   Table,
@@ -13,7 +30,6 @@ import {
   Default,
   BeforeValidate,
   BeforeSave,
-  AfterDestroy,
   AfterCreate,
   HasMany,
   BelongsToMany,
@@ -22,39 +38,73 @@ import {
   Scopes,
   DataType,
   Length as SimpleLength,
+  BeforeDestroy,
+  IsDate,
+  AllowNull,
+  BeforeCreate,
+  BeforeUpdate,
+  DefaultScope,
+  AfterSave,
 } from "sequelize-typescript";
 import isUUID from "validator/lib/isUUID";
-import type { CollectionSort } from "@shared/types";
-import { CollectionPermission, NavigationNode } from "@shared/types";
+import type {
+  CollectionSort,
+  ProsemirrorData,
+  SourceMetadata,
+  NavigationNode,
+} from "@shared/types";
+import { CollectionPermission } from "@shared/types";
+import { UrlHelper } from "@shared/utils/UrlHelper";
 import { sortNavigationNodes } from "@shared/utils/collections";
-import { SLUG_URL_REGEX } from "@shared/utils/urlHelpers";
+import slugify from "@shared/utils/slugify";
 import { CollectionValidation } from "@shared/validations";
-import slugify from "@server/utils/slugify";
-import CollectionGroup from "./CollectionGroup";
-import CollectionUser from "./CollectionUser";
+import { ValidationError } from "@server/errors";
+import type { APIContext } from "@server/types";
+import { CacheHelper } from "@server/utils/CacheHelper";
+import { RedisPrefixHelper } from "@server/utils/RedisPrefixHelper";
+import removeIndexCollision from "@server/utils/removeIndexCollision";
+import { generateUrlId } from "@server/utils/url";
+import { ValidateIndex } from "@server/validation";
 import Document from "./Document";
 import FileOperation from "./FileOperation";
 import Group from "./Group";
+import GroupMembership from "./GroupMembership";
 import GroupUser from "./GroupUser";
+import Import from "./Import";
 import Team from "./Team";
 import User from "./User";
+import UserMembership from "./UserMembership";
 import ParanoidModel from "./base/ParanoidModel";
 import Fix from "./decorators/Fix";
+import { DocumentHelper } from "./helpers/DocumentHelper";
 import IsHexColor from "./validators/IsHexColor";
 import Length from "./validators/Length";
 import NotContainsUrl from "./validators/NotContainsUrl";
 
+type AdditionalFindOptions = {
+  userId?: string;
+  includeDocumentStructure?: boolean;
+  includeOwner?: boolean;
+  includeArchivedBy?: boolean;
+  rejectOnEmpty?: boolean | Error;
+};
+
+@DefaultScope(() => ({
+  attributes: {
+    exclude: ["documentStructure"],
+  },
+}))
 @Scopes(() => ({
   withAllMemberships: {
     include: [
       {
-        model: CollectionUser,
+        model: UserMembership,
         as: "memberships",
         required: false,
       },
       {
-        model: CollectionGroup,
-        as: "collectionGroupMemberships",
+        model: GroupMembership,
+        as: "groupMemberships",
         required: false,
         // use of "separate" property: sequelize breaks when there are
         // nested "includes" with alternating values for "required"
@@ -62,7 +112,7 @@ import NotContainsUrl from "./validators/NotContainsUrl";
         separate: true,
         // include for groups that are members of this collection,
         // of which userId is a member of, resulting in:
-        // CollectionGroup [inner join] Group [inner join] GroupUser [where] userId
+        // GroupMembership [inner join] Group [inner join] GroupUser [where] userId
         include: [
           {
             model: Group,
@@ -71,7 +121,7 @@ import NotContainsUrl from "./validators/NotContainsUrl";
             include: [
               {
                 model: GroupUser,
-                as: "groupMemberships",
+                as: "groupUsers",
                 required: true,
               },
             ],
@@ -89,51 +139,72 @@ import NotContainsUrl from "./validators/NotContainsUrl";
       },
     ],
   }),
-  withMembership: (userId: string) => ({
+  withArchivedBy: () => ({
     include: [
       {
-        model: CollectionUser,
-        as: "memberships",
-        where: {
-          userId,
-        },
-        required: false,
-      },
-      {
-        model: CollectionGroup,
-        as: "collectionGroupMemberships",
-        required: false,
-        // use of "separate" property: sequelize breaks when there are
-        // nested "includes" with alternating values for "required"
-        // see https://github.com/sequelize/sequelize/issues/9869
-        separate: true,
-        // include for groups that are members of this collection,
-        // of which userId is a member of, resulting in:
-        // CollectionGroup [inner join] Group [inner join] GroupUser [where] userId
-        include: [
-          {
-            model: Group,
-            as: "group",
-            required: true,
-            include: [
-              {
-                model: GroupUser,
-                as: "groupMemberships",
-                required: true,
-                where: {
-                  userId,
-                },
-              },
-            ],
-          },
-        ],
+        association: "archivedBy",
       },
     ],
   }),
+  withDocumentStructure: () => ({
+    attributes: {
+      // resets to include the documentStructure column
+      exclude: [],
+    },
+  }),
+  withMembership: (userId: string) => {
+    if (!userId) {
+      return {};
+    }
+
+    return {
+      include: [
+        {
+          association: "memberships",
+          where: {
+            userId,
+          },
+          required: false,
+        },
+        {
+          model: GroupMembership,
+          as: "groupMemberships",
+          required: false,
+          // use of "separate" property: sequelize breaks when there are
+          // nested "includes" with alternating values for "required"
+          // see https://github.com/sequelize/sequelize/issues/9869
+          separate: true,
+          // include for groups that are members of this collection,
+          // of which userId is a member of, resulting in:
+          // CollectionGroup [inner join] Group [inner join] GroupUser [where] userId
+          include: [
+            {
+              model: Group,
+              as: "group",
+              required: true,
+              include: [
+                {
+                  model: GroupUser,
+                  as: "groupUsers",
+                  required: true,
+                  where: {
+                    userId,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+  },
 }))
 @Table({ tableName: "collections", modelName: "collection" })
 @Fix
-class Collection extends ParanoidModel {
+class Collection extends ParanoidModel<
+  InferAttributes<Collection>,
+  Partial<InferCreationAttributes<Collection>>
+> {
   @SimpleLength({
     min: 10,
     max: 10,
@@ -151,6 +222,12 @@ class Collection extends ParanoidModel {
   @Column
   name: string;
 
+  /**
+   * The content of the collection as Markdown.
+   *
+   * @deprecated Use `content` instead, or `DocumentHelper.toMarkdown` if exporting lossy markdown.
+   * This column will be removed in a future migration.
+   */
   @Length({
     max: CollectionValidation.maxDescriptionLength,
     msg: `description must be ${CollectionValidation.maxDescriptionLength} characters or less`,
@@ -158,20 +235,24 @@ class Collection extends ParanoidModel {
   @Column
   description: string | null;
 
-  @Length({
-    max: 50,
-    msg: `icon must be 50 characters or less`,
-  })
+  /**
+   * The content of the collection as JSON, this is a snapshot at the last time the state was saved.
+   */
+  @Column(DataType.JSONB)
+  content: ProsemirrorData | null;
+
+  /** An icon (or) emoji to use as the collection icon. */
   @Column
   icon: string | null;
 
+  /** The color of the icon. */
   @IsHexColor
   @Column
   color: string | null;
 
   @Length({
-    max: 100,
-    msg: `index must be 100 characters or less`,
+    max: ValidateIndex.maxLength,
+    msg: `index must be ${ValidateIndex.maxLength} characters or less`,
   })
   @Column
   index: string | null;
@@ -184,6 +265,7 @@ class Collection extends ParanoidModel {
   @Column
   maintainerApprovalRequired: boolean;
 
+  @Default(null)
   @Column(DataType.JSONB)
   documentStructure: NavigationNode[] | null;
 
@@ -217,39 +299,143 @@ class Collection extends ParanoidModel {
   })
   sort: CollectionSort;
 
+  /** Whether the collection is archived, and if so when. */
+  @IsDate
+  @Column
+  archivedAt: Date | null;
+
+  /** The minimum permission level required to manage templates in this collection. */
+  @IsIn([[CollectionPermission.Admin, CollectionPermission.ReadWrite]])
+  @Default(CollectionPermission.Admin)
+  @Column(DataType.STRING)
+  templateManagement: CollectionPermission;
+
+  /** Allows the configuration of commenting per collection. */
+  @AllowNull(true)
+  @Default(null)
+  @Column(DataType.BOOLEAN)
+  commenting: boolean | null;
+
+  @AllowNull
+  @Column(DataType.JSONB)
+  sourceMetadata: SourceMetadata | null;
+
   // getters
 
-  get url(): string {
+  /** The frontend path to this collection. */
+  get path(): string {
     if (!this.name) {
       return `/collection/untitled-${this.urlId}`;
     }
     return `/collection/${slugify(this.name)}-${this.urlId}`;
   }
 
+  /**
+   * Whether this collection is considered active or not. A collection is active if
+   * it has not been archived or deleted.
+   *
+   * @returns boolean
+   */
+  get isActive(): boolean {
+    return !this.archivedAt && !this.deletedAt;
+  }
+
   // hooks
 
   @BeforeValidate
   static async onBeforeValidate(model: Collection) {
-    model.urlId = model.urlId || randomstring.generate(10);
+    model.urlId = model.urlId || generateUrlId();
   }
 
   @BeforeSave
   static async onBeforeSave(model: Collection) {
-    if (model.icon === "collection") {
-      model.icon = null;
+    if (!model.content) {
+      model.content = await DocumentHelper.toJSON(model);
+    }
+    if (model.changed("documentStructure")) {
+      await CacheHelper.clearData(
+        RedisPrefixHelper.getCollectionDocumentsKey(model.id)
+      );
     }
   }
 
-  @AfterDestroy
-  static async onAfterDestroy(model: Collection) {
-    await Document.destroy({
+  @AfterSave
+  static async cacheDocumentStructure(
+    model: Collection,
+    options: SaveOptions<Collection>
+  ) {
+    if (model.changed("documentStructure")) {
+      const setData = () =>
+        CacheHelper.setData(
+          RedisPrefixHelper.getCollectionDocumentsKey(model.id),
+          model.documentStructure,
+          60
+        );
+
+      if (options.transaction) {
+        return (options.transaction.parent || options.transaction).afterCommit(
+          setData
+        );
+      }
+
+      await setData();
+    }
+  }
+
+  @BeforeDestroy
+  static async checkLastCollection(model: Collection) {
+    const total = await this.count({
       where: {
-        collectionId: model.id,
-        archivedAt: {
-          [Op.is]: null,
-        },
+        teamId: model.teamId,
       },
     });
+    if (total === 1) {
+      throw ValidationError("Cannot delete last collection");
+    }
+  }
+
+  @BeforeDestroy
+  static async deleteDocuments(model: Collection, ctx: APIContext["context"]) {
+    await Document.update(
+      {
+        lastModifiedById: ctx.auth.user.id,
+        deletedAt: new Date(),
+      },
+      {
+        transaction: ctx.transaction,
+        where: {
+          teamId: model.teamId,
+          collectionId: model.id,
+          archivedAt: {
+            [Op.is]: null,
+          },
+        },
+      }
+    );
+  }
+
+  @BeforeCreate
+  static async setIndex(model: Collection, options: CreateOptions<Collection>) {
+    if (model.index) {
+      model.index = await removeIndexCollision(model.teamId, model.index, {
+        transaction: options.transaction,
+      });
+      return;
+    }
+
+    const firstCollectionForTeam = await this.findOne({
+      where: {
+        teamId: model.teamId,
+      },
+      order: [
+        // using LC_COLLATE:"C" because we need byte order to drive the sorting
+        Sequelize.literal('"collection"."index" collate "C"'),
+        ["updatedAt", "DESC"],
+      ],
+      transaction: options.transaction,
+    });
+
+    model.index = fractionalIndex(null, firstCollectionForTeam?.index ?? null);
   }
 
   @AfterCreate
@@ -257,17 +443,61 @@ class Collection extends ParanoidModel {
     model: Collection,
     options: { transaction: Transaction }
   ) {
-    return CollectionUser.findOrCreate({
+    const existing = await UserMembership.findOne({
       where: {
         collectionId: model.id,
         userId: model.createdById,
       },
-      defaults: {
-        permission: CollectionPermission.Admin,
-        createdById: model.createdById,
-      },
       transaction: options.transaction,
     });
+
+    if (!existing) {
+      return UserMembership.create(
+        {
+          collectionId: model.id,
+          userId: model.createdById,
+          permission: CollectionPermission.Admin,
+          createdById: model.createdById,
+        },
+        {
+          transaction: options.transaction,
+          hooks: false,
+        }
+      );
+    }
+
+    return existing;
+  }
+
+  @BeforeUpdate
+  static async checkIndex(
+    model: Collection,
+    options: UpdateOptions<Collection>
+  ) {
+    if (
+      (model.index && model.changed("index")) ||
+      (!model.archivedAt && model.changed("archivedAt"))
+    ) {
+      model.index = await removeIndexCollision(model.teamId, model.index!, {
+        transaction: options.transaction,
+      });
+    }
+  }
+
+  @BeforeUpdate
+  static async publishPermissionChangedEvent(
+    model: Collection,
+    ctx: APIContext["context"]
+  ) {
+    const privacyChanged = model.previous("permission") !== model.permission;
+    const sharingChanged = model.previous("sharing") !== model.sharing;
+
+    if (privacyChanged || sharingChanged) {
+      await this.insertEvent("permission_changed", model, {
+        ...ctx,
+        event: { publish: true },
+      });
+    }
   }
 
   // associations
@@ -279,19 +509,34 @@ class Collection extends ParanoidModel {
   @Column(DataType.UUID)
   importId: string | null;
 
+  @BelongsTo(() => Import, "apiImportId")
+  apiImport: Import<any> | null;
+
+  @ForeignKey(() => Import)
+  @Column(DataType.UUID)
+  apiImportId: string | null;
+
+  @BelongsTo(() => User, "archivedById")
+  archivedBy?: User | null;
+
+  @AllowNull
+  @ForeignKey(() => User)
+  @Column(DataType.UUID)
+  archivedById?: string | null;
+
   @HasMany(() => Document, "collectionId")
   documents: Document[];
 
-  @HasMany(() => CollectionUser, "collectionId")
-  memberships: CollectionUser[];
+  @HasMany(() => UserMembership, "collectionId")
+  memberships: UserMembership[];
 
-  @HasMany(() => CollectionGroup, "collectionId")
-  collectionGroupMemberships: CollectionGroup[];
+  @HasMany(() => GroupMembership, "collectionId")
+  groupMemberships: GroupMembership[];
 
-  @BelongsToMany(() => User, () => CollectionUser)
+  @BelongsToMany(() => User, () => UserMembership)
   users: User[];
 
-  @BelongsToMany(() => Group, () => CollectionGroup)
+  @BelongsToMany(() => Group, () => GroupMembership)
   groups: Group[];
 
   @BelongsTo(() => User, "createdById")
@@ -316,22 +561,21 @@ class Collection extends ParanoidModel {
 
   /**
    * Returns an array of unique userIds that are members of a collection,
-   * either via group or direct membership
+   * either via group or direct membership.
    *
    * @param collectionId
    * @returns userIds
    */
   static async membershipUserIds(collectionId: string) {
-    const collection = await this.scope("withAllMemberships").findByPk(
-      collectionId
-    );
-
+    const collection = await this.scope("withAllMemberships").findOne({
+      where: { id: collectionId },
+    });
     if (!collection) {
       return [];
     }
 
-    const groupMemberships = collection.collectionGroupMemberships
-      .map((cgm) => cgm.group.groupMemberships)
+    const groupMemberships = collection.groupMemberships
+      .map((gm) => gm.group.groupUsers)
       .flat();
     const membershipUserIds = [
       ...groupMemberships,
@@ -342,35 +586,83 @@ class Collection extends ParanoidModel {
 
   /**
    * Overrides the standard findByPk behavior to allow also querying by urlId
+   * and loading memberships for a user passed in by `userId`
    *
    * @param id uuid or urlId
-   * @returns collection instance
+   * @param options FindOptions
+   * @returns A promise resolving to a collection instance or null
    */
   static async findByPk(
     id: Identifier,
-    options: FindOptions<Collection> = {}
+    options?: NonNullFindOptions<Collection> & AdditionalFindOptions
+  ): Promise<Collection>;
+  static async findByPk(
+    id: Identifier,
+    options?: FindOptions<Collection> & AdditionalFindOptions
+  ): Promise<Collection | null>;
+  static async findByPk(
+    id: Identifier,
+    options: FindOptions<Collection> & AdditionalFindOptions = {}
   ): Promise<Collection | null> {
     if (typeof id !== "string") {
       return null;
     }
 
+    const {
+      includeDocumentStructure,
+      includeOwner,
+      includeArchivedBy,
+      userId,
+      ...rest
+    } = options;
+
+    const scopes: (string | ScopeOptions)[] = [
+      includeDocumentStructure ? "withDocumentStructure" : "defaultScope",
+      {
+        method: ["withMembership", userId],
+      },
+    ];
+
+    if (includeOwner) {
+      scopes.push("withUser");
+    }
+    if (includeArchivedBy) {
+      scopes.push("withArchivedBy");
+    }
+
+    const scope = this.scope(scopes);
+
     if (isUUID(id)) {
-      return this.findOne({
+      const collection = await scope.findOne({
         where: {
           id,
         },
-        ...options,
+        ...rest,
+        rejectOnEmpty: false,
       });
+
+      if (!collection && rest.rejectOnEmpty) {
+        throw new EmptyResultError(`Collection doesn't exist with id: ${id}`);
+      }
+
+      return collection;
     }
 
-    const match = id.match(SLUG_URL_REGEX);
+    const match = id.match(UrlHelper.SLUG_URL_REGEX);
     if (match) {
-      return this.findOne({
+      const collection = await scope.findOne({
         where: {
           urlId: match[1],
         },
-        ...options,
+        ...rest,
+        rejectOnEmpty: false,
       });
+
+      if (!collection && rest.rejectOnEmpty) {
+        throw new EmptyResultError(`Collection doesn't exist with id: ${id}`);
+      }
+
+      return collection;
     }
 
     return null;
@@ -379,13 +671,18 @@ class Collection extends ParanoidModel {
   /**
    * Find the first collection that the specified user has access to.
    *
-   * @param user User object
+   * @param user User to find the collection for
+   * @param options Additional options for the query
    * @returns collection First collection in the sidebar order
    */
-  static async findFirstCollectionForUser(user: User) {
-    const id = await user.collectionIds();
+  static async findFirstCollectionForUser(
+    user: User,
+    options: FindOptions = {}
+  ) {
+    const id = await user.collectionIds({ transaction: options.transaction });
     return this.findOne({
       where: {
+        teamId: user.teamId,
         id,
       },
       order: [
@@ -393,6 +690,7 @@ class Collection extends ParanoidModel {
         Sequelize.literal('"collection"."index" collate "C"'),
         ["updatedAt", "DESC"],
       ],
+      ...options,
     });
   }
 
@@ -605,11 +903,18 @@ class Collection extends ParanoidModel {
     index?: number,
     options: FindOptions & {
       save?: boolean;
+      silent?: boolean;
       documentJson?: NavigationNode;
+      includeArchived?: boolean;
+      insertOrder?: "prepend" | "append";
     } = {}
   ) {
     if (!this.documentStructure) {
       this.documentStructure = [];
+    }
+
+    if (this.getDocumentTree(document.id)) {
+      return this;
     }
 
     // If moving existing document with children, use existing structure
@@ -618,24 +923,36 @@ class Collection extends ParanoidModel {
       ...options.documentJson,
     };
 
+    // Determine the insertion index based on order parameter or explicit index
+    let insertionIndex: number;
+
+    if (index !== undefined) {
+      // Explicit index takes precedence
+      insertionIndex = index;
+    } else if (options.insertOrder === "prepend") {
+      // Prepend to the beginning
+      insertionIndex = 0;
+    } else {
+      // Default behavior: append to the end (maintains backward compatibility)
+      insertionIndex = this.documentStructure.length;
+    }
+
     if (!document.parentDocumentId) {
       // Note: Index is supported on DB level but it's being ignored
       // by the API presentation until we build product support for it.
-      this.documentStructure.splice(
-        index !== undefined ? index : this.documentStructure.length,
-        0,
-        documentJson
-      );
+      this.documentStructure.splice(insertionIndex, 0, documentJson);
     } else {
       // Recursively place document
       const placeDocument = (documentList: NavigationNode[]) =>
         documentList.map((childDocument) => {
           if (document.parentDocumentId === childDocument.id) {
-            childDocument.children.splice(
-              index !== undefined ? index : childDocument.children.length,
-              0,
-              documentJson
-            );
+            const childInsertionIndex =
+              index !== undefined
+                ? index
+                : options.insertOrder === "prepend"
+                  ? 0
+                  : childDocument.children.length;
+            childDocument.children.splice(childInsertionIndex, 0, documentJson);
           } else {
             childDocument.children = placeDocument(childDocument.children);
           }
@@ -659,6 +976,44 @@ class Collection extends ParanoidModel {
 
     return this;
   };
+
+  /**
+   * Get all of the document ids that are in this collection by
+   * recursively iterating through `documentStructure`.
+   *
+   * @returns list of document ids
+   */
+  getAllDocumentIds = (): string[] => {
+    if (!this.documentStructure) {
+      return [];
+    }
+
+    const allDocumentIds: string[] = [];
+
+    const loopChildren = (node: NavigationNode) => {
+      allDocumentIds.push(node.id);
+      (node.children ?? []).forEach((childNode) => {
+        loopChildren(childNode);
+      });
+    };
+
+    this.documentStructure.forEach(loopChildren);
+    return allDocumentIds;
+  };
+
+  /**
+   * Returns a JSON representation of this collection suitable for use in the frontend navigation.
+   *
+   * @returns NavigationNode
+   */
+  toNavigationNode = (): NavigationNode => ({
+    id: this.id,
+    title: this.name,
+    url: this.path,
+    icon: isNil(this.icon) ? undefined : this.icon,
+    color: isNil(this.color) ? undefined : this.color,
+    children: sortNavigationNodes(this.documentStructure ?? [], this.sort),
+  });
 }
 
 export default Collection;

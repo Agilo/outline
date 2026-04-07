@@ -1,4 +1,5 @@
-import tracer, { Span } from "dd-trace";
+import type { Span } from "dd-trace";
+import tracer from "dd-trace";
 import env from "@server/env";
 
 type PrivateDatadogContext = {
@@ -52,7 +53,7 @@ export function addTags(tags: Record<string, any>, span?: Span | null): void {
 export function getRootSpanFromRequestContext(
   context: PrivateDatadogContext
 ): Span | null {
-  // eslint-disable-next-line no-undef
+  // oxlint-disable-next-line no-undef
   return context?.req?._datadog?.span ?? null;
 }
 

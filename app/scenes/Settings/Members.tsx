@@ -1,135 +1,84 @@
-import sortBy from "lodash/sortBy";
+import type { ColumnSort } from "@tanstack/react-table";
 import { observer } from "mobx-react";
 import { PlusIcon, UserIcon } from "outline-icons";
-import * as React from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { useHistory, useLocation } from "react-router-dom";
+import { toast } from "sonner";
 import styled from "styled-components";
-import { PAGINATION_SYMBOL } from "~/stores/BaseStore";
-import User from "~/models/User";
-import Invite from "~/scenes/Invite";
+import type UsersStore from "~/stores/UsersStore";
+import { queriedUsers } from "~/stores/UsersStore";
 import { Action } from "~/components/Actions";
 import Button from "~/components/Button";
-import Flex from "~/components/Flex";
+import { ConditionalFade } from "~/components/Fade";
 import Heading from "~/components/Heading";
 import InputSearch from "~/components/InputSearch";
-import Modal from "~/components/Modal";
 import Scene from "~/components/Scene";
 import Text from "~/components/Text";
+import { inviteUser } from "~/actions/definitions/users";
 import env from "~/env";
-import useBoolean from "~/hooks/useBoolean";
 import useCurrentTeam from "~/hooks/useCurrentTeam";
 import usePolicy from "~/hooks/usePolicy";
 import useQuery from "~/hooks/useQuery";
 import useStores from "~/hooks/useStores";
-import PeopleTable from "./components/PeopleTable";
+import { useTableRequest } from "~/hooks/useTableRequest";
+import { ExportCSV } from "./components/ExportCSV";
+import { MembersTable } from "./components/MembersTable";
+import { StickyFilters } from "./components/StickyFilters";
+import UserRoleFilter from "./components/UserRoleFilter";
 import UserStatusFilter from "./components/UserStatusFilter";
+import { HStack } from "~/components/primitives/HStack";
 
 function Members() {
+  const appName = env.APP_NAME;
   const location = useLocation();
   const history = useHistory();
-  const [inviteModalOpen, handleInviteModalOpen, handleInviteModalClose] =
-    useBoolean();
   const team = useCurrentTeam();
   const { users } = useStores();
   const { t } = useTranslation();
   const params = useQuery();
-  const [isLoading, setIsLoading] = React.useState(false);
-  const [data, setData] = React.useState<User[]>([]);
-  const [totalPages, setTotalPages] = React.useState(0);
-  const [userIds, setUserIds] = React.useState<string[]>([]);
   const can = usePolicy(team);
-  const query = params.get("query") || undefined;
-  const filter = params.get("filter") || undefined;
-  const sort = params.get("sort") || "name";
-  const direction = (params.get("direction") || "asc").toUpperCase() as
-    | "ASC"
-    | "DESC";
-  const page = parseInt(params.get("page") || "0", 10);
-  const limit = 25;
+  const [query, setQuery] = useState("");
 
-  React.useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true);
-
-      try {
-        const response = await users.fetchPage({
-          offset: page * limit,
-          limit,
-          sort,
-          direction,
-          query,
-          filter,
-        });
-        setTotalPages(Math.ceil(response[PAGINATION_SYMBOL].total / limit));
-        setUserIds(response.map((u: User) => u.id));
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    void fetchData();
-  }, [query, sort, filter, page, direction, users, users.counts.all]);
-
-  React.useEffect(() => {
-    let filtered = users.orderedData;
-
-    if (!filter) {
-      filtered = users.active.filter((u) => userIds.includes(u.id));
-    } else if (filter === "all") {
-      filtered = users.orderedData.filter((u) => userIds.includes(u.id));
-    } else if (filter === "admins") {
-      filtered = users.admins.filter((u) => userIds.includes(u.id));
-    } else if (filter === "members") {
-      filtered = users.members.filter((u) => userIds.includes(u.id));
-    } else if (filter === "suspended") {
-      filtered = users.suspended.filter((u) => userIds.includes(u.id));
-    } else if (filter === "invited") {
-      filtered = users.invited.filter((u) => userIds.includes(u.id));
-    } else if (filter === "viewers") {
-      filtered = users.viewers.filter((u) => userIds.includes(u.id));
-    }
-
-    // sort the resulting data by the original order from the server
-    setData(sortBy(filtered, (item) => userIds.indexOf(item.id)));
-  }, [
-    filter,
-    users.active,
-    users.admins,
-    users.members,
-    users.orderedData,
-    users.suspended,
-    users.invited,
-    users.viewers,
-    userIds,
-  ]);
-
-  const handleFilter = React.useCallback(
-    (filter) => {
-      if (filter) {
-        params.set("filter", filter);
-        params.delete("page");
-      } else {
-        params.delete("filter");
-      }
-
-      history.replace({
-        pathname: location.pathname,
-        search: params.toString(),
-      });
-    },
-    [params, history, location.pathname]
+  const reqParams = useMemo(
+    () => ({
+      query: params.get("query") || undefined,
+      filter: params.get("filter") || "active",
+      role: params.get("role") || undefined,
+      sort: params.get("sort") || "name",
+      direction: (params.get("direction") || "asc").toUpperCase() as
+        | "ASC"
+        | "DESC",
+    }),
+    [params]
   );
 
-  const handleSearch = React.useCallback(
-    (event) => {
-      const { value } = event.target;
+  const sort: ColumnSort = useMemo(
+    () => ({
+      id: reqParams.sort,
+      desc: reqParams.direction === "DESC",
+    }),
+    [reqParams.sort, reqParams.direction]
+  );
 
+  const { data, error, loading, next } = useTableRequest({
+    data: getFilteredUsers({
+      users,
+      query: reqParams.query,
+      filter: reqParams.filter,
+      role: reqParams.role,
+    }),
+    sort,
+    reqFn: users.fetchPage,
+    reqParams,
+  });
+
+  const updateParams = useCallback(
+    (name: string, value: string) => {
       if (value) {
-        params.set("query", event.target.value);
-        params.delete("page");
+        params.set(name, value);
       } else {
-        params.delete("query");
+        params.delete(name);
       }
 
       history.replace({
@@ -140,7 +89,31 @@ function Members() {
     [params, history, location.pathname]
   );
 
-  const appName = env.APP_NAME;
+  const handleStatusFilter = useCallback(
+    (status) => updateParams("filter", status),
+    [updateParams]
+  );
+
+  const handleRoleFilter = useCallback(
+    (role) => updateParams("role", role),
+    [updateParams]
+  );
+
+  const handleSearch = useCallback((event) => {
+    const { value } = event.target;
+    setQuery(value);
+  }, []);
+
+  useEffect(() => {
+    if (error) {
+      toast.error(t("Could not load members"));
+    }
+  }, [t, error]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => updateParams("query", query), 250);
+    return () => clearTimeout(timeout);
+  }, [query, updateParams]);
 
   return (
     <Scene
@@ -155,7 +128,7 @@ function Members() {
                 data-on="click"
                 data-event-category="invite"
                 data-event-action="peoplePage"
-                onClick={handleInviteModalOpen}
+                action={inviteUser}
                 icon={<PlusIcon />}
               >
                 {t("Invite people")}…
@@ -164,50 +137,94 @@ function Members() {
           )}
         </>
       }
+      wide
     >
       <Heading>{t("Members")}</Heading>
-      <Text type="secondary">
+      <Text as="p" type="secondary">
         <Trans>
           Everyone that has signed into {{ appName }} is listed here. It’s
           possible that there are other users who have access through{" "}
-          {team.signinMethods} but haven’t signed in yet.
+          {{ signinMethods: team.signinMethods }} but haven’t signed in yet.
         </Trans>
       </Text>
-      <Flex gap={8}>
-        <InputSearch
-          short
-          value={query ?? ""}
-          placeholder={`${t("Filter")}…`}
-          onChange={handleSearch}
+      <StickyFilters justify="space-between">
+        <HStack>
+          <InputSearch
+            short
+            value={query}
+            placeholder={`${t("Filter")}…`}
+            onChange={handleSearch}
+          />
+          <LargeUserStatusFilter
+            activeKey={reqParams.filter ?? ""}
+            onSelect={handleStatusFilter}
+          />
+          <LargeUserRoleFilter
+            activeKey={reqParams.role ?? ""}
+            onSelect={handleRoleFilter}
+          />
+        </HStack>
+        <ExportCSV reqParams={reqParams} />
+      </StickyFilters>
+      <ConditionalFade animate={!data}>
+        <MembersTable
+          data={data ?? []}
+          sort={sort}
+          canManage={can.update}
+          loading={loading}
+          page={{
+            hasNext: !!next,
+            fetchNext: next,
+          }}
         />
-        <LargeUserStatusFilter
-          activeKey={filter ?? ""}
-          onSelect={handleFilter}
-        />
-      </Flex>
-      <PeopleTable
-        data={data}
-        canManage={can.update}
-        isLoading={isLoading}
-        page={page}
-        pageSize={limit}
-        totalPages={totalPages}
-        defaultSortDirection="ASC"
-      />
-      {can.inviteUser && (
-        <Modal
-          title={t("Invite people")}
-          onRequestClose={handleInviteModalClose}
-          isOpen={inviteModalOpen}
-        >
-          <Invite onSubmit={handleInviteModalClose} />
-        </Modal>
-      )}
+      </ConditionalFade>
     </Scene>
   );
 }
 
+function getFilteredUsers({
+  users,
+  query,
+  filter,
+  role,
+}: {
+  users: UsersStore;
+  query?: string;
+  filter?: string;
+  role?: string;
+}) {
+  let filteredUsers;
+
+  switch (filter) {
+    case "all":
+      filteredUsers = users.all;
+      break;
+    case "suspended":
+      filteredUsers = users.suspended;
+      break;
+    case "invited":
+      filteredUsers = users.invited;
+      break;
+    default:
+      filteredUsers = users.active;
+  }
+
+  if (role) {
+    filteredUsers = filteredUsers.filter((user) => user.role === role);
+  }
+
+  if (query) {
+    filteredUsers = queriedUsers(filteredUsers, query);
+  }
+
+  return filteredUsers;
+}
+
 const LargeUserStatusFilter = styled(UserStatusFilter)`
+  height: 32px;
+`;
+
+const LargeUserRoleFilter = styled(UserRoleFilter)`
   height: 32px;
 `;
 

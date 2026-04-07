@@ -1,6 +1,6 @@
 import compact from "lodash/compact";
 import { observer } from "mobx-react";
-import * as React from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import FilterOptions from "~/components/FilterOptions";
 import useCurrentUser from "~/hooks/useCurrentUser";
@@ -14,24 +14,16 @@ const UserStatusFilter = ({ activeKey, onSelect, ...rest }: Props) => {
   const { t } = useTranslation();
   const user = useCurrentUser();
 
-  const options = React.useMemo(
+  const options = useMemo(
     () =>
       compact([
         {
+          key: "all",
+          label: t("All status"),
+        },
+        {
           key: "",
           label: t("Active"),
-        },
-        {
-          key: "all",
-          label: t("Everyone"),
-        },
-        {
-          key: "members",
-          label: t("Members"),
-        },
-        {
-          key: "admins",
-          label: t("Admins"),
         },
         ...(user.isAdmin
           ? [
@@ -45,10 +37,6 @@ const UserStatusFilter = ({ activeKey, onSelect, ...rest }: Props) => {
           key: "invited",
           label: t("Invited"),
         },
-        {
-          key: "viewers",
-          label: t("Viewers"),
-        },
       ]),
     [t, user.isAdmin]
   );
@@ -56,7 +44,7 @@ const UserStatusFilter = ({ activeKey, onSelect, ...rest }: Props) => {
   return (
     <FilterOptions
       options={options}
-      activeKey={activeKey}
+      selectedKeys={[activeKey]}
       onSelect={onSelect}
       defaultLabel={t("Active")}
       {...rest}

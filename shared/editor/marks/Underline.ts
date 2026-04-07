@@ -1,6 +1,6 @@
 import { toggleMark } from "prosemirror-commands";
-import { MarkSpec, MarkType } from "prosemirror-model";
-import markInputRule from "../lib/markInputRule";
+import type { MarkSpec, MarkType } from "prosemirror-model";
+import { markInputRuleForPattern } from "../lib/markInputRule";
 import underlinesRule from "../rules/underlines";
 import Mark from "./Mark";
 
@@ -14,8 +14,13 @@ export default class Underline extends Mark {
       parseDOM: [
         { tag: "u" },
         {
-          style: "text-decoration",
-          getAttrs: (value) => (value === "underline" ? null : false),
+          consuming: false,
+          tag: ":not(a)",
+          getAttrs: (node: HTMLElement) =>
+            node.style.textDecoration.includes("underline") ||
+            node.style.textDecorationLine.includes("underline")
+              ? null
+              : false,
         },
       ],
       toDOM: () => ["u", 0],
@@ -27,7 +32,7 @@ export default class Underline extends Mark {
   }
 
   inputRules({ type }: { type: MarkType }) {
-    return [markInputRule(/(?:__)([^_]+)(?:__)$/, type)];
+    return [markInputRuleForPattern("__", type)];
   }
 
   keys({ type }: { type: MarkType }) {

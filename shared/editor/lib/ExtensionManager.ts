@@ -1,18 +1,21 @@
-import { PluginSimple } from "markdown-it";
+import type { Options, PluginSimple } from "markdown-it";
+import { observer } from "mobx-react";
 import { keymap } from "prosemirror-keymap";
 import { MarkdownParser } from "prosemirror-markdown";
-import { Schema } from "prosemirror-model";
-import { EditorView } from "prosemirror-view";
-import { Primitive } from "utility-types";
-import { Editor } from "~/editor";
-import Mark from "../marks/Mark";
-import Node from "../nodes/Node";
-import Extension, { CommandFactory } from "./Extension";
+import type { MarkSpec, NodeSpec, Schema } from "prosemirror-model";
+import type { EditorView } from "prosemirror-view";
+import type { Primitive } from "utility-types";
+import type { Editor } from "~/editor";
+import type Mark from "../marks/Mark";
+import type Node from "../nodes/Node";
+import type { CommandFactory } from "./Extension";
+import type Extension from "./Extension";
 import makeRules from "./markdown/rules";
 import { MarkdownSerializer } from "./markdown/serializer";
 
 export default class ExtensionManager {
   extensions: (Node | Mark | Extension)[] = [];
+  readOnly: boolean;
 
   constructor(
     extensions: (
@@ -23,13 +26,30 @@ export default class ExtensionManager {
     )[] = [],
     editor?: Editor
   ) {
+    this.readOnly = editor?.props.readOnly ?? false;
+
     extensions.forEach((ext) => {
       let extension;
 
       if (typeof ext === "function") {
+        // Check the prototype before instantiation to avoid constructor cost
+        // for extensions not needed in read-only mode.
+        if (
+          this.readOnly &&
+          ext.prototype.type === "extension" &&
+          !ext.prototype.allowInReadOnly
+        ) {
+          return;
+        }
+
         // @ts-expect-error We won't instantiate an abstract class
         extension = new ext(editor?.props);
       } else {
+        // For already-instantiated extensions, check the instance.
+        if (this.readOnly && ext.type === "extension" && !ext.allowInReadOnly) {
+          return;
+        }
+
         extension = ext;
       }
 
@@ -41,34 +61,61 @@ export default class ExtensionManager {
     });
   }
 
-  get nodes() {
+  get widgets() {
     return this.extensions
-      .filter((extension) => extension.type === "node")
+      .filter((extension) => extension.widget({ rtl: false, readOnly: false }))
       .reduce(
-        (nodes, node: Node) => ({
-          ...nodes,
-          [node.name]: node.schema,
+        (memo, node: Node) => ({
+          ...memo,
+          [node.name]: observer(node.widget as any),
         }),
         {}
       );
   }
 
+  get nodes() {
+    const nodes: Record<string, NodeSpec> = this.extensions
+      .filter((extension) => extension.type === "node")
+      .reduce(
+        (memo, node: Node) => ({
+          ...memo,
+          [node.name]: node.schema,
+        }),
+        {}
+      );
+
+    for (const i in nodes) {
+      const { marks } = nodes[i];
+      if (marks) {
+        // We must filter marks from the marks list that are not defined
+        // in the schema for the current editor.
+        nodes[i].marks = marks
+          .split(" ")
+          .filter((m: string) => Object.keys(this.marks).includes(m))
+          .join(" ");
+      }
+    }
+
+    return nodes;
+  }
+
   get marks() {
-    const marks = this.extensions
+    const marks: Record<string, MarkSpec> = this.extensions
       .filter((extension) => extension.type === "mark")
       .reduce(
-        (marks, mark: Mark) => ({
-          ...marks,
+        (memo, mark: Mark) => ({
+          ...memo,
           [mark.name]: mark.schema,
         }),
         {}
       );
 
     for (const i in marks) {
-      if (marks[i].excludes) {
+      const { excludes } = marks[i];
+      if (excludes) {
         // We must filter marks from the excludes list that are not defined
         // in the schema for the current editor.
-        marks[i].excludes = marks[i].excludes
+        marks[i].excludes = excludes
           .split(" ")
           .filter((m: string) => Object.keys(marks).includes(m))
           .join(" ");
@@ -82,8 +129,8 @@ export default class ExtensionManager {
     const nodes = this.extensions
       .filter((extension) => extension.type === "node")
       .reduce(
-        (nodes, extension: Node) => ({
-          ...nodes,
+        (memo, extension: Node) => ({
+          ...memo,
           [extension.name]: extension.toMarkdown,
         }),
         {}
@@ -92,8 +139,8 @@ export default class ExtensionManager {
     const marks = this.extensions
       .filter((extension) => extension.type === "mark")
       .reduce(
-        (marks, extension: Mark) => ({
-          ...marks,
+        (memo, extension: Mark) => ({
+          ...memo,
           [extension.name]: extension.toMarkdown,
         }),
         {}
@@ -108,7 +155,7 @@ export default class ExtensionManager {
     plugins,
   }: {
     schema: Schema;
-    rules?: Record<string, any>;
+    rules?: Options;
     plugins?: PluginSimple[];
   }): MarkdownParser {
     const tokens = this.extensions
@@ -127,7 +174,11 @@ export default class ExtensionManager {
         };
       }, {});
 
-    return new MarkdownParser(schema, makeRules({ rules, plugins }), tokens);
+    return new MarkdownParser(
+      schema,
+      makeRules({ rules, schema, plugins }),
+      tokens
+    );
   }
 
   get plugins() {
@@ -154,6 +205,7 @@ export default class ExtensionManager {
       .map((extension) =>
         ["node", "mark"].includes(extension.type)
           ? extension.keys({
+              // @ts-expect-error TODO
               type: schema[`${extension.type}s`][extension.name],
               schema,
             })
@@ -174,6 +226,7 @@ export default class ExtensionManager {
       .filter((extension) => extension.inputRules)
       .map((extension) =>
         extension.inputRules({
+          // @ts-expect-error TODO
           type: schema[`${extension.type}s`][extension.name],
           schema,
         })
@@ -190,13 +243,14 @@ export default class ExtensionManager {
       .filter((extension) => extension.commands)
       .reduce((allCommands, extension) => {
         const { name, type } = extension;
-        const commands = {};
+        const commands: Record<string, CommandFactory> = {};
 
         // @ts-expect-error FIXME
         const value = extension.commands({
           schema,
           ...(["node", "mark"].includes(type)
             ? {
+                // @ts-expect-error TODO
                 type: schema[`${type}s`][name],
               }
             : {}),
@@ -207,22 +261,22 @@ export default class ExtensionManager {
           attrs: Record<string, Primitive>
         ) => {
           if (!view.editable && !extension.allowInReadOnly) {
-            return false;
+            return;
           }
           if (extension.focusAfterExecution) {
             view.focus();
           }
-          return callback(attrs)(view.state, view.dispatch, view);
+          return callback(attrs)?.(view.state, view.dispatch, view);
         };
 
         const handle = (_name: string, _value: CommandFactory) => {
-          if (Array.isArray(_value)) {
-            commands[_name] = (attrs: Record<string, Primitive>) =>
-              _value.forEach((callback) => apply(callback, attrs));
-          } else if (typeof _value === "function") {
-            commands[_name] = (attrs: Record<string, Primitive>) =>
-              apply(_value, attrs);
-          }
+          const values: CommandFactory[] = Array.isArray(_value)
+            ? _value
+            : [_value];
+
+          // @ts-expect-error FIXME
+          commands[_name] = (attrs: Record<string, Primitive>) =>
+            values.forEach((callback) => apply(callback, attrs));
         };
 
         if (typeof value === "object") {

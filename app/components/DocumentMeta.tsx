@@ -1,12 +1,12 @@
-import { LocationDescriptor } from "history";
+import type { LocationDescriptor } from "history";
 import { observer } from "mobx-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import styled from "styled-components";
 import { s, ellipsis } from "@shared/styles";
-import Document from "~/models/Document";
-import Revision from "~/models/Revision";
+import type Document from "~/models/Document";
+import type Revision from "~/models/Revision";
 import DocumentBreadcrumb from "~/components/DocumentBreadcrumb";
 import DocumentTasks from "~/components/DocumentTasks";
 import Flex from "~/components/Flex";
@@ -52,7 +52,6 @@ const DocumentMeta: React.FC<Props> = ({
     isDraft,
     lastViewedAt,
     isTasks,
-    isTemplate,
   } = document;
 
   // Prevent meta information from displaying if updatedBy is not available.
@@ -95,6 +94,21 @@ const DocumentMeta: React.FC<Props> = ({
         <Time dateTime={archivedAt} addSuffix />
       </span>
     );
+  } else if (
+    document.sourceMetadata &&
+    document.sourceMetadata?.importedAt &&
+    document.sourceMetadata.importedAt >= updatedAt
+  ) {
+    content = (
+      <span>
+        {document.sourceMetadata.createdByName
+          ? t("{{ userName }} updated", {
+              userName: document.sourceMetadata.createdByName,
+            })
+          : t("Imported")}{" "}
+        <Time dateTime={createdAt} addSuffix />
+      </span>
+    );
   } else if (createdAt === updatedAt) {
     content = (
       <span>
@@ -113,15 +127,6 @@ const DocumentMeta: React.FC<Props> = ({
         <Time dateTime={publishedAt} addSuffix />
       </span>
     );
-  } else if (isDraft) {
-    content = (
-      <span>
-        {lastUpdatedByCurrentUser
-          ? t("You saved")
-          : t("{{ userName }} saved", { userName })}{" "}
-        <Time dateTime={updatedAt} addSuffix />
-      </span>
-    );
   } else {
     content = (
       <Modified highlight={modifiedSinceViewed && !lastUpdatedByCurrentUser}>
@@ -134,9 +139,9 @@ const DocumentMeta: React.FC<Props> = ({
   }
 
   const nestedDocumentsCount = collection
-    ? collection.getDocumentChildren(document.id).length
+    ? collection.getChildrenForDocument(document.id).length
     : 0;
-  const canShowProgressBar = isTasks && !isTemplate;
+  const canShowProgressBar = isTasks;
 
   const timeSinceNow = () => {
     if (isDraft || !showLastViewed) {
@@ -149,20 +154,22 @@ const DocumentMeta: React.FC<Props> = ({
       }
       return (
         <Viewed>
-          •&nbsp;<Modified highlight>{t("Never viewed")}</Modified>
+          <Separator />
+          <Modified highlight>{t("Never viewed")}</Modified>
         </Viewed>
       );
     }
 
     return (
       <Viewed>
-        •&nbsp;{t("Viewed")} <Time dateTime={lastViewedAt} addSuffix shorten />
+        <Separator />
+        {t("Viewed")} <Time dateTime={lastViewedAt} addSuffix shorten />
       </Viewed>
     );
   };
 
   return (
-    <Container align="center" rtl={document.dir === "rtl"} {...rest} dir="ltr">
+    <Container align="center" $rtl={document.dir === "rtl"} {...rest} dir="ltr">
       {to ? (
         <Link to={to} replace={replace}>
           {content}
@@ -173,23 +180,24 @@ const DocumentMeta: React.FC<Props> = ({
       {showCollection && collection && (
         <span>
           &nbsp;{t("in")}&nbsp;
-          <strong>
-            <DocumentBreadcrumb document={document} onlyText />
-          </strong>
+          <Strong>
+            <DocumentBreadcrumb document={document} maxDepth={1} onlyText />
+          </Strong>
         </span>
       )}
       {showParentDocuments && nestedDocumentsCount > 0 && (
         <span>
-          &nbsp;• {nestedDocumentsCount}{" "}
+          <Separator />
+          {nestedDocumentsCount}{" "}
           {t("nested document", {
             count: nestedDocumentsCount,
           })}
         </span>
       )}
-      &nbsp;{timeSinceNow()}
+      {timeSinceNow()}
       {canShowProgressBar && (
         <>
-          &nbsp;•&nbsp;
+          <Separator />
           <DocumentTasks document={document} />
         </>
       )}
@@ -198,8 +206,20 @@ const DocumentMeta: React.FC<Props> = ({
   );
 };
 
-const Container = styled(Flex)<{ rtl?: boolean }>`
-  justify-content: ${(props) => (props.rtl ? "flex-end" : "flex-start")};
+export const Separator = styled.span`
+  padding: 0 0.4em;
+
+  &::after {
+    content: "•";
+  }
+`;
+
+const Strong = styled.strong`
+  font-weight: 550;
+`;
+
+const Container = styled(Flex)<{ $rtl?: boolean }>`
+  justify-content: ${(props) => (props.$rtl ? "flex-end" : "flex-start")};
   color: ${s("textTertiary")};
   font-size: 13px;
   white-space: nowrap;

@@ -1,3 +1,4 @@
+import * as RadixSwitch from "@radix-ui/react-switch";
 import * as React from "react";
 import styled from "styled-components";
 import { s } from "@shared/styles";
@@ -5,53 +6,92 @@ import { LabelText } from "~/components/Input";
 import Text from "~/components/Text";
 import { undraggableOnDesktop } from "~/styles";
 
-type Props = React.HTMLAttributes<HTMLInputElement> & {
+interface Props extends Omit<
+  React.ComponentProps<typeof RadixSwitch.Root>,
+  "checked" | "onCheckedChange" | "onChange"
+> {
+  /** Width of the switch. Defaults to 32. */
   width?: number;
+  /** Height of the switch. Defaults to 18 */
   height?: number;
+  /** An optional label for the switch */
   label?: string;
-  name?: string;
+  /** Whether the label should be positioned on left or right. Defaults to right */
+  labelPosition?: "left" | "right";
+  /** An optional note to display below the switch */
   note?: React.ReactNode;
+  /** Name of the input */
+  name?: string;
+  /** Whether the switch is checked */
   checked?: boolean;
+  /** Whether the switch is disabled */
   disabled?: boolean;
-  onChange: (event: React.ChangeEvent<HTMLInputElement>) => unknown;
-  id?: string;
-};
+  /** Callback when the switch state changes */
+  onChange?: (checked: boolean) => void;
+  inForm?: boolean;
+}
 
-function Switch({
-  width = 32,
-  height = 18,
-  label,
-  disabled,
-  className,
-  note,
-  ...props
-}: Props) {
+function Switch(
+  {
+    width = 32,
+    height = 18,
+    labelPosition = "left",
+    inForm = true,
+    label,
+    disabled,
+    className,
+    note,
+    checked,
+    onChange,
+    ...props
+  }: Props,
+  ref: React.Ref<React.ElementRef<typeof RadixSwitch.Root>>
+) {
+  const handleCheckedChange = React.useCallback(
+    (checkedState: boolean) => {
+      if (onChange) {
+        onChange(checkedState);
+      }
+    },
+    [onChange]
+  );
+
   const component = (
-    <Input
+    <StyledSwitchRoot
+      ref={ref}
+      checked={checked}
+      onCheckedChange={handleCheckedChange}
+      disabled={disabled}
       width={width}
       height={height}
       className={label ? undefined : className}
+      {...props}
     >
-      <HiddenInput
-        type="checkbox"
-        width={width}
-        height={height}
-        disabled={disabled}
-        {...props}
-      />
-      <Slider width={width} height={height} />
-    </Input>
+      <StyledSwitchThumb width={width} height={height} />
+    </StyledSwitchRoot>
   );
 
   if (label) {
     return (
-      <Wrapper>
-        <Label disabled={disabled} htmlFor={props.id} className={className}>
+      <Wrapper $inForm={inForm}>
+        <Label
+          disabled={disabled}
+          htmlFor={props.id}
+          className={className}
+          $labelPosition={labelPosition}
+        >
           {component}
           <InlineLabelText>{label}</InlineLabelText>
         </Label>
         {note && (
-          <Text type="secondary" size="small">
+          <Text
+            type="secondary"
+            size="small"
+            style={{
+              paddingRight: labelPosition === "left" ? width : 0,
+              paddingLeft: labelPosition === "right" ? width : 0,
+            }}
+          >
             {note}
           </Text>
         )}
@@ -62,82 +102,76 @@ function Switch({
   return component;
 }
 
-const Wrapper = styled.div`
-  padding-bottom: 8px;
+const Wrapper = styled.div<{ $inForm?: boolean }>`
+  padding-bottom: ${(props) => (props.$inForm ? 8 : 0)}px;
   ${undraggableOnDesktop()}
 `;
 
 const InlineLabelText = styled(LabelText)`
   padding-bottom: 0;
+  width: 100%;
 `;
 
-const Label = styled.label<{ disabled?: boolean }>`
+const Label = styled.label<{
+  disabled?: boolean;
+  $labelPosition: "left" | "right";
+}>`
   display: flex;
   align-items: center;
   user-select: none;
+  gap: 8px;
+
+  ${(props) =>
+    props.$labelPosition === "left" ? `flex-direction: row-reverse;` : ""}
   ${(props) => (props.disabled ? `opacity: 0.75;` : "")}
 `;
 
-const Input = styled.label<{ width: number; height: number }>`
+const StyledSwitchRoot = styled(RadixSwitch.Root)<{
+  width: number;
+  height: number;
+}>`
   position: relative;
-  display: inline-block;
   width: ${(props) => props.width}px;
   height: ${(props) => props.height}px;
+  background-color: ${(props) => props.theme.slate};
+  border-radius: ${(props) => props.height}px;
+  border: none;
+  cursor: var(--pointer);
+  transition: background-color 0.4s;
+  padding: 0 4px;
   flex-shrink: 0;
 
-  &:not(:last-child) {
-    margin-right: 8px;
-  }
-`;
-
-const Slider = styled.span<{ width: number; height: number }>`
-  position: absolute;
-  cursor: var(--pointer);
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: ${(props) => props.theme.slate};
-  -webkit-transition: 0.4s;
-  transition: 0.4s;
-  border-radius: ${(props) => props.height}px;
-
-  &:before {
-    position: absolute;
-    content: "";
-    height: ${(props) => props.height - 8}px;
-    width: ${(props) => props.height - 8}px;
-    left: 4px;
-    bottom: 4px;
-    background-color: white;
-    border-radius: 50%;
-    -webkit-transition: 0.4s;
-    transition: 0.4s;
-  }
-`;
-
-const HiddenInput = styled.input<{ width: number; height: number }>`
-  opacity: 0;
-  width: 0;
-  height: 0;
-  visibility: hidden;
-
-  &:disabled + ${Slider} {
-    opacity: 0.75;
-    cursor: default;
+  &:focus {
+    box-shadow: 0 0 1px ${s("accent")};
+    outline: none;
   }
 
-  &:checked + ${Slider} {
+  &[data-state="checked"] {
     background-color: ${s("accent")};
   }
 
-  &:focus + ${Slider} {
-    box-shadow: 0 0 1px ${s("accent")};
+  &:disabled {
+    opacity: 0.75;
+    cursor: default;
   }
+`;
 
-  &:checked + ${Slider}:before {
+const StyledSwitchThumb = styled(RadixSwitch.Thumb)<{
+  width: number;
+  height: number;
+}>`
+  display: block;
+  width: ${(props) => props.height - 8}px;
+  height: ${(props) => props.height - 8}px;
+  background-color: white;
+  border-radius: 50%;
+  transition: transform 0.4s;
+  transform: translateX(0);
+  will-change: transform;
+
+  &[data-state="checked"] {
     transform: translateX(${(props) => props.width - props.height}px);
   }
 `;
 
-export default Switch;
+export default React.forwardRef(Switch);

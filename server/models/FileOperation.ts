@@ -1,4 +1,9 @@
-import { Op, WhereOptions } from "sequelize";
+import type {
+  InferAttributes,
+  InferCreationAttributes,
+  WhereOptions,
+} from "sequelize";
+import { Op } from "sequelize";
 import {
   ForeignKey,
   DefaultScope,
@@ -8,17 +13,23 @@ import {
   Table,
   DataType,
 } from "sequelize-typescript";
-import {
-  FileOperationFormat,
-  FileOperationState,
-  FileOperationType,
-} from "@shared/types";
+import { v4 as uuidv4 } from "uuid";
+import type { CollectionPermission, FileOperationFormat } from "@shared/types";
+import { FileOperationState, FileOperationType } from "@shared/types";
 import FileStorage from "@server/storage/files";
 import Collection from "./Collection";
+import Document from "./Document";
 import Team from "./Team";
 import User from "./User";
-import IdModel from "./base/IdModel";
+import ParanoidModel from "./base/ParanoidModel";
 import Fix from "./decorators/Fix";
+import { Buckets } from "./helpers/AttachmentHelper";
+
+export type FileOperationOptions = {
+  includeAttachments?: boolean;
+  includePrivate?: boolean;
+  permission?: CollectionPermission | null;
+};
 
 @DefaultScope(() => ({
   include: [
@@ -30,13 +41,26 @@ import Fix from "./decorators/Fix";
     {
       model: Collection,
       as: "collection",
+      required: false,
+      paranoid: false,
+    },
+    {
+      model: Document.unscoped(),
+      as: "document",
+      attributes: ["id", "title"],
+      required: false,
       paranoid: false,
     },
   ],
 }))
 @Table({ tableName: "file_operations", modelName: "file_operation" })
 @Fix
-class FileOperation extends IdModel {
+class FileOperation extends ParanoidModel<
+  InferAttributes<FileOperation>,
+  Partial<InferCreationAttributes<FileOperation>>
+> {
+  static eventNamespace = "fileOperations";
+
   @Column(DataType.ENUM(...Object.values(FileOperationType)))
   type: FileOperationType;
 
@@ -50,7 +74,7 @@ class FileOperation extends IdModel {
   key: string;
 
   @Column
-  url: string;
+  url?: string | null;
 
   @Column
   error: string | null;
@@ -58,8 +82,11 @@ class FileOperation extends IdModel {
   @Column(DataType.BIGINT)
   size: number;
 
-  @Column(DataType.BOOLEAN)
-  includeAttachments: boolean;
+  /**
+   * Additional configuration options for the file operation.
+   */
+  @Column(DataType.JSON)
+  options: FileOperationOptions | null;
 
   /**
    * Mark the current file operation as expired and remove the file from storage.
@@ -73,7 +100,7 @@ class FileOperation extends IdModel {
         throw err;
       }
     }
-    await this.save();
+    return this.save();
   };
 
   /**
@@ -81,6 +108,13 @@ class FileOperation extends IdModel {
    */
   get stream() {
     return FileStorage.getFileStream(this.key);
+  }
+
+  /**
+   * The file operation contents as a handle which contains a path and cleanup function.
+   */
+  get handle() {
+    return FileStorage.getFileHandle(this.key);
   }
 
   // hooks
@@ -107,11 +141,18 @@ class FileOperation extends IdModel {
   teamId: string;
 
   @BelongsTo(() => Collection, "collectionId")
-  collection: Collection;
+  collection: Collection | null;
 
   @ForeignKey(() => Collection)
   @Column(DataType.UUID)
-  collectionId: string;
+  collectionId?: string | null;
+
+  @BelongsTo(() => Document, "documentId")
+  document: Document | null;
+
+  @ForeignKey(() => Document)
+  @Column(DataType.UUID)
+  documentId?: string | null;
 
   /**
    * Count the number of export file operations for a given team after a point
@@ -135,6 +176,20 @@ class FileOperation extends IdModel {
         ...where,
       },
     });
+  }
+
+  static getExportKey({
+    name,
+    teamId,
+    format,
+  }: {
+    name: string;
+    teamId: string;
+    format: FileOperationFormat;
+  }) {
+    return `${
+      Buckets.uploads
+    }/${teamId}/${uuidv4()}/${name}-export.${format.replace(/outline-/, "")}.zip`;
   }
 }
 

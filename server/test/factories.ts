@@ -1,20 +1,33 @@
+import { faker } from "@faker-js/faker";
 import isNil from "lodash/isNil";
 import isNull from "lodash/isNull";
-import { v4 as uuidv4 } from "uuid";
+import { Node } from "prosemirror-model";
+import type { InferCreationAttributes } from "sequelize";
+import type { DeepPartial } from "utility-types";
+import { randomUUID } from "node:crypto";
+import { randomString } from "@shared/random";
+import type { ProsemirrorData, ReactionSummary } from "@shared/types";
 import {
   CollectionPermission,
   FileOperationState,
   FileOperationType,
+  ImportState,
   IntegrationService,
   IntegrationType,
   NotificationEventType,
+  SubscriptionType,
+  UserRole,
 } from "@shared/types";
+import { parser, schema } from "@server/editor";
+import type { AuthenticationProvider } from "@server/models";
 import {
   Share,
   Team,
   User,
+  UserPasskey,
   Event,
   Document,
+  Emoji,
   Star,
   Collection,
   Group,
@@ -22,7 +35,6 @@ import {
   Attachment,
   IntegrationAuthentication,
   Integration,
-  AuthenticationProvider,
   FileOperation,
   WebhookSubscription,
   WebhookDelivery,
@@ -31,9 +43,18 @@ import {
   Notification,
   SearchQuery,
   Pin,
+  Comment,
+  Import,
+  OAuthAuthorizationCode,
+  OAuthClient,
+  OAuthAuthentication,
+  Relationship,
+  Template,
 } from "@server/models";
-
-let count = 1;
+import { RelationshipType } from "@server/models/Relationship";
+import AttachmentHelper from "@server/models/helpers/AttachmentHelper";
+import { hash } from "@server/utils/crypto";
+import { OAuthInterface } from "@server/utils/oauth/OAuthInterface";
 
 export async function buildApiKey(overrides: Partial<ApiKey> = {}) {
   if (!overrides.userId) {
@@ -42,7 +63,7 @@ export async function buildApiKey(overrides: Partial<ApiKey> = {}) {
   }
 
   return ApiKey.create({
-    name: "My API Key",
+    name: faker.lorem.words(3),
     ...overrides,
   });
 }
@@ -60,7 +81,7 @@ export async function buildShare(overrides: Partial<Share> = {}) {
     overrides.userId = user.id;
   }
 
-  if (!overrides.documentId) {
+  if (!overrides.documentId && !overrides.collectionId) {
     const document = await buildDocument({
       createdById: overrides.userId,
       teamId: overrides.teamId,
@@ -78,7 +99,9 @@ export async function buildStar(overrides: Partial<Star> = {}) {
   let user;
 
   if (overrides.userId) {
-    user = await User.findByPk(overrides.userId);
+    user = await User.findByPk(overrides.userId, {
+      rejectOnEmpty: true,
+    });
   } else {
     user = await buildUser();
     overrides.userId = user.id;
@@ -87,7 +110,7 @@ export async function buildStar(overrides: Partial<Star> = {}) {
   if (!overrides.documentId) {
     const document = await buildDocument({
       createdById: overrides.userId,
-      teamId: user?.teamId,
+      teamId: user.teamId,
     });
     overrides.documentId = document.id;
   }
@@ -102,40 +125,45 @@ export async function buildSubscription(overrides: Partial<Subscription> = {}) {
   let user;
 
   if (overrides.userId) {
-    user = await User.findByPk(overrides.userId);
+    user = await User.findByPk(overrides.userId, {
+      rejectOnEmpty: true,
+    });
   } else {
     user = await buildUser();
     overrides.userId = user.id;
   }
 
-  if (!overrides.documentId) {
+  if (!overrides.documentId && !overrides.collectionId) {
     const document = await buildDocument({
       createdById: overrides.userId,
-      teamId: user?.teamId,
+      teamId: user.teamId,
     });
     overrides.documentId = document.id;
   }
 
   return Subscription.create({
-    enabled: true,
-    event: "documents.update",
+    event: SubscriptionType.Document,
     ...overrides,
   });
 }
 
-export function buildTeam(overrides: Record<string, any> = {}) {
-  count++;
+export function buildTeam(
+  overrides: Omit<Partial<Team>, "authenticationProviders"> & {
+    authenticationProviders?: Partial<AuthenticationProvider>[];
+  } = {}
+) {
   return Team.create(
     {
-      name: `Team ${count}`,
+      name: faker.company.name(),
+      passkeysEnabled: false,
       authenticationProviders: [
         {
           name: "slack",
-          providerId: uuidv4(),
+          providerId: randomString(32),
         },
       ],
       ...overrides,
-    },
+    } as Partial<InferCreationAttributes<Team>>,
     {
       include: "authenticationProviders",
     }
@@ -156,12 +184,12 @@ export async function buildGuestUser(overrides: Partial<User> = {}) {
     overrides.teamId = team.id;
   }
 
-  count++;
   return User.create({
-    email: `user${count}@example.com`,
-    name: `User ${count}`,
+    email: faker.internet.email().toLowerCase(),
+    name: faker.person.fullName(),
     createdAt: new Date("2018-01-01T00:00:00.000Z"),
     lastActiveAt: new Date("2018-01-01T00:00:00.000Z"),
+    role: UserRole.Guest,
     ...overrides,
   });
 }
@@ -173,30 +201,31 @@ export async function buildUser(overrides: Partial<User> = {}) {
     team = await buildTeam();
     overrides.teamId = team.id;
   } else {
-    team = await Team.findByPk(overrides.teamId);
+    team = await Team.findByPk(overrides.teamId, {
+      include: "authenticationProviders",
+      rejectOnEmpty: true,
+      paranoid: false,
+    });
   }
 
-  const authenticationProvider = await AuthenticationProvider.findOne({
-    where: {
-      teamId: overrides.teamId,
-    },
-  });
-  count++;
+  const authenticationProvider = team.authenticationProviders[0];
   const user = await User.create(
     {
-      email: `user${count}@example.com`,
-      name: `User ${count}`,
+      email: faker.internet.email().toLowerCase(),
+      name: faker.person.fullName(),
       createdAt: new Date("2018-01-01T00:00:00.000Z"),
       updatedAt: new Date("2018-01-02T00:00:00.000Z"),
       lastActiveAt: new Date("2018-01-03T00:00:00.000Z"),
-      authentications: [
-        {
-          authenticationProviderId: authenticationProvider!.id,
-          providerId: uuidv4(),
-        },
-      ],
+      authentications: authenticationProvider
+        ? [
+            {
+              authenticationProviderId: authenticationProvider.id,
+              providerId: randomString(32),
+            },
+          ]
+        : [],
       ...overrides,
-    },
+    } as Partial<InferCreationAttributes<User>>,
     {
       include: "authentications",
     }
@@ -209,11 +238,11 @@ export async function buildUser(overrides: Partial<User> = {}) {
 }
 
 export async function buildAdmin(overrides: Partial<User> = {}) {
-  return buildUser({ ...overrides, isAdmin: true });
+  return buildUser({ ...overrides, role: UserRole.Admin });
 }
 
 export async function buildViewer(overrides: Partial<User> = {}) {
-  return buildUser({ ...overrides, isViewer: true });
+  return buildUser({ ...overrides, role: UserRole.Viewer });
 }
 
 export async function buildInvite(overrides: Partial<User> = {}) {
@@ -224,10 +253,9 @@ export async function buildInvite(overrides: Partial<User> = {}) {
 
   const actor = await buildUser({ teamId: overrides.teamId });
 
-  count++;
   return User.create({
-    email: `user${count}@example.com`,
-    name: `User ${count}`,
+    email: faker.internet.email().toLowerCase(),
+    name: faker.person.fullName(),
     createdAt: new Date("2018-01-01T00:00:00.000Z"),
     invitedById: actor.id,
     authentications: [],
@@ -249,7 +277,7 @@ export async function buildIntegration(overrides: Partial<Integration> = {}) {
     service: IntegrationService.Slack,
     userId: user.id,
     teamId: user.teamId,
-    token: "fake-access-token",
+    token: randomString(32),
     scopes: ["example", "scopes", "here"],
   });
   return Integration.create({
@@ -257,7 +285,7 @@ export async function buildIntegration(overrides: Partial<Integration> = {}) {
     type: IntegrationType.Post,
     events: ["documents.update", "documents.publish"],
     settings: {
-      serviceTeamId: "slack_team_id",
+      serviceTeamId: randomUUID(),
     },
     authenticationId: authentication.id,
     ...overrides,
@@ -279,12 +307,18 @@ export async function buildCollection(
     overrides.userId = user.id;
   }
 
-  count++;
-  return Collection.create({
-    name: `Test Collection ${count}`,
-    description: "Test collection description",
+  if (overrides.archivedAt && !overrides.archivedById) {
+    overrides.archivedById = overrides.userId;
+  }
+
+  if (overrides.permission === undefined) {
+    overrides.permission = CollectionPermission.ReadWrite;
+  }
+
+  return Collection.scope("withDocumentStructure").create({
+    name: faker.lorem.words(2),
+    description: faker.lorem.words(4),
     createdById: overrides.userId,
-    permission: CollectionPermission.ReadWrite,
     ...overrides,
   });
 }
@@ -304,9 +338,8 @@ export async function buildGroup(
     overrides.userId = user.id;
   }
 
-  count++;
   return Group.create({
-    name: `Test Group ${count}`,
+    name: faker.lorem.words(2),
     createdById: overrides.userId,
     ...overrides,
   });
@@ -327,7 +360,6 @@ export async function buildGroupUser(
     overrides.userId = user.id;
   }
 
-  count++;
   return GroupUser.create({
     createdById: overrides.userId,
     ...overrides,
@@ -337,7 +369,7 @@ export async function buildGroupUser(
 export async function buildDraftDocument(
   overrides: Partial<Document> & { userId?: string } = {}
 ) {
-  return buildDocument({ ...overrides, collectionId: null });
+  return buildDocument({ ...overrides, publishedAt: null });
 }
 
 export async function buildDocument(
@@ -361,29 +393,132 @@ export async function buildDocument(
     overrides.userId = user.id;
   }
 
+  let collection;
   if (overrides.collectionId === undefined) {
-    const collection = await buildCollection({
+    collection = await buildCollection({
       teamId: overrides.teamId,
       userId: overrides.userId,
     });
     overrides.collectionId = collection.id;
   }
 
-  count++;
-  return Document.create(
+  const text = overrides.text ?? "This is the text in an example document";
+  const document = await Document.create(
     {
-      title: `Document ${count}`,
-      text: "This is the text in an example document",
+      title: faker.lorem.words(4),
+      content: overrides.content ?? parser.parse(text)?.toJSON(),
+      text,
       publishedAt: isNull(overrides.collectionId) ? null : new Date(),
       lastModifiedById: overrides.userId,
       createdById: overrides.userId,
-      editorVersion: 2,
+      editorVersion: "12.0.0",
       ...overrides,
     },
     {
       silent: overrides.createdAt || overrides.updatedAt ? true : false,
     }
   );
+
+  if (overrides.collectionId && overrides.publishedAt !== null) {
+    collection = collection
+      ? await Collection.findByPk(overrides.collectionId, {
+          includeDocumentStructure: true,
+        })
+      : undefined;
+
+    await collection?.addDocumentToStructure(document, 0);
+  }
+
+  return document;
+}
+
+export async function buildTemplate(
+  overrides: Omit<Partial<Template>, "collectionId"> & {
+    userId?: string;
+    text?: string;
+    collectionId?: string | null;
+  } = {}
+) {
+  if (!overrides.teamId) {
+    const team = await buildTeam();
+    overrides.teamId = team.id;
+  }
+
+  if (!overrides.userId) {
+    const user = await buildUser({
+      teamId: overrides.teamId,
+    });
+    overrides.userId = user.id;
+  }
+
+  let collection;
+  if (overrides.collectionId === undefined) {
+    collection = await buildCollection({
+      teamId: overrides.teamId,
+      userId: overrides.userId,
+    });
+    overrides.collectionId = collection.id;
+  }
+
+  const text = overrides.text ?? "This is the text in an example template";
+  const template = await Template.create(
+    {
+      title: faker.lorem.words(4),
+      content: overrides.content ?? parser.parse(text)?.toJSON(),
+      lastModifiedById: overrides.userId,
+      createdById: overrides.userId,
+      editorVersion: "12.0.0",
+      ...overrides,
+    },
+    {
+      silent: overrides.createdAt || overrides.updatedAt ? true : false,
+    }
+  );
+
+  return template;
+}
+
+export async function buildComment(overrides: {
+  userId: string;
+  documentId: string;
+  parentCommentId?: string;
+  resolvedById?: string;
+  reactions?: ReactionSummary[];
+}) {
+  const comment = await Comment.create({
+    resolvedById: overrides.resolvedById,
+    parentCommentId: overrides.parentCommentId,
+    documentId: overrides.documentId,
+    data: {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              content: [],
+              type: "text",
+              text: "test",
+            },
+          ],
+        },
+      ],
+    },
+    createdById: overrides.userId,
+    reactions: overrides.reactions,
+  });
+
+  return comment;
+}
+
+export async function buildResolvedComment(
+  user: User,
+  overrides: Parameters<typeof buildComment>[0]
+) {
+  const comment = await buildComment(overrides);
+  comment.resolve(user);
+  await comment.save();
+  return comment;
 }
 
 export async function buildFileOperation(
@@ -412,7 +547,47 @@ export async function buildFileOperation(
   });
 }
 
-export async function buildAttachment(overrides: Partial<Attachment> = {}) {
+// oxlint-disable-next-line @typescript-eslint/no-explicit-any
+export async function buildImport(overrides: Partial<Import<any>> = {}) {
+  if (!overrides.teamId) {
+    const team = await buildTeam();
+    overrides.teamId = team.id;
+  }
+
+  if (!overrides.createdById) {
+    const user = await buildAdmin({
+      teamId: overrides.teamId,
+    });
+    overrides.createdById = user.id;
+  }
+
+  if (!overrides.integrationId) {
+    const integration = await buildIntegration({
+      service: IntegrationService.Notion,
+      userId: overrides.createdById,
+      teamId: overrides.teamId,
+    });
+    overrides.integrationId = integration.id;
+  }
+
+  // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+  return Import.create<Import<any>>({
+    name: "testImport",
+    service: IntegrationService.Notion,
+    state: ImportState.Created,
+    input: [
+      {
+        permission: CollectionPermission.Read,
+      },
+    ],
+    ...overrides,
+  });
+}
+
+export async function buildAttachment(
+  overrides: Partial<Attachment> = {},
+  fileName?: string
+) {
   if (!overrides.teamId) {
     const team = await buildTeam();
     overrides.teamId = team.id;
@@ -433,14 +608,51 @@ export async function buildAttachment(overrides: Partial<Attachment> = {}) {
     overrides.documentId = document.id;
   }
 
-  count++;
+  const id = randomUUID();
+  const acl = overrides.acl || "public-read";
+  const name = fileName || faker.system.fileName();
   return Attachment.create({
-    key: `uploads/key/to/file ${count}.png`,
+    id,
+    key: AttachmentHelper.getKey({ id, name, userId: overrides.userId }),
     contentType: "image/png",
     size: 100,
-    acl: "public-read",
+    acl,
+    name,
     createdAt: new Date("2018-01-02T00:00:00.000Z"),
     updatedAt: new Date("2018-01-02T00:00:00.000Z"),
+    ...overrides,
+  });
+}
+
+export async function buildEmoji(
+  overrides: Partial<Emoji> = {}
+): Promise<Emoji> {
+  if (!overrides.teamId) {
+    const team = await buildTeam();
+    overrides.teamId = team.id;
+  }
+
+  if (!overrides.createdById) {
+    const user = await buildUser({
+      teamId: overrides.teamId,
+    });
+    overrides.createdById = user.id;
+  }
+
+  if (!overrides.attachmentId) {
+    const attachment = await buildAttachment({
+      teamId: overrides.teamId,
+      userId: overrides.createdById,
+      contentType: "image/png",
+    });
+    overrides.attachmentId = attachment.id;
+  }
+
+  return Emoji.create({
+    name: faker.word
+      .adjective()
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, "_"),
     ...overrides,
   });
 }
@@ -573,4 +785,186 @@ export async function buildPin(overrides: Partial<Pin> = {}): Promise<Pin> {
   }
 
   return Pin.create(overrides);
+}
+
+export async function buildOAuthClient(overrides: Partial<OAuthClient> = {}) {
+  if (!overrides.teamId) {
+    const team = await buildTeam();
+    overrides.teamId = team.id;
+  }
+
+  if (!overrides.createdById && overrides.createdById !== null) {
+    const user = await buildUser({
+      teamId: overrides.teamId,
+    });
+    overrides.createdById = user.id;
+  }
+
+  return OAuthClient.create(
+    {
+      name: faker.company.name(),
+      description: faker.lorem.paragraph(),
+      redirectUris: ["https://example.com/oauth/callback"],
+      published: true,
+      ...(overrides.createdAt && !overrides.updatedAt
+        ? { updatedAt: overrides.createdAt }
+        : {}),
+      ...overrides,
+    },
+    {
+      silent: overrides.createdAt || overrides.updatedAt ? true : false,
+    }
+  );
+}
+
+export async function buildOAuthAuthorizationCode(
+  overrides: Partial<OAuthAuthorizationCode> = {}
+) {
+  if (!overrides.userId) {
+    const user = await buildUser();
+    overrides.userId = user.id;
+  }
+
+  if (!overrides.expiresAt) {
+    overrides.expiresAt = new Date();
+  }
+
+  const code = randomString(32);
+
+  let client;
+  if (overrides.oauthClientId) {
+    client = await OAuthClient.findByPk(overrides.oauthClientId, {
+      rejectOnEmpty: true,
+    });
+  } else {
+    client = await buildOAuthClient();
+    overrides.oauthClientId = client.id;
+  }
+
+  return OAuthAuthorizationCode.create({
+    authorizationCodeHash: hash(code),
+    scope: ["read"],
+    redirectUri: client.redirectUris[0],
+    ...overrides,
+  });
+}
+
+export async function buildOAuthAuthentication({
+  oauthClientId,
+  user,
+  scope,
+  grantId,
+}: {
+  oauthClientId?: string;
+  user: User;
+  scope: string[];
+  grantId?: string;
+}) {
+  const oauthClient = oauthClientId
+    ? await OAuthClient.findByPk(oauthClientId, { rejectOnEmpty: true })
+    : await buildOAuthClient({
+        teamId: user.teamId,
+      });
+  const oauthInterfaceClient = {
+    id: oauthClient.clientId,
+    grants: ["authorization_code"],
+    redirectUris: ["https://example.com/oauth/callback"],
+  };
+  const oauthInterfaceUser = {
+    id: user.id,
+  };
+
+  const accessToken = await OAuthInterface.generateAccessToken(
+    oauthInterfaceClient,
+    oauthInterfaceUser,
+    scope
+  );
+  const refreshToken = await OAuthInterface.generateRefreshToken(
+    oauthInterfaceClient,
+    oauthInterfaceUser,
+    scope
+  );
+  return OAuthAuthentication.create({
+    userId: user.id,
+    oauthClientId: oauthClient.id,
+    accessToken,
+    accessTokenHash: hash(accessToken),
+    accessTokenExpiresAt: new Date(Date.now() + 1000 * 60 * 60),
+    refreshToken,
+    refreshTokenHash: hash(refreshToken),
+    refreshTokenExpiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+    scope,
+    grantId,
+  });
+}
+
+export function buildProseMirrorDoc(content: DeepPartial<ProsemirrorData>[]) {
+  return Node.fromJSON(schema, {
+    type: "doc",
+    content,
+  });
+}
+
+export function buildCommentMark(overrides: {
+  id?: string;
+  userId?: string;
+  draft?: boolean;
+  resolved?: boolean;
+}) {
+  if (!overrides.id) {
+    overrides.id = randomString(10);
+  }
+
+  if (!overrides.userId) {
+    overrides.userId = randomString(10);
+  }
+
+  return {
+    type: "comment",
+    attrs: overrides,
+  };
+}
+
+export async function buildRelationship(overrides: Partial<Relationship> = {}) {
+  if (!overrides.userId) {
+    const user = await buildUser();
+    overrides.userId = user.id;
+  }
+
+  if (!overrides.documentId) {
+    const document = await buildDocument({
+      createdById: overrides.userId,
+    });
+    overrides.documentId = document.id;
+  }
+
+  if (!overrides.reverseDocumentId) {
+    const reverseDocument = await buildDocument({
+      createdById: overrides.userId,
+    });
+    overrides.reverseDocumentId = reverseDocument.id;
+  }
+
+  return Relationship.create({
+    type: RelationshipType.Backlink,
+    ...overrides,
+  });
+}
+
+export async function buildUserPasskey(
+  overrides: Partial<InferCreationAttributes<UserPasskey>> = {}
+) {
+  if (!overrides.userId) {
+    const user = await buildUser();
+    overrides.userId = user.id;
+  }
+
+  return UserPasskey.create({
+    credentialId: randomString(32),
+    credentialPublicKey: Buffer.from(randomString(64)),
+    counter: 0,
+    transports: ["internal"],
+    name: faker.word.noun(),
+    ...overrides,
+  });
 }

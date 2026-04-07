@@ -1,14 +1,25 @@
 import { CollectionPermission } from "@shared/types";
-import { View, CollectionUser } from "@server/models";
-import { buildUser } from "@server/test/factories";
-import { seed, getTestServer } from "@server/test/support";
+import { createContext } from "@server/context";
+import { View, UserMembership } from "@server/models";
+import {
+  buildAdmin,
+  buildCollection,
+  buildDocument,
+  buildTeam,
+  buildUser,
+} from "@server/test/factories";
+import { getTestServer } from "@server/test/support";
 
 const server = getTestServer();
 
 describe("#views.list", () => {
   it("should return views for a document", async () => {
-    const { user, document } = await seed();
-    await View.incrementOrCreate({
+    const user = await buildUser();
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+    await View.incrementOrCreate(createContext({ user }), {
       documentId: document.id,
       userId: user.id,
     });
@@ -25,8 +36,11 @@ describe("#views.list", () => {
   });
 
   it("should not return views for suspended user by default", async () => {
-    const { user, admin, document } = await seed();
-    await View.incrementOrCreate({
+    const team = await buildTeam();
+    const admin = await buildAdmin({ teamId: team.id });
+    const user = await buildUser({ teamId: team.id });
+    const document = await buildDocument({ userId: user.id, teamId: team.id });
+    await View.incrementOrCreate(createContext({ user }), {
       documentId: document.id,
       userId: user.id,
     });
@@ -45,16 +59,26 @@ describe("#views.list", () => {
   });
 
   it("should return views for a document in read-only collection", async () => {
-    const { user, document, collection } = await seed();
+    const team = await buildTeam();
+    const user = await buildUser({ teamId: team.id });
+    const collection = await buildCollection({
+      userId: user.id,
+      teamId: team.id,
+    });
+    const document = await buildDocument({
+      userId: user.id,
+      collectionId: collection.id,
+      teamId: team.id,
+    });
     collection.permission = null;
     await collection.save();
-    await CollectionUser.create({
+    await UserMembership.create({
       createdById: user.id,
       collectionId: collection.id,
       userId: user.id,
       permission: CollectionPermission.Read,
     });
-    await View.incrementOrCreate({
+    await View.incrementOrCreate(createContext({ user }), {
       documentId: document.id,
       userId: user.id,
     });
@@ -71,7 +95,7 @@ describe("#views.list", () => {
   });
 
   it("should require authentication", async () => {
-    const { document } = await seed();
+    const document = await buildDocument();
     const res = await server.post("/api/views.list", {
       body: {
         documentId: document.id,
@@ -83,7 +107,7 @@ describe("#views.list", () => {
   });
 
   it("should require authorization", async () => {
-    const { document } = await seed();
+    const document = await buildDocument();
     const user = await buildUser();
     const res = await server.post("/api/views.list", {
       body: {
@@ -97,7 +121,11 @@ describe("#views.list", () => {
 
 describe("#views.create", () => {
   it("should allow creating a view record for document", async () => {
-    const { user, document } = await seed();
+    const user = await buildUser();
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
     const res = await server.post("/api/views.create", {
       body: {
         token: user.getJwtToken(),
@@ -110,10 +138,20 @@ describe("#views.create", () => {
   });
 
   it("should allow creating a view record for document in read-only collection", async () => {
-    const { user, document, collection } = await seed();
+    const team = await buildTeam();
+    const user = await buildUser({ teamId: team.id });
+    const collection = await buildCollection({
+      userId: user.id,
+      teamId: team.id,
+    });
+    const document = await buildDocument({
+      userId: user.id,
+      collectionId: collection.id,
+      teamId: team.id,
+    });
     collection.permission = null;
     await collection.save();
-    await CollectionUser.create({
+    await UserMembership.create({
       createdById: user.id,
       collectionId: collection.id,
       userId: user.id,
@@ -131,7 +169,7 @@ describe("#views.create", () => {
   });
 
   it("should require authentication", async () => {
-    const { document } = await seed();
+    const document = await buildDocument();
     const res = await server.post("/api/views.create", {
       body: {
         documentId: document.id,
@@ -143,7 +181,7 @@ describe("#views.create", () => {
   });
 
   it("should require authorization", async () => {
-    const { document } = await seed();
+    const document = await buildDocument();
     const user = await buildUser();
     const res = await server.post("/api/views.create", {
       body: {

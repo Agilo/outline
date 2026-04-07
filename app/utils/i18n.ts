@@ -3,6 +3,7 @@ import backend from "i18next-http-backend";
 import { initReactI18next } from "react-i18next";
 import { languages } from "@shared/i18n";
 import { unicodeCLDRtoBCP47, unicodeBCP47toCLDR } from "@shared/utils/date";
+import { cdnPath } from "@shared/utils/urls";
 import Logger from "./Logger";
 
 /**
@@ -24,8 +25,8 @@ export function initI18n(defaultLanguage = "en_US") {
       backend: {
         // this must match the path defined in routes. It's the path that the
         // frontend UI code will hit to load missing translations.
-        loadPath: (languages: string[]) =>
-          `/locales/${unicodeBCP47toCLDR(languages[0])}.json`,
+        loadPath: (locale: string[]) =>
+          cdnPath(`/locales/${unicodeBCP47toCLDR(locale[0])}.json`),
       },
       interpolation: {
         escapeValue: false,

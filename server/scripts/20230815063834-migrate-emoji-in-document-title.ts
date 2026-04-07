@@ -13,9 +13,28 @@ export default async function main(exit = false, limit = 1000) {
     let documents: Document[] = [];
     await sequelize.transaction(async (transaction) => {
       documents = await Document.unscoped().findAll({
-        attributes: {
-          exclude: ["state"],
-        },
+        attributes: [
+          "id",
+          "urlId",
+          "title",
+          "template",
+          "emoji",
+          "text",
+          "revisionCount",
+          "archivedAt",
+          "publishedAt",
+          "collaboratorIds",
+          "importId",
+          "parentDocumentId",
+          "lastModifiedById",
+          "createdById",
+          "templateId",
+          "teamId",
+          "collectionId",
+          "createdAt",
+          "updatedAt",
+          "deletedAt",
+        ],
         where: {
           version: {
             [Op.ne]: null,
@@ -33,7 +52,7 @@ export default async function main(exit = false, limit = 1000) {
         try {
           const { emoji, strippedTitle } = parseTitle(document.title);
           if (emoji) {
-            document.emoji = emoji;
+            document.icon = emoji;
             document.title = strippedTitle;
 
             if (document.changed()) {

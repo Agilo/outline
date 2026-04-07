@@ -17,7 +17,7 @@ function HistoryNavigation(props: React.ComponentProps<typeof Flex>) {
 
   useKeyDown(
     (event) =>
-      isMac()
+      isMac
         ? event.metaKey && event.key === "["
         : event.altKey && event.key === "ArrowLeft",
     () => {
@@ -28,7 +28,7 @@ function HistoryNavigation(props: React.ComponentProps<typeof Flex>) {
 
   useKeyDown(
     (event) =>
-      isMac()
+      isMac
         ? event.metaKey && event.key === "]"
         : event.altKey && event.key === "ArrowRight",
     () => {
@@ -43,13 +43,13 @@ function HistoryNavigation(props: React.ComponentProps<typeof Flex>) {
 
   return (
     <Navigation gap={4} {...props}>
-      <Tooltip tooltip={t("Go back")} delay={500}>
-        <NudeButton onClick={() => Desktop.bridge.goBack()}>
+      <Tooltip content={t("Go back")}>
+        <NudeButton onClick={() => Desktop.bridge?.goBack()}>
           <Back $active={back} />
         </NudeButton>
       </Tooltip>
-      <Tooltip tooltip={t("Go forward")} delay={500}>
-        <NudeButton onClick={() => Desktop.bridge.goForward()}>
+      <Tooltip content={t("Go forward")}>
+        <NudeButton onClick={() => Desktop.bridge?.goForward()}>
           <Forward $active={forward} />
         </NudeButton>
       </Tooltip>

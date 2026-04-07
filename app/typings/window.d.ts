@@ -1,3 +1,5 @@
+import type RootStore from "~/stores/RootStore";
+
 declare global {
   interface ImportMeta {
     /**
@@ -10,7 +12,9 @@ declare global {
     dataLayer: any[];
     gtag: (...args: any[]) => void;
 
-    DesktopBridge: {
+    stores: RootStore;
+
+    DesktopBridge?: {
       /**
        * The name of the platform running on.
        */
@@ -59,7 +63,7 @@ declare global {
       /**
        * Set the badge on the app icon.
        */
-      setNotificationCount: (count: number) => Promise<void>;
+      setNotificationCount: (count: number | string) => Promise<void>;
 
       /**
        * Registers a callback to be called when the window is focused.

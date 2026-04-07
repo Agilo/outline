@@ -1,5 +1,8 @@
+import queryString from "query-string";
+import { randomUUID } from "node:crypto";
 import { randomElement } from "@shared/random";
 import { NotificationEventType } from "@shared/types";
+import NotificationSettingsHelper from "@server/models/helpers/NotificationSettingsHelper";
 import {
   buildCollection,
   buildDocument,
@@ -32,14 +35,17 @@ describe("#notifications.list", () => {
         documentId: document.id,
         collectionId: collection.id,
         event: NotificationEventType.UpdateDocument,
+        teamId: user.teamId,
         userId: user.id,
         viewedAt: new Date(),
+        archivedAt: new Date(),
       }),
       buildNotification({
         actorId: actor.id,
         documentId: document.id,
         collectionId: collection.id,
         event: NotificationEventType.CreateComment,
+        teamId: user.teamId,
         userId: user.id,
       }),
       buildNotification({
@@ -47,6 +53,7 @@ describe("#notifications.list", () => {
         documentId: document.id,
         collectionId: collection.id,
         event: NotificationEventType.MentionedInComment,
+        teamId: user.teamId,
         userId: user.id,
       }),
     ]);
@@ -94,6 +101,7 @@ describe("#notifications.list", () => {
         documentId: document.id,
         collectionId: collection.id,
         event: NotificationEventType.UpdateDocument,
+        teamId: user.teamId,
         userId: user.id,
       }),
       buildNotification({
@@ -101,6 +109,7 @@ describe("#notifications.list", () => {
         documentId: document.id,
         collectionId: collection.id,
         event: NotificationEventType.CreateComment,
+        teamId: user.teamId,
         userId: user.id,
       }),
       buildNotification({
@@ -108,6 +117,7 @@ describe("#notifications.list", () => {
         documentId: document.id,
         collectionId: collection.id,
         event: NotificationEventType.MentionedInComment,
+        teamId: user.teamId,
         userId: user.id,
       }),
     ]);
@@ -155,6 +165,7 @@ describe("#notifications.list", () => {
         collectionId: collection.id,
         event: NotificationEventType.UpdateDocument,
         archivedAt: new Date(),
+        teamId: user.teamId,
         userId: user.id,
       }),
       buildNotification({
@@ -163,6 +174,7 @@ describe("#notifications.list", () => {
         collectionId: collection.id,
         event: NotificationEventType.CreateComment,
         archivedAt: new Date(),
+        teamId: user.teamId,
         userId: user.id,
       }),
       buildNotification({
@@ -170,6 +182,7 @@ describe("#notifications.list", () => {
         documentId: document.id,
         collectionId: collection.id,
         event: NotificationEventType.MentionedInComment,
+        teamId: user.teamId,
         userId: user.id,
       }),
     ]);
@@ -196,14 +209,145 @@ describe("#notifications.list", () => {
     expect(events).toContain(NotificationEventType.CreateComment);
     expect(events).toContain(NotificationEventType.UpdateDocument);
   });
+
+  it("should return non-archived notifications", async () => {
+    const actor = await buildUser();
+    const user = await buildUser({
+      teamId: actor.teamId,
+    });
+    const collection = await buildCollection({
+      teamId: actor.teamId,
+      createdById: actor.id,
+    });
+    const document = await buildDocument({
+      teamId: actor.teamId,
+      createdById: actor.id,
+      collectionId: collection.id,
+    });
+    await Promise.all([
+      buildNotification({
+        actorId: actor.id,
+        documentId: document.id,
+        collectionId: collection.id,
+        event: NotificationEventType.UpdateDocument,
+        archivedAt: new Date(),
+        teamId: user.teamId,
+        userId: user.id,
+      }),
+      buildNotification({
+        actorId: actor.id,
+        documentId: document.id,
+        collectionId: collection.id,
+        event: NotificationEventType.CreateComment,
+        archivedAt: new Date(),
+        teamId: user.teamId,
+        userId: user.id,
+      }),
+      buildNotification({
+        actorId: actor.id,
+        documentId: document.id,
+        collectionId: collection.id,
+        event: NotificationEventType.MentionedInComment,
+        teamId: user.teamId,
+        userId: user.id,
+      }),
+    ]);
+
+    const res = await server.post("/api/notifications.list", {
+      body: {
+        token: user.getJwtToken(),
+        archived: false,
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.notifications.length).toBe(1);
+    expect(body.pagination.total).toBe(1);
+    expect(body.data.unseen).toBe(1);
+    expect((randomElement(body.data.notifications) as any).actor.id).toBe(
+      actor.id
+    );
+    expect((randomElement(body.data.notifications) as any).userId).toBe(
+      user.id
+    );
+    const events = body.data.notifications.map((n: any) => n.event);
+    expect(events).toContain(NotificationEventType.MentionedInComment);
+  });
+});
+
+describe("#notifications.pixel", () => {
+  it("should mark notification as viewed", async () => {
+    const team = await buildTeam();
+    const user = await buildUser({ teamId: team.id });
+    const actor = await buildUser({
+      teamId: team.id,
+    });
+    const notification = await buildNotification({
+      teamId: team.id,
+      userId: user.id,
+      actorId: actor.id,
+      event: NotificationEventType.UpdateDocument,
+    });
+
+    expect(notification.viewedAt).toBeNull();
+
+    const res = await server.get(
+      `/api/notifications.pixel?${queryString.stringify({
+        id: notification.id,
+        token: notification.pixelToken,
+      })}`
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/gif");
+
+    const reloaded = await notification.reload();
+    expect(reloaded.viewedAt).not.toBeNull();
+  });
+
+  it("should not mark notification as viewed with invalid token", async () => {
+    const team = await buildTeam();
+    const user = await buildUser({ teamId: team.id });
+    const actor = await buildUser({
+      teamId: team.id,
+    });
+    const notification = await buildNotification({
+      teamId: team.id,
+      userId: user.id,
+      actorId: actor.id,
+      event: NotificationEventType.UpdateDocument,
+    });
+
+    const res = await server.get(
+      `/api/notifications.pixel?${queryString.stringify({
+        id: notification.id,
+        token: "invalid-token",
+      })}`
+    );
+
+    expect(res.status).toBe(401);
+
+    const reloaded = await notification.reload();
+    expect(reloaded.viewedAt).toBeNull();
+  });
+
+  it("should return 404 for notification that does not exist", async () => {
+    const res = await server.get(
+      `/api/notifications.pixel?${queryString.stringify({
+        id: randomUUID(),
+        token: "invalid-token",
+      })}`
+    );
+
+    expect(res.status).toBe(404);
+  });
 });
 
 describe("#notifications.update", () => {
   it("should mark notification as viewed", async () => {
     const team = await buildTeam();
-    const user = await buildUser({
-      teamId: team.id,
-    });
+    const user = await buildUser({ teamId: team.id });
     const actor = await buildUser({
       teamId: team.id,
     });
@@ -243,9 +387,7 @@ describe("#notifications.update", () => {
 
   it("should archive the notification", async () => {
     const team = await buildTeam();
-    const user = await buildUser({
-      teamId: team.id,
-    });
+    const user = await buildUser({ teamId: team.id });
     const actor = await buildUser({
       teamId: team.id,
     });
@@ -306,6 +448,7 @@ describe("#notifications.update_all", () => {
         collectionId: collection.id,
         event: NotificationEventType.UpdateDocument,
         viewedAt: new Date(),
+        teamId: user.teamId,
         userId: user.id,
       }),
       buildNotification({
@@ -313,6 +456,7 @@ describe("#notifications.update_all", () => {
         documentId: document.id,
         collectionId: collection.id,
         event: NotificationEventType.CreateComment,
+        teamId: user.teamId,
         userId: user.id,
       }),
       buildNotification({
@@ -320,6 +464,7 @@ describe("#notifications.update_all", () => {
         documentId: document.id,
         collectionId: collection.id,
         event: NotificationEventType.MentionedInComment,
+        teamId: user.teamId,
         userId: user.id,
       }),
     ]);
@@ -356,6 +501,7 @@ describe("#notifications.update_all", () => {
         collectionId: collection.id,
         event: NotificationEventType.UpdateDocument,
         viewedAt: new Date(),
+        teamId: user.teamId,
         userId: user.id,
       }),
       buildNotification({
@@ -363,6 +509,7 @@ describe("#notifications.update_all", () => {
         documentId: document.id,
         collectionId: collection.id,
         event: NotificationEventType.CreateComment,
+        teamId: user.teamId,
         userId: user.id,
       }),
       buildNotification({
@@ -370,6 +517,7 @@ describe("#notifications.update_all", () => {
         documentId: document.id,
         collectionId: collection.id,
         event: NotificationEventType.MentionedInComment,
+        teamId: user.teamId,
         userId: user.id,
       }),
     ]);
@@ -407,6 +555,7 @@ describe("#notifications.update_all", () => {
         collectionId: collection.id,
         event: NotificationEventType.UpdateDocument,
         viewedAt: new Date(),
+        teamId: user.teamId,
         userId: user.id,
       }),
       buildNotification({
@@ -415,6 +564,7 @@ describe("#notifications.update_all", () => {
         collectionId: collection.id,
         event: NotificationEventType.CreateComment,
         viewedAt: new Date(),
+        teamId: user.teamId,
         userId: user.id,
       }),
       buildNotification({
@@ -422,6 +572,7 @@ describe("#notifications.update_all", () => {
         documentId: document.id,
         collectionId: collection.id,
         event: NotificationEventType.MentionedInComment,
+        teamId: user.teamId,
         userId: user.id,
       }),
     ]);
@@ -459,6 +610,7 @@ describe("#notifications.update_all", () => {
         collectionId: collection.id,
         event: NotificationEventType.UpdateDocument,
         archivedAt: new Date(),
+        teamId: user.teamId,
         userId: user.id,
       }),
       buildNotification({
@@ -466,6 +618,7 @@ describe("#notifications.update_all", () => {
         documentId: document.id,
         collectionId: collection.id,
         event: NotificationEventType.CreateComment,
+        teamId: user.teamId,
         userId: user.id,
       }),
       buildNotification({
@@ -473,6 +626,7 @@ describe("#notifications.update_all", () => {
         documentId: document.id,
         collectionId: collection.id,
         event: NotificationEventType.MentionedInComment,
+        teamId: user.teamId,
         userId: user.id,
       }),
     ]);
@@ -510,6 +664,7 @@ describe("#notifications.update_all", () => {
         collectionId: collection.id,
         event: NotificationEventType.UpdateDocument,
         archivedAt: new Date(),
+        teamId: user.teamId,
         userId: user.id,
       }),
       buildNotification({
@@ -518,6 +673,7 @@ describe("#notifications.update_all", () => {
         collectionId: collection.id,
         event: NotificationEventType.CreateComment,
         archivedAt: new Date(),
+        teamId: user.teamId,
         userId: user.id,
       }),
       buildNotification({
@@ -525,6 +681,7 @@ describe("#notifications.update_all", () => {
         documentId: document.id,
         collectionId: collection.id,
         event: NotificationEventType.MentionedInComment,
+        teamId: user.teamId,
         userId: user.id,
       }),
     ]);
@@ -539,5 +696,42 @@ describe("#notifications.update_all", () => {
     expect(res.status).toBe(200);
     expect(body.success).toBe(true);
     expect(body.data.total).toBe(2);
+  });
+});
+
+describe("#notifications.unsubscribe", () => {
+  it("should allow unsubscribe with valid token", async () => {
+    const user = await buildUser();
+    const token = NotificationSettingsHelper.unsubscribeToken(
+      user.id,
+      NotificationEventType.UpdateDocument
+    );
+
+    const res = await server.get(
+      `/api/notifications.unsubscribe?userId=${user.id}&token=${token}&eventType=documents.update&follow=true`,
+      {
+        redirect: "manual",
+      }
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain(
+      "/settings/notifications?success"
+    );
+
+    const events = (await user.reload()).notificationSettings;
+    expect(events["documents.update"]).toBe(false);
+  });
+
+  it("should not allow unsubscribe with invalid token", async () => {
+    const user = await buildUser();
+
+    const res = await server.get(
+      `/api/notifications.unsubscribe?userId=${user.id}&token=invalid-token&eventType=documents.update&follow=true`,
+      {
+        redirect: "manual",
+      }
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("?notice=invalid-auth");
   });
 });

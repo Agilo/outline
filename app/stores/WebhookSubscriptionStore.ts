@@ -1,16 +1,9 @@
 import { computed } from "mobx";
 import WebhookSubscription from "~/models/WebhookSubscription";
-import BaseStore, { RPCAction } from "./BaseStore";
-import RootStore from "./RootStore";
+import type RootStore from "./RootStore";
+import Store from "./base/Store";
 
-export default class WebhookSubscriptionsStore extends BaseStore<WebhookSubscription> {
-  actions = [
-    RPCAction.List,
-    RPCAction.Create,
-    RPCAction.Delete,
-    RPCAction.Update,
-  ];
-
+export default class WebhookSubscriptionsStore extends Store<WebhookSubscription> {
   constructor(rootStore: RootStore) {
     super(rootStore, WebhookSubscription);
   }

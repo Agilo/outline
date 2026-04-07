@@ -1,19 +1,22 @@
 import { observable, action } from "mobx";
-import * as React from "react";
 import { v4 as uuidv4 } from "uuid";
+import * as React from "react";
 
 type DialogDefinition = {
   title: string;
   content: React.ReactNode;
   isOpen: boolean;
-  isCentered?: boolean;
+  style?: React.CSSProperties;
+  width?: number | string;
+  height?: number | string;
+  onClose?: () => void;
 };
 
 export default class DialogsStore {
-  @observable
+  @observable.shallow
   guide: DialogDefinition;
 
-  @observable
+  @observable.shallow
   modalStack = new Map<string, DialogDefinition>();
 
   openGuide = ({
@@ -43,29 +46,34 @@ export default class DialogsStore {
   };
 
   openModal = ({
+    id,
     title,
     content,
-    isCentered,
     replace,
-  }: {
-    title: string;
-    isCentered?: boolean;
-    content: React.ReactNode;
+    style,
+    width,
+    height,
+    onClose,
+  }: Omit<DialogDefinition, "isOpen"> & {
+    id?: string;
     replace?: boolean;
   }) => {
     setTimeout(
       action(() => {
-        const id = uuidv4();
-
+        let replaceId;
         if (replace) {
+          replaceId = Array.from(this.modalStack.keys())[0];
           this.modalStack.clear();
         }
 
-        this.modalStack.set(id, {
+        this.modalStack.set(id ?? replaceId ?? uuidv4(), {
           title,
           content,
+          style,
+          width,
+          height,
           isOpen: true,
-          isCentered,
+          onClose,
         });
       }),
       0

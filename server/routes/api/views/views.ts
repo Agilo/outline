@@ -3,12 +3,13 @@ import { ValidationError } from "@server/errors";
 import auth from "@server/middlewares/authentication";
 import { rateLimiter } from "@server/middlewares/rateLimiter";
 import validate from "@server/middlewares/validate";
-import { View, Document, Event } from "@server/models";
+import { View, Document } from "@server/models";
 import { authorize } from "@server/policies";
 import { presentView } from "@server/presenters";
-import { APIContext } from "@server/types";
+import type { APIContext } from "@server/types";
 import { RateLimiterStrategy } from "@server/utils/RateLimiter";
 import * as T from "./schema";
+import { transaction } from "@server/middlewares/transaction";
 
 const router = new Router();
 
@@ -23,7 +24,7 @@ router.post(
     const document = await Document.findByPk(documentId, {
       userId: user.id,
     });
-    authorize(user, "read", document);
+    authorize(user, "listViews", document);
 
     if (!document.insightsEnabled) {
       throw ValidationError("Insights are not enabled for this document");
@@ -42,6 +43,7 @@ router.post(
   rateLimiter(RateLimiterStrategy.OneThousandPerHour),
   auth(),
   validate(T.ViewsCreateSchema),
+  transaction(),
   async (ctx: APIContext<T.ViewsCreateReq>) => {
     const { documentId } = ctx.input.body;
     const { user } = ctx.state.auth;
@@ -51,23 +53,11 @@ router.post(
     });
     authorize(user, "read", document);
 
-    const view = await View.incrementOrCreate({
+    const view = await View.incrementOrCreate(ctx, {
       documentId,
       userId: user.id,
     });
 
-    await Event.create({
-      name: "views.create",
-      actorId: user.id,
-      documentId: document.id,
-      collectionId: document.collectionId,
-      teamId: user.teamId,
-      modelId: view.id,
-      data: {
-        title: document.title,
-      },
-      ip: ctx.request.ip,
-    });
     view.user = user;
 
     ctx.body = {

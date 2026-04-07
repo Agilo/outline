@@ -1,29 +1,33 @@
 import { observer } from "mobx-react";
-import queryString from "query-string";
-import * as React from "react";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useHistory, useLocation, useRouteMatch } from "react-router-dom";
+import { toast } from "sonner";
+import { UserPreference } from "@shared/types";
+import { ProsemirrorHelper } from "@shared/utils/ProsemirrorHelper";
 import CenteredContent from "~/components/CenteredContent";
 import Flex from "~/components/Flex";
 import PlaceholderDocument from "~/components/PlaceholderDocument";
+import useCurrentUser from "~/hooks/useCurrentUser";
+import useQuery from "~/hooks/useQuery";
 import useStores from "~/hooks/useStores";
-import useToasts from "~/hooks/useToasts";
-import { documentEditPath } from "~/utils/routeHelpers";
+import { documentEditPath, documentPath } from "~/utils/routeHelpers";
 
 function DocumentNew() {
   const history = useHistory();
   const location = useLocation();
-  const match = useRouteMatch<{ id?: string }>();
+  const query = useQuery();
+  const user = useCurrentUser();
+  const match = useRouteMatch<{ collectionSlug?: string }>();
   const { t } = useTranslation();
-  const { documents, collections } = useStores();
-  const { showToast } = useToasts();
-  const id = match.params.id || "";
+  const { documents, collections, userMemberships, groupMemberships } =
+    useStores();
+  const id = match.params.collectionSlug || query.get("collectionId");
 
   useEffect(() => {
     async function createDocument() {
-      const params = queryString.parse(location.search);
-      const parentDocumentId = params.parentDocumentId?.toString();
+      const index = parseInt(query.get("index") || "0", 10);
+      const parentDocumentId = query.get("parentDocumentId") ?? undefined;
       const parentDocument = parentDocumentId
         ? documents.get(parentDocumentId)
         : undefined;
@@ -33,26 +37,49 @@ function DocumentNew() {
         if (id) {
           collection = await collections.fetch(id);
         }
-        const document = await documents.create({
-          collectionId: collection?.id,
-          parentDocumentId,
-          fullWidth: parentDocument?.fullWidth,
-          templateId: params.templateId?.toString(),
-          template: params.template === "true" ? true : false,
-          title: "",
-          text: "",
-        });
-        history.replace(documentEditPath(document), location.state);
-      } catch (err) {
-        showToast(t("Couldn’t create the document, try again?"), {
-          type: "error",
-        });
+
+        const document = await documents.create(
+          {
+            collectionId: collection?.id,
+            parentDocumentId,
+            fullWidth:
+              parentDocument?.fullWidth ||
+              user.getPreference(UserPreference.FullWidthDocuments),
+            templateId: query.get("templateId") ?? undefined,
+            title: query.get("title") ?? "",
+            data: ProsemirrorHelper.getEmptyDocument(),
+          },
+          {
+            publish: collection?.id || parentDocumentId ? true : undefined,
+            index,
+          }
+        );
+
+        if (parentDocumentId) {
+          userMemberships
+            .getByDocumentId(document.id)
+            ?.addDocument(document, parentDocumentId);
+
+          groupMemberships
+            .getByDocumentId(document.id)
+            ?.addDocument(document, parentDocumentId);
+        }
+
+        history.replace(
+          !user.separateEditMode
+            ? documentPath(document)
+            : documentEditPath(document),
+          location.state
+        );
+      } catch (_err) {
+        toast.error(t("Couldn’t create the document, try again?"));
         history.goBack();
       }
     }
 
     void createDocument();
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <Flex column auto>

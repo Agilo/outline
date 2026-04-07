@@ -1,40 +1,37 @@
 import { observer } from "mobx-react";
 import { UserIcon } from "outline-icons";
-import * as React from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import styled from "styled-components";
-import Avatar from "~/components/Avatar";
-import { AvatarSize } from "~/components/Avatar/Avatar";
+import { Avatar, AvatarSize } from "~/components/Avatar";
 import FilterOptions from "~/components/FilterOptions";
 import useStores from "~/hooks/useStores";
 
 type Props = {
+  /** The currently selected user ID */
   userId: string | undefined;
+  /** Callback to call when a user is selected */
   onSelect: (key: string | undefined) => void;
 };
+
+const fetchQueryOptions = { sort: "name", direction: "ASC" };
 
 function UserFilter(props: Props) {
   const { onSelect, userId } = props;
   const { t } = useTranslation();
   const { users } = useStores();
 
-  React.useEffect(() => {
-    void users.fetchPage({
-      limit: 100,
-    });
-  }, [users]);
-
-  const options = React.useMemo(() => {
+  const options = useMemo(() => {
     const userOptions = users.all.map((user) => ({
       key: user.id,
       label: user.name,
-      icon: <Avatar model={user} showBorder={false} size={AvatarSize.Small} />,
+      icon: <StyledAvatar model={user} size={AvatarSize.Small} />,
     }));
     return [
       {
         key: "",
         label: t("Any author"),
-        icon: <NoAuthor size={20} />,
+        icon: <UserIcon size={20} />,
       },
       ...userOptions,
     ];
@@ -43,16 +40,18 @@ function UserFilter(props: Props) {
   return (
     <FilterOptions
       options={options}
-      activeKey={userId}
+      selectedKeys={[userId]}
       onSelect={onSelect}
       defaultLabel={t("Any author")}
-      selectedPrefix={`${t("Author")}:`}
+      fetchQuery={users.fetchPage}
+      fetchQueryOptions={fetchQueryOptions}
+      showFilter
     />
   );
 }
 
-const NoAuthor = styled(UserIcon)`
-  margin-left: -2px;
+const StyledAvatar = styled(Avatar)`
+  margin: 2px;
 `;
 
 export default observer(UserFilter);

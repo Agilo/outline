@@ -1,7 +1,8 @@
-/* eslint-disable prefer-rest-params */
+/* oxlint-disable prefer-rest-params */
 /* global ga */
 import escape from "lodash/escape";
 import * as React from "react";
+import type { PublicEnv } from "@shared/types";
 import { IntegrationService } from "@shared/types";
 import env from "~/env";
 
@@ -9,6 +10,7 @@ type Props = {
   children?: React.ReactNode;
 };
 
+// TODO: Refactor this component to allow injection from plugins
 const Analytics: React.FC = ({ children }: Props) => {
   // Google Analytics 3
   React.useEffect(() => {
@@ -43,12 +45,16 @@ const Analytics: React.FC = ({ children }: Props) => {
   React.useEffect(() => {
     const measurementIds = [];
 
-    if (env.analytics.service === IntegrationService.GoogleAnalytics) {
-      measurementIds.push(escape(env.analytics.settings?.measurementId));
-    }
     if (env.GOOGLE_ANALYTICS_ID?.startsWith("G-")) {
       measurementIds.push(env.GOOGLE_ANALYTICS_ID);
     }
+
+    (env.analytics as PublicEnv["analytics"]).forEach((integration) => {
+      if (integration.service === IntegrationService.GoogleAnalytics) {
+        measurementIds.push(escape(integration.settings?.measurementId));
+      }
+    });
+
     if (measurementIds.length === 0) {
       return;
     }
@@ -73,6 +79,50 @@ const Analytics: React.FC = ({ children }: Props) => {
     script.src = `https://www.googletagmanager.com/gtag/js?id=${measurementIds[0]}`;
     script.async = true;
     document.getElementsByTagName("head")[0]?.appendChild(script);
+  }, []);
+
+  // Matomo
+  React.useEffect(() => {
+    (env.analytics as PublicEnv["analytics"]).forEach((integration) => {
+      if (integration.service !== IntegrationService.Matomo) {
+        return;
+      }
+
+      // @ts-expect-error - Matomo global variable
+      const _paq = (window._paq = window._paq || []);
+      _paq.push(["trackPageView"]);
+      _paq.push(["enableLinkTracking"]);
+      (function () {
+        const u = integration.settings?.instanceUrl;
+        _paq.push(["setTrackerUrl", u + "matomo.php"]);
+        _paq.push(["setSiteId", integration.settings?.measurementId]);
+        const d = document,
+          g = d.createElement("script"),
+          s = d.getElementsByTagName("script")[0];
+        g.type = "text/javascript";
+        g.async = true;
+        g.src = u + "matomo.js";
+        s.parentNode?.insertBefore(g, s);
+      })();
+    });
+  }, []);
+
+  // Umami
+  React.useEffect(() => {
+    (env.analytics as PublicEnv["analytics"]).forEach((integration) => {
+      if (integration.service !== IntegrationService.Umami) {
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.defer = true;
+      script.src = `${integration.settings?.instanceUrl}${integration.settings?.scriptName}`;
+      script.setAttribute(
+        "data-website-id",
+        integration.settings?.measurementId
+      );
+      document.getElementsByTagName("head")[0]?.appendChild(script);
+    });
   }, []);
 
   return <>{children}</>;

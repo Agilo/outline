@@ -1,11 +1,12 @@
 import { Table, TBody, TR, TD } from "oy-vey";
 import * as React from "react";
 import theme from "@shared/styles/theme";
-import { twitterUrl } from "@shared/utils/urlHelpers";
+import { UrlHelper } from "@shared/utils/UrlHelper";
 import env from "@server/env";
 
 type Props = {
   unsubscribeUrl?: string;
+  unsubscribeText?: string;
   children?: React.ReactNode;
 };
 
@@ -30,7 +31,7 @@ export const Link = ({
   );
 };
 
-export default ({ unsubscribeUrl, children }: Props) => {
+export default ({ unsubscribeUrl, unsubscribeText, children }: Props) => {
   const footerStyle = {
     padding: "20px 0",
     borderTop: `1px solid ${theme.smokeDark}`,
@@ -54,7 +55,7 @@ export default ({ unsubscribeUrl, children }: Props) => {
         <TR>
           <TD style={footerStyle}>
             <Link href={env.URL}>{env.APP_NAME}</Link>
-            <a href={twitterUrl()} style={externalLinkStyle}>
+            <a href={UrlHelper.twitter} style={externalLinkStyle}>
               Twitter
             </a>
           </TD>
@@ -62,7 +63,9 @@ export default ({ unsubscribeUrl, children }: Props) => {
         {unsubscribeUrl && (
           <TR>
             <TD style={footerLinkStyle}>
-              <Link href={unsubscribeUrl}>Unsubscribe from these emails</Link>
+              <Link href={unsubscribeUrl}>
+                {unsubscribeText ?? "Unsubscribe from these emails"}
+              </Link>
             </TD>
           </TR>
         )}

@@ -3,23 +3,26 @@ import { Strategy as AzureStrategy } from "@outlinewiki/passport-azure-ad-oauth2
 import jwt from "jsonwebtoken";
 import type { Context } from "koa";
 import Router from "koa-router";
-import { Profile } from "passport";
+import type { Profile } from "passport";
 import { slugifyDomain } from "@shared/utils/domains";
+import { parseEmail } from "@shared/utils/email";
 import accountProvisioner from "@server/commands/accountProvisioner";
-import env from "@server/env";
 import { MicrosoftGraphError } from "@server/errors";
 import passportMiddleware from "@server/middlewares/passport";
-import { User } from "@server/models";
-import { AuthenticationResult } from "@server/types";
+import type { User } from "@server/models";
+import type { AuthenticationResult } from "@server/types";
 import {
   StateStore,
   request,
   getTeamFromContext,
-  getClientFromContext,
+  getClientFromOAuthState,
+  getUserFromOAuthState,
 } from "@server/utils/passport";
+import config from "../../plugin.json";
+import env from "../env";
+import { createContext } from "@server/context";
 
 const router = new Router();
-const providerName = "azure";
 const scopes: string[] = [];
 
 if (env.AZURE_CLIENT_ID && env.AZURE_CLIENT_SECRET) {
@@ -28,7 +31,8 @@ if (env.AZURE_CLIENT_ID && env.AZURE_CLIENT_SECRET) {
       clientID: env.AZURE_CLIENT_ID,
       clientSecret: env.AZURE_CLIENT_SECRET,
       callbackURL: `${env.URL}/auth/azure.callback`,
-      useCommonEndpoint: true,
+      useCommonEndpoint: env.AZURE_TENANT_ID ? false : true,
+      tenant: env.AZURE_TENANT_ID ? env.AZURE_TENANT_ID : undefined,
       passReqToCallback: true,
       resource: env.AZURE_RESOURCE_APP_ID,
       // @ts-expect-error StateStore
@@ -36,7 +40,7 @@ if (env.AZURE_CLIENT_ID && env.AZURE_CLIENT_SECRET) {
       scope: scopes,
     },
     async function (
-      ctx: Context,
+      context: Context,
       accessToken: string,
       refreshToken: string,
       params: { expires_in: number; id_token: string },
@@ -55,10 +59,14 @@ if (env.AZURE_CLIENT_ID && env.AZURE_CLIENT_SECRET) {
         const [profileResponse, organizationResponse] = await Promise.all([
           // Load the users profile from the Microsoft Graph API
           // https://docs.microsoft.com/en-us/graph/api/resources/users?view=graph-rest-1.0
-          request(`https://graph.microsoft.com/v1.0/me`, accessToken),
+          request("GET", `https://graph.microsoft.com/v1.0/me`, accessToken),
           // Load the organization profile from the Microsoft Graph API
           // https://docs.microsoft.com/en-us/graph/api/organization-get?view=graph-rest-1.0
-          request(`https://graph.microsoft.com/v1.0/organization`, accessToken),
+          request(
+            "GET",
+            `https://graph.microsoft.com/v1.0/organization`,
+            accessToken
+          ),
         ]);
 
         if (!profileResponse) {
@@ -67,9 +75,9 @@ if (env.AZURE_CLIENT_ID && env.AZURE_CLIENT_SECRET) {
           );
         }
 
-        if (!organizationResponse) {
+        if (!organizationResponse?.value?.length) {
           throw MicrosoftGraphError(
-            "Unable to load organization info from Microsoft Graph API"
+            `Unable to load organization info from Microsoft Graph API: ${organizationResponse.error?.message}`
           );
         }
 
@@ -88,15 +96,21 @@ if (env.AZURE_CLIENT_ID && env.AZURE_CLIENT_SECRET) {
           );
         }
 
-        const team = await getTeamFromContext(ctx);
-        const client = getClientFromContext(ctx);
+        const team = await getTeamFromContext(context);
+        const client = getClientFromOAuthState(context);
+        const user =
+          context.state?.auth?.user ?? (await getUserFromOAuthState(context));
 
-        const domain = email.split("@")[1];
+        const domain = parseEmail(email).domain;
         const subdomain = slugifyDomain(domain);
 
         const teamName = organization.displayName;
-        const result = await accountProvisioner({
-          ip: ctx.ip,
+        const ctx = createContext({
+          ip: context.ip,
+          user,
+          authType: context.state?.auth?.type,
+        });
+        const result = await accountProvisioner(ctx, {
           team: {
             teamId: team?.id,
             name: teamName,
@@ -109,7 +123,7 @@ if (env.AZURE_CLIENT_ID && env.AZURE_CLIENT_SECRET) {
             avatarUrl: profile.picture,
           },
           authenticationProvider: {
-            name: providerName,
+            name: config.id,
             providerId: profile.tid,
           },
           authentication: {
@@ -127,13 +141,11 @@ if (env.AZURE_CLIENT_ID && env.AZURE_CLIENT_SECRET) {
     }
   );
   passport.use(strategy);
-
   router.get(
-    "azure",
-    passport.authenticate(providerName, { prompt: "select_account" })
+    config.id,
+    passport.authenticate(config.id, { prompt: "select_account" })
   );
-
-  router.get("azure.callback", passportMiddleware(providerName));
+  router.get(`${config.id}.callback`, passportMiddleware(config.id));
 }
 
 export default router;

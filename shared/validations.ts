@@ -2,6 +2,18 @@ export const AttachmentValidation = {
   /** The limited allowable mime-types for user and team avatars */
   avatarContentTypes: ["image/jpg", "image/jpeg", "image/png"],
 
+  /** The most widely supported mime-types across modern browsers */
+  emojiContentTypes: [
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/jpeg",
+    "image/jpg",
+  ],
+
+  /** The maximum file size for emoji uploads */
+  emojiMaxFileSize: 1 * 1000 * 1000,
+
   /** Image mime-types commonly supported by modern browsers */
   imageContentTypes: [
     "image/jpg",
@@ -16,12 +28,20 @@ export const AttachmentValidation = {
     "image/svg+xml",
     "image/bmp",
     "image/tiff",
+    "image/heic",
   ],
+};
+
+export const ApiKeyValidation = {
+  /** The minimum length of the API key name */
+  minNameLength: 3,
+  /** The maximum length of the API key name */
+  maxNameLength: 255,
 };
 
 export const CollectionValidation = {
   /** The maximum length of the collection description */
-  maxDescriptionLength: 1000,
+  maxDescriptionLength: 100 * 1000,
 
   /** The maximum length of the collection name */
   maxNameLength: 100,
@@ -36,8 +56,57 @@ export const DocumentValidation = {
   /** The maximum length of the document title */
   maxTitleLength: 100,
 
+  /** The maximum length of the document summary */
+  maxSummaryLength: 1000,
+
   /** The maximum size of the collaborative document state */
   maxStateLength: 1500 * 1024,
+
+  /** The maximum recommended size of the document content */
+  maxRecommendedLength: 250000,
+};
+
+export const GroupValidation = {
+  /** The maximum length of the group description */
+  maxDescriptionLength: 2000,
+};
+
+export const ImportValidation = {
+  /** The maximum length of the import name */
+  maxNameLength: 100,
+};
+
+export const OAuthClientValidation = {
+  /** The maximum length of the OAuth client name */
+  maxNameLength: 100,
+
+  /** The maximum length of the OAuth client description */
+  maxDescriptionLength: 1000,
+
+  /** The maximum length of the OAuth client developer name */
+  maxDeveloperNameLength: 100,
+
+  /** The maximum length of the OAuth client developer URL */
+  maxDeveloperUrlLength: 1000,
+
+  /** The maximum length of the OAuth client avatar URL */
+  maxAvatarUrlLength: 1000,
+
+  /** The maximum length of an OAuth client redirect URI */
+  maxRedirectUriLength: 1000,
+
+  /** The allowed OAuth client types */
+  clientTypes: ["confidential", "public"] as const,
+};
+
+export const RevisionValidation = {
+  minNameLength: 1,
+  maxNameLength: 255,
+};
+
+export const UserPasskeyValidation = {
+  minNameLength: 1,
+  maxNameLength: 255,
 };
 
 export const PinValidation = {
@@ -46,16 +115,47 @@ export const PinValidation = {
 };
 
 export const TeamValidation = {
-  /** The maximum number of domains per team */
+  /** The maximum number of domains per team on cloud hosted */
   maxDomains: 10,
+
+  /** The maximum length of the team name */
+  maxNameLength: 255,
+
+  /** The maximum length of the team description */
+  maxDescriptionLength: 1000,
+
+  /** The minimum length of the team subdomain */
+  minSubdomainLength: 2,
+
+  /** The maximum length of the team subdomain for cloud */
+  maxSubdomainLength: 32,
+
+  /** The maximum length of the team subdomain for self-hosted */
+  maxSubdomainSelfHostedLength: 255,
+
+  /** The maximum length of MCP workspace guidance */
+  maxGuidanceMCPLength: 2000,
 };
 
 export const UserValidation = {
   /** The maximum number of invites per request */
   maxInvitesPerRequest: 20,
+
+  /** The maximum length of the user name */
+  maxNameLength: 255,
+
+  /** The maximum length of the user email */
+  maxEmailLength: 255,
 };
 
 export const WebhookSubscriptionValidation = {
   /** The maximum number of webhooks per team */
   maxSubscriptions: 10,
+};
+
+export const EmojiValidation = {
+  /** The maximum length of the emoji name */
+  maxNameLength: 25,
+  /* the characters allowed in the name */
+  allowedNameCharacters: /^[a-z0-9_]*$/,
 };

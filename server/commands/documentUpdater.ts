@@ -1,16 +1,18 @@
-import { Transaction } from "sequelize";
-import { Event, Document, User } from "@server/models";
-import DocumentHelper from "@server/models/helpers/DocumentHelper";
+import type { TextEditMode } from "@shared/types";
+import { Event, Document } from "@server/models";
+import { DocumentHelper } from "@server/models/helpers/DocumentHelper";
+import { TextHelper } from "@server/models/helpers/TextHelper";
+import type { APIContext } from "@server/types";
 
 type Props = {
-  /** The user updating the document */
-  user: User;
   /** The existing document */
   document: Document;
   /** The new title */
   title?: string;
-  /** The document emoji */
-  emoji?: string | null;
+  /** The document icon */
+  icon?: string | null;
+  /** The document icon's color */
+  color?: string | null;
   /** The new text content */
   text?: string;
   /** Whether the editing session is complete */
@@ -23,16 +25,12 @@ type Props = {
   fullWidth?: boolean;
   /** Whether insights should be visible on the document */
   insightsEnabled?: boolean;
-  /** Whether the text be appended to the end instead of replace */
-  append?: boolean;
+  /** The edit mode: "replace", "append", or "prepend" */
+  editMode?: TextEditMode;
   /** Whether the document should be published to the collection */
   publish?: boolean;
   /** The ID of the collection to publish the document to */
   collectionId?: string | null;
-  /** The IP address of the user creating the document */
-  ip: string;
-  /** The database transaction to run within */
-  transaction: Transaction;
 };
 
 /**
@@ -42,31 +40,36 @@ type Props = {
  * @param Props The properties of the document to update
  * @returns Document The updated document
  */
-export default async function documentUpdater({
-  user,
-  document,
-  title,
-  emoji,
-  text,
-  editorVersion,
-  templateId,
-  fullWidth,
-  insightsEnabled,
-  append,
-  publish,
-  collectionId,
-  done,
-  transaction,
-  ip,
-}: Props): Promise<Document> {
-  const previousTitle = document.title;
+export default async function documentUpdater(
+  ctx: APIContext,
+  {
+    document,
+    title,
+    icon,
+    color,
+    text,
+    editorVersion,
+    templateId,
+    fullWidth,
+    insightsEnabled,
+    editMode,
+    publish,
+    collectionId,
+    done,
+  }: Props
+): Promise<Document> {
+  const { user } = ctx.state.auth;
+  const { transaction } = ctx.state;
   const cId = collectionId || document.collectionId;
 
   if (title !== undefined) {
     document.title = title.trim();
   }
-  if (emoji !== undefined) {
-    document.emoji = emoji;
+  if (icon !== undefined) {
+    document.icon = icon;
+  }
+  if (color !== undefined) {
+    document.color = color;
   }
   if (editorVersion) {
     document.editorVersion = editorVersion;
@@ -81,60 +84,45 @@ export default async function documentUpdater({
     document.insightsEnabled = insightsEnabled;
   }
   if (text !== undefined) {
-    document = DocumentHelper.applyMarkdownToDocument(document, text, append);
+    document = DocumentHelper.applyMarkdownToDocument(
+      document,
+      await TextHelper.replaceImagesWithAttachments(ctx, text, user, {
+        base64Only: true,
+      }),
+      editMode
+    );
   }
 
   const changed = document.changed();
+  const eventData = done !== undefined ? { done } : undefined;
 
   const event = {
     name: "documents.update",
     documentId: document.id,
     collectionId: cId,
-    teamId: document.teamId,
-    actorId: user.id,
-    data: {
-      done,
-      title: document.title,
-    },
-    ip,
+    data: eventData,
   };
 
   if (publish && cId) {
     if (!document.collectionId) {
       document.collectionId = cId;
     }
-    await document.publish(user.id, cId, { transaction });
-
-    await Event.create(
-      {
-        ...event,
-        name: "documents.publish",
-      },
-      { transaction }
-    );
+    await document.publish(ctx, { collectionId: cId, data: eventData });
   } else if (changed) {
     document.lastModifiedById = user.id;
-    await document.save({ transaction });
-
-    await Event.create(event, { transaction });
+    document.updatedBy = user;
+    await document.saveWithCtx(ctx, undefined, { data: eventData });
   } else if (done) {
-    await Event.schedule(event);
-  }
-
-  if (document.title !== previousTitle) {
     await Event.schedule({
-      name: "documents.title_change",
-      documentId: document.id,
-      collectionId: cId,
-      teamId: document.teamId,
+      ...event,
       actorId: user.id,
-      data: {
-        previousTitle,
-        title: document.title,
-      },
-      ip,
+      teamId: document.teamId,
     });
   }
 
-  return document;
+  return await Document.findByPk(document.id, {
+    userId: user.id,
+    rejectOnEmpty: true,
+    transaction,
+  });
 }

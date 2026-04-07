@@ -1,27 +1,57 @@
 import { chainCommands } from "prosemirror-commands";
-import { NodeSpec, Node as ProsemirrorNode } from "prosemirror-model";
-import { Command, Plugin, TextSelection } from "prosemirror-state";
+import { InputRule } from "prosemirror-inputrules";
+import type { NodeSpec, Node as ProsemirrorNode } from "prosemirror-model";
+import { TextSelection } from "prosemirror-state";
 import {
   addColumnAfter,
-  addColumnBefore,
+  addRowAfter,
+  columnResizing,
   deleteColumn,
   deleteRow,
   deleteTable,
   goToNextCell,
+  moveTableColumn,
+  moveTableRow,
   tableEditing,
-  toggleHeaderCell,
-  toggleHeaderColumn,
-  toggleHeaderRow,
+  toggleHeader,
 } from "prosemirror-tables";
-import { Decoration, DecorationSet } from "prosemirror-view";
 import {
-  addRowAfterAndMoveSelection,
+  addRowBefore,
+  addColumnBefore,
+  addRowAndMoveSelection,
   setColumnAttr,
   createTable,
+  exportTable,
+  distributeColumns,
+  sortTable,
+  setTableAttr,
+  deleteColSelection,
+  deleteRowSelection,
+  deleteCellSelection,
+  moveOutOfTable,
+  createTableInner,
+  deleteTableIfSelected,
+  splitCellAndCollapse,
+  mergeCellsAndCollapse,
+  toggleColumnBackground,
+  toggleRowBackground,
+  toggleCellSelectionBackground,
+  toggleCellSelectionBackgroundAndCollapseSelection,
+  toggleRowBackgroundAndCollapseSelection,
+  toggleColumnBackgroundAndCollapseSelection,
 } from "../commands/table";
-import { MarkdownSerializerState } from "../lib/markdown/serializer";
+import type { MarkdownSerializerState } from "../lib/markdown/serializer";
+import { FixTablesPlugin } from "../plugins/FixTablesPlugin";
+import { TableLayoutPlugin } from "../plugins/TableLayoutPlugin";
 import tablesRule from "../rules/tables";
+import { EditorStyleHelper } from "../styles/EditorStyleHelper";
+import type { TableLayout } from "../types";
 import Node from "./Node";
+import { TableView } from "./TableView";
+
+export type TableAttrs = {
+  layout: TableLayout | null;
+};
 
 export default class Table extends Node {
   get name() {
@@ -35,15 +65,17 @@ export default class Table extends Node {
       isolating: true,
       group: "block",
       parseDOM: [{ tag: "table" }],
+      attrs: {
+        layout: {
+          default: null,
+        },
+      },
       toDOM() {
+        // Note: This is overridden by TableView
         return [
           "div",
-          { class: "scrollable-wrapper table-wrapper" },
-          [
-            "div",
-            { class: "scrollable" },
-            ["table", { class: "rme-table" }, ["tbody", 0]],
-          ],
+          { class: EditorStyleHelper.table },
+          ["table", {}, ["tbody", 0]],
         ];
       },
     };
@@ -55,44 +87,66 @@ export default class Table extends Node {
 
   commands() {
     return {
-      createTable:
-        ({
-          rowsCount,
-          colsCount,
-        }: {
-          rowsCount: number;
-          colsCount: number;
-        }): Command =>
-        (state, dispatch) => {
-          if (dispatch) {
-            const offset = state.tr.selection.anchor + 1;
-            const nodes = createTable(state, rowsCount, colsCount);
-            const tr = state.tr.replaceSelectionWith(nodes).scrollIntoView();
-            const resolvedPos = tr.doc.resolve(offset);
-            tr.setSelection(TextSelection.near(resolvedPos));
-            dispatch(tr);
-          }
-          return true;
-        },
+      createTable,
       setColumnAttr,
-      addColumnBefore: () => addColumnBefore,
+      setTableAttr,
+      sortTable,
+      addColumnBefore,
       addColumnAfter: () => addColumnAfter,
       deleteColumn: () => deleteColumn,
-      addRowAfter: addRowAfterAndMoveSelection,
+      addRowBefore,
+      addRowAfter: () => addRowAfter,
+      moveTableRow,
+      moveTableColumn,
       deleteRow: () => deleteRow,
       deleteTable: () => deleteTable,
-      toggleHeaderColumn: () => toggleHeaderColumn,
-      toggleHeaderRow: () => toggleHeaderRow,
-      toggleHeaderCell: () => toggleHeaderCell,
+      exportTable,
+      distributeColumns,
+      toggleHeaderColumn: () => toggleHeader("column"),
+      toggleHeaderRow: () => toggleHeader("row"),
+      mergeCells: () => mergeCellsAndCollapse(),
+      splitCell: () => splitCellAndCollapse(),
+      toggleRowBackground,
+      toggleRowBackgroundAndCollapseSelection,
+      toggleColumnBackground,
+      toggleColumnBackgroundAndCollapseSelection,
+      toggleCellSelectionBackground,
+      toggleCellSelectionBackgroundAndCollapseSelection,
     };
   }
 
   keys() {
     return {
-      Tab: chainCommands(goToNextCell(1), addRowAfterAndMoveSelection()),
+      Tab: chainCommands(goToNextCell(1), addRowAndMoveSelection()),
       "Shift-Tab": goToNextCell(-1),
-      Enter: addRowAfterAndMoveSelection(),
+      "Mod-Enter": addRowAndMoveSelection(),
+      "Mod-Backspace": chainCommands(
+        deleteCellSelection,
+        deleteColSelection(),
+        deleteRowSelection(),
+        deleteTableIfSelected()
+      ),
+      Backspace: chainCommands(
+        deleteCellSelection,
+        deleteColSelection(),
+        deleteRowSelection(),
+        deleteTableIfSelected()
+      ),
+      ArrowDown: moveOutOfTable(1),
+      ArrowUp: moveOutOfTable(-1),
     };
+  }
+
+  inputRules() {
+    return [
+      new InputRule(/^(\|--)$/, (state, _, start, end) => {
+        const nodes = createTableInner(state, 2, 2);
+        const tr = state.tr.replaceWith(start - 1, end, nodes).scrollIntoView();
+        const resolvedPos = tr.doc.resolve(start + 1);
+        tr.setSelection(TextSelection.near(resolvedPos));
+        return tr;
+      }),
+    ];
   }
 
   toMarkdown(state: MarkdownSerializerState, node: ProsemirrorNode) {
@@ -106,52 +160,13 @@ export default class Table extends Node {
 
   get plugins() {
     return [
-      tableEditing(),
-      new Plugin({
-        props: {
-          decorations: (state) => {
-            const { doc } = state;
-            const decorations: Decoration[] = [];
-            let index = 0;
-
-            doc.descendants((node, pos) => {
-              if (node.type.name !== this.name) {
-                return;
-              }
-
-              const elements = document.getElementsByClassName("rme-table");
-              const table = elements[index];
-              if (!table) {
-                return;
-              }
-
-              const element = table.parentElement;
-              const shadowRight = !!(
-                element && element.scrollWidth > element.clientWidth
-              );
-
-              if (shadowRight) {
-                decorations.push(
-                  Decoration.widget(
-                    pos + 1,
-                    () => {
-                      const shadow = document.createElement("div");
-                      shadow.className = "scrollable-shadow right";
-                      return shadow;
-                    },
-                    {
-                      key: "table-shadow-right",
-                    }
-                  )
-                );
-              }
-              index++;
-            });
-
-            return DecorationSet.create(doc, decorations);
-          },
-        },
+      // Note: Important to register columnResizing before tableEditing
+      columnResizing({
+        View: TableView,
       }),
+      tableEditing(),
+      new FixTablesPlugin(),
+      new TableLayoutPlugin(),
     ];
   }
 }

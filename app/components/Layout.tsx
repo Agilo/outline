@@ -1,49 +1,40 @@
+import { AnimatePresence } from "framer-motion";
 import { observer } from "mobx-react";
 import * as React from "react";
 import { Helmet } from "react-helmet-async";
-import styled, { DefaultTheme } from "styled-components";
+import type { DefaultTheme } from "styled-components";
+import styled from "styled-components";
 import breakpoint from "styled-components-breakpoint";
 import { s } from "@shared/styles";
 import Flex from "~/components/Flex";
 import { LoadingIndicatorBar } from "~/components/LoadingIndicator";
+import { useRightSidebarContent } from "~/components/RightSidebarContext";
 import SkipNavContent from "~/components/SkipNavContent";
 import SkipNavLink from "~/components/SkipNavLink";
 import env from "~/env";
-import useAutoRefresh from "~/hooks/useAutoRefresh";
-import useKeyDown from "~/hooks/useKeyDown";
-import { MenuProvider } from "~/hooks/useMenuContext";
 import useStores from "~/hooks/useStores";
-import { isModKey } from "~/utils/keyboard";
 
 type Props = {
+  /** Main content to render in the layout. */
   children?: React.ReactNode;
+  /** Page title to display in the browser tab. Defaults to app name if not provided. */
   title?: string;
+  /** Left sidebar content. */
   sidebar?: React.ReactNode;
-  sidebarRight?: React.ReactNode;
 };
 
-const Layout: React.FC<Props> = ({
-  title,
-  children,
-  sidebar,
-  sidebarRight,
-}: Props) => {
+const Layout = React.forwardRef(function Layout_(
+  { title, children, sidebar }: Props,
+  ref: React.RefObject<HTMLDivElement>
+) {
   const { ui } = useStores();
   const sidebarCollapsed = !sidebar || ui.sidebarIsClosed;
-
-  useAutoRefresh();
-
-  useKeyDown(".", (event) => {
-    if (isModKey(event)) {
-      ui.toggleCollapsedSidebar();
-    }
-  });
+  const sidebarRight = useRightSidebarContent();
 
   return (
-    <Container column auto>
+    <Container column auto ref={ref}>
       <Helmet>
         <title>{title ? title : env.APP_NAME}</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       </Helmet>
 
       <SkipNavLink />
@@ -51,12 +42,13 @@ const Layout: React.FC<Props> = ({
       {ui.progressBarVisible && <LoadingIndicatorBar />}
 
       <Container auto>
-        <MenuProvider>{sidebar}</MenuProvider>
+        {sidebar}
 
         <SkipNavContent />
         <Content
           auto
           justify="center"
+          role="main"
           $isResizing={ui.sidebarIsResizing}
           $sidebarCollapsed={sidebarCollapsed}
           $hasSidebar={!!sidebar}
@@ -71,15 +63,14 @@ const Layout: React.FC<Props> = ({
           {children}
         </Content>
 
-        {sidebarRight}
+        <AnimatePresence initial={false}>{sidebarRight}</AnimatePresence>
       </Container>
     </Container>
   );
-};
+});
 
 const Container = styled(Flex)`
   background: ${s("background")};
-  transition: ${s("backgroundTransition")};
   position: relative;
   width: 100%;
   min-height: 100%;

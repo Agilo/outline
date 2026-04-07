@@ -17,21 +17,23 @@ const StyledText = styled(Text)`
 `;
 
 export const Preview = styled(Link)`
-  cursor: ${(props: any) =>
+  cursor: ${(props: { as?: string }) =>
     props.as === "div" ? "default" : "var(--pointer)"};
   border-radius: 4px;
-  box-shadow: 0 30px 90px -20px rgba(0, 0, 0, 0.3),
+  box-shadow:
+    0 30px 90px -20px rgba(0, 0, 0, 0.3),
     0 0 1px 1px rgba(0, 0, 0, 0.05);
   overflow: hidden;
   position: absolute;
-  min-width: 350px;
-  max-width: 375px;
+  width: 375px;
 `;
 
-export const Title = styled.h2`
-  font-size: 1.25em;
-  margin: 0;
-  color: ${s("text")};
+export const Title = styled(Text).attrs({ as: "h2", size: "large" })`
+  margin-bottom: 4px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 6px;
 `;
 
 export const Info = styled(StyledText).attrs(() => ({
@@ -41,17 +43,42 @@ export const Info = styled(StyledText).attrs(() => ({
   white-space: nowrap;
 `;
 
-export const Description = styled(StyledText)`
+export const Description = styled(StyledText)<{ $margin?: string }>`
   ${sharedVars}
-  margin-top: 0.5em;
+  margin-top: ${(props) => props.$margin ?? "0.5em"};
   line-height: var(--line-height);
   max-height: calc(var(--line-height) * ${NUMBER_OF_LINES});
+  overflow: hidden;
 `;
 
 export const Thumbnail = styled.img`
   object-fit: cover;
   height: 200px;
   background: ${s("menuBackground")};
+`;
+
+export const Label = styled(Text).attrs({ size: "xsmall", weight: "bold" })<{
+  color?: string;
+}>`
+  border: 1px solid ${(props) => props.theme.divider};
+  width: fit-content;
+  border-radius: 2em;
+  padding: 1px 8px 1px 20px;
+  position: relative;
+  flex-shrink: 0;
+
+  &::after {
+    content: "";
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: ${(props) =>
+      props.color || props.theme.backgroundSecondary};
+  }
 `;
 
 export const CardContent = styled.div`

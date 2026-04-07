@@ -1,10 +1,9 @@
-/* eslint-disable no-console */
-import { IncomingMessage } from "http";
-import chalk from "chalk";
+/* oxlint-disable no-console */
+import type { IncomingMessage } from "node:http";
+import { styleText } from "node:util";
 import isArray from "lodash/isArray";
 import isEmpty from "lodash/isEmpty";
 import isObject from "lodash/isObject";
-import isString from "lodash/isString";
 import winston from "winston";
 import env from "@server/env";
 import Metrics from "@server/logging/Metrics";
@@ -12,10 +11,9 @@ import Sentry from "@server/logging/sentry";
 import ShutdownHelper from "@server/utils/ShutdownHelper";
 import * as Tracing from "./tracer";
 
-const isProduction = env.ENVIRONMENT === "production";
-
 type LogCategory =
   | "lifecycle"
+  | "authentication"
   | "multiplayer"
   | "http"
   | "commands"
@@ -26,7 +24,10 @@ type LogCategory =
   | "queue"
   | "websockets"
   | "database"
-  | "utils";
+  | "utils"
+  | "plugins";
+
+// oxlint-disable-next-line @typescript-eslint/no-explicit-any
 type Extra = Record<string, any>;
 
 class Logger {
@@ -49,21 +50,32 @@ class Logger {
         ? env.LOG_LEVEL
         : "info",
     });
+
     this.output.add(
       new winston.transports.Console({
-        format: isProduction
+        format: env.isProduction
           ? winston.format.json()
           : winston.format.combine(
               winston.format.colorize(),
               winston.format.printf(
                 ({ message, level, label, ...extra }) =>
                   `${level}: ${
-                    label ? chalk.bold("[" + label + "] ") : ""
+                    label ? styleText("bold", `[${label}] `) : ""
                   }${message} ${isEmpty(extra) ? "" : JSON.stringify(extra)}`
               )
             ),
       })
     );
+
+    if (
+      env.DEBUG &&
+      env.DEBUG !== "http" &&
+      !["silly", "debug"].includes(env.LOG_LEVEL)
+    ) {
+      this.warn(
+        `"DEBUG" set in configuration but the "LOG_LEVEL" configuration is filtering debug messages. To see all logging, set "LOG_LEVEL" to "debug".`
+      );
+    }
   }
 
   /**
@@ -80,10 +92,21 @@ class Logger {
    * Debug information
    *
    * @param category A log message category that will be prepended
-   * @param extra Arbitrary data to be logged that will appear in prod logs
+   * @param extra Arbitrary data to be logged that will appear in development logs
    */
   public debug(label: LogCategory, message: string, extra?: Extra) {
     this.output.debug(message, { ...this.sanitize(extra), label });
+  }
+
+  /**
+   * Detailed information – for very detailed logs, more detailed than debug. "silly" is the
+   * lowest priority npm log level.
+   *
+   * @param category A log message category that will be prepended
+   * @param extra Arbitrary data to be logged that will appear in verbose logs
+   */
+  public silly(label: LogCategory, message: string, extra?: Extra) {
+    this.output.silly(message, { ...this.sanitize(extra), label });
   }
 
   /**
@@ -94,26 +117,7 @@ class Logger {
    */
   public warn(message: string, extra?: Extra) {
     Metrics.increment("logger.warning");
-
-    if (env.SENTRY_DSN) {
-      Sentry.withScope((scope) => {
-        scope.setLevel("warning");
-
-        for (const key in extra) {
-          scope.setExtra(key, this.sanitize(extra[key]));
-        }
-
-        Sentry.captureMessage(message);
-      });
-    }
-
-    if (isProduction) {
-      this.output.warn(message, this.sanitize(extra));
-    } else if (extra) {
-      console.warn(message, extra);
-    } else {
-      console.warn(message);
-    }
+    this.output.warn(message, this.sanitize(extra));
   }
 
   /**
@@ -153,7 +157,7 @@ class Logger {
       });
     }
 
-    if (isProduction) {
+    if (env.isProduction) {
       this.output.error(message, {
         error: error.message,
         stack: error.stack,
@@ -177,7 +181,7 @@ class Logger {
    */
   public fatal(message: string, error: Error, extra?: Extra) {
     this.error(message, error, extra);
-    void ShutdownHelper.execute();
+    void ShutdownHelper.execute(1);
   }
 
   /**
@@ -186,9 +190,9 @@ class Logger {
    * @param input The data to sanitize
    * @returns The sanitized data
    */
-  private sanitize<T>(input: T): T {
+  private sanitize = <T>(input: T, level = 0): T => {
     // Short circuit if we're not in production to enable easier debugging
-    if (!isProduction) {
+    if (!env.isProduction) {
       return input;
     }
 
@@ -200,35 +204,38 @@ class Logger {
       "content",
     ];
 
-    if (isString(input)) {
-      if (sensitiveFields.some((field) => input.includes(field))) {
-        return "[Filtered]" as any as T;
-      }
+    if (level > 3) {
+      // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+      return "[…]" as any as T;
     }
 
     if (isArray(input)) {
-      return input.map(this.sanitize) as any as T;
+      // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+      return input.map((item) => this.sanitize(item, level + 1)) as any as T;
     }
 
     if (isObject(input)) {
-      const output = { ...input };
+      // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+      const output: Record<string, any> = { ...input };
 
       for (const key of Object.keys(output)) {
         if (isObject(output[key])) {
-          output[key] = this.sanitize(output[key]);
+          output[key] = this.sanitize(output[key], level + 1);
         } else if (isArray(output[key])) {
-          output[key] = output[key].map(this.sanitize);
+          output[key] = output[key].map((value: unknown) =>
+            this.sanitize(value, level + 1)
+          );
         } else if (sensitiveFields.includes(key)) {
           output[key] = "[Filtered]";
         } else {
-          output[key] = this.sanitize(output[key]);
+          output[key] = this.sanitize(output[key], level + 1);
         }
       }
-      return output;
+      return output as T;
     }
 
     return input;
-  }
+  };
 }
 
 export default new Logger();

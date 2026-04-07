@@ -1,5 +1,5 @@
 import emails from "@server/emails/templates";
-import BaseTask from "./BaseTask";
+import { BaseTask } from "./base/BaseTask";
 
 type Props = {
   templateName: string;
@@ -15,6 +15,7 @@ export default class EmailTask extends BaseTask<Props> {
       );
     }
 
+    // @ts-expect-error We won't instantiate an abstract class
     const email = new EmailClass(props, metadata);
     return email.send();
   }

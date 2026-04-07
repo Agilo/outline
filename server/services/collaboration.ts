@@ -1,17 +1,22 @@
-import http, { IncomingMessage } from "http";
-import { Duplex } from "stream";
-import url from "url";
+import type { IncomingMessage } from "node:http";
+import type http from "node:http";
+import type { Duplex } from "node:stream";
+import url from "node:url";
+import { Redis } from "@hocuspocus/extension-redis";
 import { Throttle } from "@hocuspocus/extension-throttle";
 import { Server } from "@hocuspocus/server";
-import Koa from "koa";
+import type Koa from "koa";
 import WebSocket from "ws";
 import { DocumentValidation } from "@shared/validations";
+import { APIUpdateExtension } from "@server/collaboration/APIUpdateExtension";
 import { ConnectionLimitExtension } from "@server/collaboration/ConnectionLimitExtension";
 import { ViewsExtension } from "@server/collaboration/ViewsExtension";
 import env from "@server/env";
 import Logger from "@server/logging/Logger";
+import RedisAdapter from "@server/storage/redis";
 import ShutdownHelper, { ShutdownOrder } from "@server/utils/ShutdownHelper";
 import AuthenticationExtension from "../collaboration/AuthenticationExtension";
+import { EditorVersionExtension } from "../collaboration/EditorVersionExtension";
 import LoggerExtension from "../collaboration/LoggerExtension";
 import MetricsExtension from "../collaboration/MetricsExtension";
 import PersistenceExtension from "../collaboration/PersistenceExtension";
@@ -27,11 +32,23 @@ export default function init(
     maxPayload: DocumentValidation.maxStateLength,
   });
 
+  // Handle WebSocket server errors to prevent crashes when maxPayload is exceeded
+  wss.on("error", (error) => {
+    Logger.error("WebSocket server error", error);
+  });
+
   const hocuspocus = Server.configure({
     debounce: 3000,
     timeout: 30000,
     maxDebounce: 10000,
     extensions: [
+      ...(env.REDIS_COLLABORATION_URL
+        ? [
+            new Redis({
+              redis: RedisAdapter.collaborationClient,
+            }),
+          ]
+        : []),
       new Throttle({
         throttle: env.RATE_LIMITER_COLLABORATION_REQUESTS,
         consideredSeconds: env.RATE_LIMITER_DURATION_WINDOW,
@@ -39,8 +56,10 @@ export default function init(
         banTime: 5,
       }),
       new ConnectionLimitExtension(),
+      new EditorVersionExtension(),
       new AuthenticationExtension(),
       new PersistenceExtension(),
+      new APIUpdateExtension(),
       new ViewsExtension(),
       new LoggerExtension(),
       new MetricsExtension(),
@@ -59,6 +78,22 @@ export default function init(
           .pop();
 
         if (documentId) {
+          // Handle socket errors that may occur during upgrade (e.g., maxPayload exceeded)
+          socket.on("error", (error: NodeJS.ErrnoException) => {
+            // ECONNRESET is common when clients disconnect abruptly, no need to log
+            if (error.code === "ECONNRESET") {
+              return;
+            }
+            Logger.error(
+              "Socket error during WebSocket upgrade",
+              error,
+              {
+                documentId,
+              },
+              req
+            );
+          });
+
           wss.handleUpgrade(req, socket, head, (client) => {
             // Handle websocket connection errors as soon as the client is upgraded
             client.on("error", (error) => {

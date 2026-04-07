@@ -1,16 +1,18 @@
-import { Backlink } from "@server/models";
-import { buildDocument } from "@server/test/factories";
-import { setupTestDatabase } from "@server/test/support";
+import { parser } from "@server/editor";
+import { Relationship } from "@server/models";
+import { RelationshipType } from "@server/models/Relationship";
+import { buildDocument, buildTeam } from "@server/test/factories";
+
 import BacklinksProcessor from "./BacklinksProcessor";
 
 const ip = "127.0.0.1";
 
-setupTestDatabase();
-
 describe("documents.publish", () => {
-  test("should create new backlink records", async () => {
-    const otherDocument = await buildDocument();
+  it("should create new backlink records", async () => {
+    const team = await buildTeam();
+    const otherDocument = await buildDocument({ teamId: team.id });
     const document = await buildDocument({
+      teamId: team.id,
       text: `[this is a link](${otherDocument.url})`,
     });
 
@@ -21,25 +23,29 @@ describe("documents.publish", () => {
       collectionId: document.collectionId!,
       teamId: document.teamId,
       actorId: document.createdById,
-      data: { title: document.title },
       ip,
     });
-    const backlinks = await Backlink.findAll({
+    const backlinks = await Relationship.findAll({
       where: {
         reverseDocumentId: document.id,
+        type: RelationshipType.Backlink,
       },
     });
     expect(backlinks.length).toBe(1);
   });
 
-  test("should not fail when linked document is destroyed", async () => {
-    const otherDocument = await buildDocument();
+  it("should not fail when linked document is destroyed", async () => {
+    const team = await buildTeam();
+    const otherDocument = await buildDocument({ teamId: team.id });
     await otherDocument.destroy();
     const document = await buildDocument({
+      teamId: team.id,
       version: 0,
       text: `[ ] checklist item`,
     });
-    document.text = `[this is a link](${otherDocument.url})`;
+    document.content = parser
+      .parse(`[this is a link](${otherDocument.url})`)
+      ?.toJSON();
     await document.save();
 
     const processor = new BacklinksProcessor();
@@ -49,12 +55,39 @@ describe("documents.publish", () => {
       collectionId: document.collectionId!,
       teamId: document.teamId,
       actorId: document.createdById,
-      data: { title: document.title },
       ip,
     });
-    const backlinks = await Backlink.findAll({
+    const backlinks = await Relationship.findAll({
       where: {
         reverseDocumentId: document.id,
+        type: RelationshipType.Backlink,
+      },
+    });
+    expect(backlinks.length).toBe(0);
+  });
+
+  it("should not create backlink records for cross-team links", async () => {
+    const teamA = await buildTeam();
+    const teamB = await buildTeam();
+    const otherDocument = await buildDocument({ teamId: teamB.id });
+    const document = await buildDocument({
+      teamId: teamA.id,
+      text: `[this is a link](${otherDocument.url})`,
+    });
+
+    const processor = new BacklinksProcessor();
+    await processor.perform({
+      name: "documents.publish",
+      documentId: document.id,
+      collectionId: document.collectionId!,
+      teamId: document.teamId,
+      actorId: document.createdById,
+      ip,
+    });
+    const backlinks = await Relationship.findAll({
+      where: {
+        reverseDocumentId: document.id,
+        type: RelationshipType.Backlink,
       },
     });
     expect(backlinks.length).toBe(0);
@@ -62,9 +95,11 @@ describe("documents.publish", () => {
 });
 
 describe("documents.update", () => {
-  test("should not fail on a document with no previous revisions", async () => {
-    const otherDocument = await buildDocument();
+  it("should not fail on a document with no previous revisions", async () => {
+    const team = await buildTeam();
+    const otherDocument = await buildDocument({ teamId: team.id });
     const document = await buildDocument({
+      teamId: team.id,
       text: `[this is a link](${otherDocument.url})`,
     });
 
@@ -76,24 +111,29 @@ describe("documents.update", () => {
       teamId: document.teamId,
       actorId: document.createdById,
       createdAt: new Date().toISOString(),
-      data: { title: document.title, autosave: false, done: true },
+      data: { done: true },
       ip,
     });
-    const backlinks = await Backlink.findAll({
+    const backlinks = await Relationship.findAll({
       where: {
         reverseDocumentId: document.id,
+        type: RelationshipType.Backlink,
       },
     });
     expect(backlinks.length).toBe(1);
   });
 
-  test("should not fail when previous revision is different document version", async () => {
-    const otherDocument = await buildDocument();
+  it("should not fail when previous revision is different document version", async () => {
+    const team = await buildTeam();
+    const otherDocument = await buildDocument({ teamId: team.id });
     const document = await buildDocument({
+      teamId: team.id,
       version: undefined,
       text: `[ ] checklist item`,
     });
-    document.text = `[this is a link](${otherDocument.url})`;
+    document.content = parser
+      .parse(`[this is a link](${otherDocument.url})`)
+      ?.toJSON();
     await document.save();
 
     const processor = new BacklinksProcessor();
@@ -104,21 +144,25 @@ describe("documents.update", () => {
       teamId: document.teamId,
       actorId: document.createdById,
       createdAt: new Date().toISOString(),
-      data: { title: document.title, autosave: false, done: true },
+      data: { done: true },
       ip,
     });
-    const backlinks = await Backlink.findAll({
+    const backlinks = await Relationship.findAll({
       where: {
         reverseDocumentId: document.id,
+        type: RelationshipType.Backlink,
       },
     });
     expect(backlinks.length).toBe(1);
   });
 
-  test("should create new backlink records", async () => {
-    const otherDocument = await buildDocument();
-    const document = await buildDocument();
-    document.text = `[this is a link](${otherDocument.url})`;
+  it("should create new backlink records", async () => {
+    const team = await buildTeam();
+    const otherDocument = await buildDocument({ teamId: team.id });
+    const document = await buildDocument({ teamId: team.id });
+    document.content = parser
+      .parse(`[this is a link](${otherDocument.url})`)
+      ?.toJSON();
     await document.save();
 
     const processor = new BacklinksProcessor();
@@ -129,21 +173,24 @@ describe("documents.update", () => {
       teamId: document.teamId,
       actorId: document.createdById,
       createdAt: new Date().toISOString(),
-      data: { title: document.title, autosave: false, done: true },
+      data: { done: true },
       ip,
     });
-    const backlinks = await Backlink.findAll({
+    const backlinks = await Relationship.findAll({
       where: {
         reverseDocumentId: document.id,
+        type: RelationshipType.Backlink,
       },
     });
     expect(backlinks.length).toBe(1);
   });
 
-  test("should destroy removed backlink records", async () => {
-    const otherDocument = await buildDocument();
-    const yetAnotherDocument = await buildDocument();
+  it("should destroy removed backlink records", async () => {
+    const team = await buildTeam();
+    const otherDocument = await buildDocument({ teamId: team.id });
+    const yetAnotherDocument = await buildDocument({ teamId: team.id });
     const document = await buildDocument({
+      teamId: team.id,
       text: `[this is a link](${otherDocument.url})
 
 [this is a another link](${yetAnotherDocument.url})`,
@@ -156,12 +203,15 @@ describe("documents.update", () => {
       collectionId: document.collectionId!,
       teamId: document.teamId,
       actorId: document.createdById,
-      data: { title: document.title },
       ip,
     });
-    document.text = `First link is gone
+    document.content = parser
+      .parse(
+        `First link is gone
 
-[this is a another link](${yetAnotherDocument.url})`;
+  [this is a another link](${yetAnotherDocument.url})`
+      )
+      ?.toJSON();
     await document.save();
 
     await processor.perform({
@@ -171,12 +221,13 @@ describe("documents.update", () => {
       teamId: document.teamId,
       actorId: document.createdById,
       createdAt: new Date().toISOString(),
-      data: { title: document.title, autosave: false, done: true },
+      data: { done: true },
       ip,
     });
-    const backlinks = await Backlink.findAll({
+    const backlinks = await Relationship.findAll({
       where: {
         reverseDocumentId: document.id,
+        type: RelationshipType.Backlink,
       },
     });
     expect(backlinks.length).toBe(1);
@@ -185,10 +236,13 @@ describe("documents.update", () => {
 });
 
 describe("documents.delete", () => {
-  test("should destroy related backlinks", async () => {
-    const otherDocument = await buildDocument();
-    const document = await buildDocument();
-    document.text = `[this is a link](${otherDocument.url})`;
+  it("should destroy related backlinks", async () => {
+    const team = await buildTeam();
+    const otherDocument = await buildDocument({ teamId: team.id });
+    const document = await buildDocument({ teamId: team.id });
+    document.content = parser
+      .parse(`[this is a link](${otherDocument.url})`)
+      ?.toJSON();
     await document.save();
 
     const processor = new BacklinksProcessor();
@@ -199,7 +253,7 @@ describe("documents.delete", () => {
       teamId: document.teamId,
       actorId: document.createdById,
       createdAt: new Date().toISOString(),
-      data: { title: document.title, autosave: false, done: true },
+      data: { done: true },
       ip,
     });
 
@@ -209,12 +263,12 @@ describe("documents.delete", () => {
       collectionId: document.collectionId!,
       teamId: document.teamId,
       actorId: document.createdById,
-      data: { title: document.title },
       ip,
     });
-    const backlinks = await Backlink.findAll({
+    const backlinks = await Relationship.findAll({
       where: {
         reverseDocumentId: document.id,
+        type: RelationshipType.Backlink,
       },
     });
     expect(backlinks.length).toBe(0);

@@ -4,21 +4,24 @@ import { now } from "mobx-utils";
 import { UserPreferenceDefaults } from "@shared/constants";
 import {
   NotificationEventDefaults,
-  NotificationEventType,
+  type NotificationEventType,
   TeamPreference,
   UserPreference,
-  UserPreferences,
+  type UserPreferences,
   UserRole,
 } from "@shared/types";
 import type { NotificationSettings } from "@shared/types";
+import type { locales } from "@shared/utils/date";
 import { client } from "~/utils/ApiClient";
-import ParanoidModel from "./ParanoidModel";
+import type Document from "./Document";
+import type Group from "./Group";
+import type UserMembership from "./UserMembership";
+import ParanoidModel from "./base/ParanoidModel";
 import Field from "./decorators/Field";
+import type { Searchable } from "./interfaces/Searchable";
 
-class User extends ParanoidModel {
-  @Field
-  @observable
-  id: string;
+class User extends ParanoidModel implements Searchable {
+  static modelName = "User";
 
   @Field
   @observable
@@ -34,7 +37,7 @@ class User extends ParanoidModel {
 
   @Field
   @observable
-  language: string;
+  language: keyof typeof locales;
 
   @Field
   @observable
@@ -44,24 +47,98 @@ class User extends ParanoidModel {
   @observable
   notificationSettings: NotificationSettings;
 
+  @Field
+  @observable
+  timezone?: string;
+
+  @observable
   email: string;
 
-  isAdmin: boolean;
+  @observable
+  role: UserRole;
 
-  isViewer: boolean;
+  @observable
+  protected _lastActiveAt: string;
 
-  lastActiveAt: string;
+  /**
+   * The last time the user was active. For the currently signed-in user, this
+   * always returns the current date so they always appear as recently active.
+   */
+  @computed
+  get lastActiveAt(): string {
+    if (this.store.rootStore.auth?.currentUserId === this.id) {
+      return new Date(now(60000)).toISOString();
+    }
+    return this._lastActiveAt;
+  }
 
+  set lastActiveAt(value: string) {
+    this._lastActiveAt = value;
+  }
+
+  @observable
   isSuspended: boolean;
 
   @computed
-  get initial(): string {
-    return this.name ? this.name[0] : "?";
+  get searchContent(): string[] {
+    return [this.name, this.email, this.initials].filter(Boolean);
   }
 
   @computed
+  get searchSuppressed(): boolean {
+    return this.isDeleted;
+  }
+
+  @computed
+  get initial(): string {
+    return (this.name ? this.name[0] : "?").toUpperCase();
+  }
+
+  @computed
+  get initials(): string {
+    if (!this.name) {
+      return "";
+    }
+    const names = this.name.trim().split(" ");
+    if (names.length === 1) {
+      return names[0][0].toUpperCase();
+    }
+    return (names[0][0] + names[names.length - 1][0]).toUpperCase();
+  }
+
+  /**
+   * Whether the user has been invited but not yet signed in.
+   */
   get isInvited(): boolean {
     return !this.lastActiveAt;
+  }
+
+  /**
+   * Whether the user is an admin.
+   */
+  get isAdmin(): boolean {
+    return this.role === UserRole.Admin;
+  }
+
+  /**
+   * Whether the user is a member (editor).
+   */
+  get isMember(): boolean {
+    return this.role === UserRole.Member;
+  }
+
+  /**
+   * Whether the user is a viewer.
+   */
+  get isViewer(): boolean {
+    return this.role === UserRole.Viewer;
+  }
+
+  /**
+   * Whether the user is a guest.
+   */
+  get isGuest(): boolean {
+    return this.role === UserRole.Guest;
   }
 
   /**
@@ -75,17 +152,6 @@ class User extends ParanoidModel {
     return new Date(this.lastActiveAt) > subMinutes(now(10000), 5);
   }
 
-  @computed
-  get role(): UserRole {
-    if (this.isAdmin) {
-      return UserRole.Admin;
-    } else if (this.isViewer) {
-      return UserRole.Viewer;
-    } else {
-      return UserRole.Member;
-    }
-  }
-
   /**
    * Returns whether this user is using a separate editing mode behind an "Edit"
    * button rather than seamless always-editing.
@@ -96,8 +162,44 @@ class User extends ParanoidModel {
   get separateEditMode(): boolean {
     return !this.getPreference(
       UserPreference.SeamlessEdit,
-      this.store.rootStore.auth.team.getPreference(TeamPreference.SeamlessEdit)
+      this.store.rootStore.auth?.team?.getPreference(
+        TeamPreference.SeamlessEdit
+      )
     );
+  }
+
+  /**
+   * Returns the direct memberships that this user has to documents. Documents that the
+   * user already has access to through a collection, archived, and trashed documents are not included.
+   *
+   * @returns A list of user memberships
+   */
+  @computed
+  get documentMemberships(): UserMembership[] {
+    const { userMemberships, documents, policies } = this.store.rootStore;
+    return userMemberships.orderedData
+      .filter(
+        (m) => m.userId === this.id && m.sourceId === null && m.documentId
+      )
+      .filter((m) => {
+        const document = documents.get(m.documentId!);
+        const policy = document?.collectionId
+          ? policies.get(document.collectionId)
+          : undefined;
+        return !policy?.abilities?.readDocument && !!document?.isActive;
+      });
+  }
+
+  @computed
+  get groupsWithDocumentMemberships() {
+    const { groups, groupUsers } = this.store.rootStore;
+
+    return groupUsers.orderedData
+      .filter((groupUser) => groupUser.userId === this.id)
+      .map((groupUser) => groups.get(groupUser.groupId))
+      .filter(Boolean)
+      .filter((group) => group && group.documentMemberships.length > 0)
+      .sort((a, b) => a!.name.localeCompare(b!.name)) as Group[];
   }
 
   /**
@@ -145,10 +247,14 @@ class User extends ParanoidModel {
    * @param key The UserPreference key to retrieve
    * @returns The value
    */
-  getPreference(key: UserPreference, defaultValue = false): boolean {
-    return (
-      this.preferences?.[key] ?? UserPreferenceDefaults[key] ?? defaultValue
-    );
+  getPreference<K extends UserPreference>(
+    key: K,
+    defaultValue?: UserPreferences[K]
+  ): NonNullable<UserPreferences[K]> {
+    return (this.preferences?.[key] ??
+      UserPreferenceDefaults[key] ??
+      defaultValue ??
+      false) as NonNullable<UserPreferences[K]>;
   }
 
   /**
@@ -157,11 +263,21 @@ class User extends ParanoidModel {
    * @param key The UserPreference key to retrieve
    * @param value The value to set
    */
-  setPreference(key: UserPreference, value: boolean) {
+  @action
+  setPreference<K extends UserPreference>(
+    key: K,
+    value: NonNullable<UserPreferences[K]>
+  ) {
     this.preferences = {
       ...this.preferences,
       [key]: value,
     };
+  }
+
+  getMembership(document: Document) {
+    return this.store.rootStore.userMemberships.orderedData.find(
+      (m) => m.documentId === document.id && m.userId === this.id
+    );
   }
 }
 

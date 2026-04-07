@@ -1,8 +1,13 @@
 import { addMinutes, subMinutes } from "date-fns";
 import invariant from "invariant";
-import { SaveOptions } from "sequelize";
+import type {
+  InferAttributes,
+  InferCreationAttributes,
+  SaveOptions,
+} from "sequelize";
 import {
   BeforeCreate,
+  BeforeUpdate,
   BelongsTo,
   Column,
   DataType,
@@ -14,43 +19,31 @@ import Logger from "@server/logging/Logger";
 import AuthenticationProvider from "./AuthenticationProvider";
 import User from "./User";
 import IdModel from "./base/IdModel";
-import Encrypted, {
-  getEncryptedColumn,
-  setEncryptedColumn,
-} from "./decorators/Encrypted";
+import Encrypted from "./decorators/Encrypted";
 import Fix from "./decorators/Fix";
 
 @Table({ tableName: "user_authentications", modelName: "user_authentication" })
 @Fix
-class UserAuthentication extends IdModel {
+class UserAuthentication extends IdModel<
+  InferAttributes<UserAuthentication>,
+  Partial<InferCreationAttributes<UserAuthentication>>
+> {
   @Column(DataType.ARRAY(DataType.STRING))
   scopes: string[];
 
   @Column(DataType.BLOB)
   @Encrypted
-  get accessToken() {
-    return getEncryptedColumn(this, "accessToken");
-  }
-
-  set accessToken(value: string) {
-    setEncryptedColumn(this, "accessToken", value);
-  }
+  accessToken: string;
 
   @Column(DataType.BLOB)
   @Encrypted
-  get refreshToken() {
-    return getEncryptedColumn(this, "refreshToken");
-  }
-
-  set refreshToken(value: string) {
-    setEncryptedColumn(this, "refreshToken", value);
-  }
+  refreshToken: string;
 
   @Column
   providerId: string;
 
   @Column(DataType.DATE)
-  expiresAt: Date;
+  expiresAt: Date | null;
 
   @Column(DataType.DATE)
   lastValidatedAt: Date;
@@ -77,6 +70,13 @@ class UserAuthentication extends IdModel {
     model.lastValidatedAt = new Date();
   }
 
+  @BeforeUpdate
+  static updateValidated(model: UserAuthentication) {
+    if (model.changed("accessToken")) {
+      model.lastValidatedAt = new Date();
+    }
+  }
+
   // instance methods
 
   /**
@@ -88,12 +88,15 @@ class UserAuthentication extends IdModel {
    * @returns true if the accessToken or refreshToken is still valid
    */
   public async validateAccess(
-    options: SaveOptions,
+    options: SaveOptions = {},
     force = false
   ): Promise<boolean> {
     // Check a maximum of once every 5 minutes
     if (this.lastValidatedAt > subMinutes(Date.now(), 5) && !force) {
-      Logger.debug("utils", "Skipping access token validation");
+      Logger.debug(
+        "authentication",
+        "Recently validated, skipping access token validation"
+      );
       return true;
     }
 
@@ -142,17 +145,30 @@ class UserAuthentication extends IdModel {
     authenticationProvider: AuthenticationProvider,
     options: SaveOptions
   ): Promise<boolean> {
-    if (
-      this.expiresAt > addMinutes(Date.now(), 5) ||
-      !this.refreshToken ||
-      // Some providers send no expiry depending on setup, in this case we can't
-      // refresh and assume the session is valid until logged out.
-      !this.expiresAt
-    ) {
+    if (this.expiresAt && this.expiresAt > addMinutes(Date.now(), 5)) {
+      Logger.debug(
+        "authentication",
+        "Existing token is still valid, skipping refresh"
+      );
       return false;
     }
 
-    Logger.info("utils", "Refreshing expiring access token", {
+    if (!this.refreshToken) {
+      Logger.debug(
+        "authentication",
+        "No refresh token found, skipping refresh"
+      );
+      return false;
+    }
+
+    // Some providers send no expiry depending on setup, in this case we can't
+    // refresh and assume the session is valid until logged out.
+    if (!this.expiresAt) {
+      Logger.debug("authentication", "No expiry found, skipping refresh");
+      return false;
+    }
+
+    Logger.info("authentication", "Refreshing expiring access token", {
       id: this.id,
       userId: this.userId,
     });
@@ -170,14 +186,18 @@ class UserAuthentication extends IdModel {
         this.refreshToken = response.refreshToken;
       }
       this.accessToken = response.accessToken;
-      this.expiresAt = response.expiresAt;
+      this.expiresAt = response.expiresAt ?? null;
       await this.save(options);
     }
 
-    Logger.info("utils", "Successfully refreshed expired access token", {
-      id: this.id,
-      userId: this.userId,
-    });
+    Logger.info(
+      "authentication",
+      "Successfully refreshed expired access token",
+      {
+        id: this.id,
+        userId: this.userId,
+      }
+    );
 
     return true;
   }

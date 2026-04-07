@@ -1,19 +1,24 @@
 import copy from "copy-to-clipboard";
 import { observer } from "mobx-react";
-import * as React from "react";
+import { CopyIcon, EditIcon } from "outline-icons";
+import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useMenuState } from "reakit/Menu";
-import Comment from "~/models/Comment";
-import CommentDeleteDialog from "~/components/CommentDeleteDialog";
-import ContextMenu from "~/components/ContextMenu";
-import MenuItem from "~/components/ContextMenu/MenuItem";
-import OverflowMenuButton from "~/components/ContextMenu/OverflowMenuButton";
-import Separator from "~/components/ContextMenu/Separator";
-import EventBoundary from "~/components/EventBoundary";
+import { toast } from "sonner";
+import type Comment from "~/models/Comment";
+import { DropdownMenu } from "~/components/Menu/DropdownMenu";
+import { OverflowMenuButton } from "~/components/Menu/OverflowMenuButton";
+import {
+  deleteCommentFactory,
+  resolveCommentFactory,
+  unresolveCommentFactory,
+  viewCommentReactionsFactory,
+} from "~/actions/definitions/comments";
 import usePolicy from "~/hooks/usePolicy";
 import useStores from "~/hooks/useStores";
-import useToasts from "~/hooks/useToasts";
 import { commentPath, urlify } from "~/utils/routeHelpers";
+import { ActionSeparator, createAction } from "~/actions";
+import { ActiveDocumentSection } from "~/actions/sections";
+import { useMenuAction } from "~/hooks/useMenuAction";
 
 type Props = {
   /** The comment to associate with the menu */
@@ -24,62 +29,71 @@ type Props = {
   onEdit: () => void;
   /** Callback when the comment has been deleted */
   onDelete: () => void;
+  /** Callback when the comment has been updated */
+  onUpdate: (attrs: { resolved: boolean }) => void;
 };
 
-function CommentMenu({ comment, onEdit, onDelete, className }: Props) {
-  const menu = useMenuState({
-    modal: true,
-  });
-  const { showToast } = useToasts();
-  const { documents, dialogs } = useStores();
+function CommentMenu({
+  comment,
+  onEdit,
+  onDelete,
+  onUpdate,
+  className,
+}: Props) {
+  const { documents } = useStores();
   const { t } = useTranslation();
-  const can = usePolicy(comment.id);
+  const can = usePolicy(comment);
   const document = documents.get(comment.documentId);
 
-  const handleDelete = React.useCallback(() => {
-    dialogs.openModal({
-      title: t("Delete comment"),
-      isCentered: true,
-      content: <CommentDeleteDialog comment={comment} onSubmit={onDelete} />,
-    });
-  }, [dialogs, comment, onDelete, t]);
-
-  const handleCopyLink = React.useCallback(() => {
+  const handleCopyLink = useCallback(() => {
     if (document) {
       copy(urlify(commentPath(document, comment)));
-      showToast(t("Link copied"));
+      toast.message(t("Link copied"));
     }
-  }, [t, document, comment, showToast]);
+  }, [t, document, comment]);
+
+  const actions = useMemo(
+    () => [
+      createAction({
+        name: `${t("Edit")}…`,
+        icon: <EditIcon />,
+        section: ActiveDocumentSection,
+        visible: can.update && !comment.isResolved,
+        perform: onEdit,
+      }),
+      resolveCommentFactory({
+        comment,
+        onResolve: () => onUpdate({ resolved: true }),
+      }),
+      unresolveCommentFactory({
+        comment,
+        onUnresolve: () => onUpdate({ resolved: false }),
+      }),
+      viewCommentReactionsFactory({
+        comment,
+      }),
+      createAction({
+        name: t("Copy link"),
+        icon: <CopyIcon />,
+        section: ActiveDocumentSection,
+        perform: handleCopyLink,
+      }),
+      ActionSeparator,
+      deleteCommentFactory({ comment, onDelete }),
+    ],
+    [t, comment, can.update, onEdit, onUpdate, onDelete, handleCopyLink]
+  );
+
+  const rootAction = useMenuAction(actions);
 
   return (
-    <>
-      <EventBoundary>
-        <OverflowMenuButton
-          aria-label={t("Show menu")}
-          className={className}
-          {...menu}
-        />
-      </EventBoundary>
-
-      <ContextMenu {...menu} aria-label={t("Comment options")}>
-        {can.update && (
-          <MenuItem {...menu} onClick={onEdit}>
-            {t("Edit")}
-          </MenuItem>
-        )}
-        <MenuItem {...menu} onClick={handleCopyLink}>
-          {t("Copy link")}
-        </MenuItem>
-        {can.delete && (
-          <>
-            <Separator />
-            <MenuItem {...menu} onClick={handleDelete} dangerous>
-              {t("Delete")}
-            </MenuItem>
-          </>
-        )}
-      </ContextMenu>
-    </>
+    <DropdownMenu
+      action={rootAction}
+      align="end"
+      ariaLabel={t("Comment options")}
+    >
+      <OverflowMenuButton className={className} />
+    </DropdownMenu>
   );
 }
 

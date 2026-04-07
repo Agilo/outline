@@ -1,57 +1,65 @@
-import trim from "lodash/trim";
-import { action, computed, observable, reaction, runInAction } from "mobx";
+import invariant from "invariant";
+import { action, comparer, computed, observable, runInAction } from "mobx";
 import {
-  CollectionPermission,
-  FileOperationFormat,
-  NavigationNode,
+  type CollectionPermission,
+  type FileOperationFormat,
+  type NavigationNode,
+  NavigationNodeType,
+  type ProsemirrorData,
 } from "@shared/types";
 import { sortNavigationNodes } from "@shared/utils/collections";
 import type CollectionsStore from "~/stores/CollectionsStore";
-import Document from "~/models/Document";
-import ParanoidModel from "~/models/ParanoidModel";
+import type Document from "~/models/Document";
+import ParanoidModel from "~/models/base/ParanoidModel";
 import { client } from "~/utils/ApiClient";
+import type User from "./User";
 import Field from "./decorators/Field";
+import { AfterChange } from "./decorators/Lifecycle";
 
 export default class Collection extends ParanoidModel {
+  static modelName = "Collection";
+
   store: CollectionsStore;
 
-  @observable
-  isSaving: boolean;
-
-  isFetching = false;
-
-  @Field
-  @observable
-  id: string;
-
+  /** The name of the collection. */
   @Field
   @observable
   name: string;
 
+  /** Collection description in Prosemirror format. */
   @Field
-  @observable
-  description: string;
+  @observable.shallow
+  data: ProsemirrorData;
 
+  /** An icon (or) emoji to use as the collection icon. */
   @Field
   @observable
   icon: string;
 
+  /** The color to use for the collection icon and other highlights. */
   @Field
   @observable
-  color: string;
+  color?: string | null;
 
+  /** The default permission for workspace users. */
   @Field
   @observable
-  permission: CollectionPermission | void;
+  permission?: CollectionPermission;
 
+  /**
+   * Whether public sharing is enabled for the collection. Note this can also be disabled at the
+   * workspace level.
+   */
   @Field
   @observable
   sharing: boolean;
 
+  /** The sort index for the collection. */
   @Field
   @observable
   index: string;
 
+  /** The sort field and direction for documents in the collection. */
   @Field
   @observable
   sort: {
@@ -59,28 +67,48 @@ export default class Collection extends ParanoidModel {
     direction: "asc" | "desc";
   };
 
+  /** The minimum permission level required to manage templates in this collection. */
+  @Field
+  @observable
+  templateManagement: CollectionPermission;
+
+  /**
+   * Whether commenting is enabled for the collection.
+   */
+  @Field
+  @observable
+  commenting?: boolean | null;
+
+  /** The child documents of the collection. */
   @observable
   documents?: NavigationNode[];
 
+  /** @deprecated Use path instead. */
+  @observable
   url: string;
 
+  /** The ID that appears in the collection slug. */
+  @observable
   urlId: string;
 
-  constructor(fields: Partial<Collection>, store: CollectionsStore) {
-    super(fields, store);
+  /**
+   * The date and time the collection was archived.
+   */
+  @observable
+  archivedAt: string;
 
-    const resetDocumentPolicies = () => {
-      this.store.rootStore.documents
-        .inCollection(this.id)
-        .forEach((document) => {
-          this.store.rootStore.policies.remove(document.id);
-        });
-    };
+  /**
+   * User who archived the collection.
+   */
+  @observable
+  archivedBy?: User;
 
-    reaction(() => this.permission, resetDocumentPolicies);
-    reaction(() => this.sharing, resetDocumentPolicies);
+  @computed
+  get searchContent(): string {
+    return this.name;
   }
 
+  /** Returns whether the collection is empty, or undefined if not loaded. */
   @computed
   get isEmpty(): boolean | undefined {
     if (!this.documents) {
@@ -101,12 +129,7 @@ export default class Collection extends ParanoidModel {
    * @returns boolean
    */
   get isPrivate(): boolean {
-    return !this.permission;
-  }
-
-  @computed
-  get hasDescription(): boolean {
-    return !!trim(this.description, "\\").trim();
+    return this.permission === null;
   }
 
   @computed
@@ -116,12 +139,71 @@ export default class Collection extends ParanoidModel {
     );
   }
 
+  /**
+   * Returns whether there is a subscription for this collection in the store.
+   *
+   * @returns True if there is a subscription, false otherwise.
+   */
   @computed
+  get isSubscribed(): boolean {
+    return !!this.store.rootStore.subscriptions.getByCollectionId(this.id);
+  }
+
+  @computed
+  get isManualSort(): boolean {
+    return this.sort.field === "index";
+  }
+
+  @computed({ equals: comparer.structural })
   get sortedDocuments(): NavigationNode[] | undefined {
     if (!this.documents) {
       return undefined;
     }
     return sortNavigationNodes(this.documents, this.sort);
+  }
+
+  /** The initial letter of the collection name as a string. */
+  @computed
+  get initial() {
+    return (this.name?.charAt(0) ?? "?").toUpperCase();
+  }
+
+  @computed
+  get path() {
+    return this.url;
+  }
+
+  /**
+   * Returns users that have been individually given access to the collection.
+   *
+   * @returns A list of users that have been given access to the collection.
+   */
+  @computed
+  get members(): User[] {
+    return this.store.rootStore.memberships.orderedData
+      .filter((m) => m.collectionId === this.id)
+      .map((m) => m.user)
+      .filter(Boolean);
+  }
+
+  @computed
+  get isArchived() {
+    return !!this.archivedAt;
+  }
+
+  @computed
+  get isDeleted() {
+    return !!this.deletedAt;
+  }
+
+  @computed
+  get isActive() {
+    return !this.isArchived && !this.isDeleted;
+  }
+
+  @computed
+  get hasDocuments() {
+    return !!this.documents?.length;
   }
 
   fetchDocuments = async (options?: { force: boolean }) => {
@@ -134,12 +216,13 @@ export default class Collection extends ParanoidModel {
 
     try {
       this.isFetching = true;
-      const { data } = await client.post("/collections.documents", {
+      const res = await client.post("/collections.documents", {
         id: this.id,
       });
+      invariant(res?.data, "Data should be available");
 
       runInAction("Collection#fetchDocuments", () => {
-        this.documents = data;
+        this.documents = res.data;
       });
     } finally {
       this.isFetching = false;
@@ -153,7 +236,9 @@ export default class Collection extends ParanoidModel {
    * @param document The document properties stored in the collection
    */
   @action
-  updateDocument(document: Pick<Document, "id" | "title" | "url">) {
+  updateDocument(
+    document: Pick<Document, "id" | "title" | "url" | "color" | "icon">
+  ) {
     if (!this.documents) {
       return;
     }
@@ -161,6 +246,8 @@ export default class Collection extends ParanoidModel {
     const travelNodes = (nodes: NavigationNode[]) =>
       nodes.forEach((node) => {
         if (node.id === document.id) {
+          node.color = document.color ?? undefined;
+          node.icon = document.icon ?? undefined;
           node.title = document.title;
           node.url = document.url;
         } else {
@@ -196,12 +283,42 @@ export default class Collection extends ParanoidModel {
     });
   }
 
+  /**
+   * Adds the document identified by the given id to the collection in
+   * memory. Does not add the document to the database or store.
+   *
+   * @param document The document to add.
+   * @param parentDocumentId The id of the document to add the new document to.
+   */
+  @action
+  addDocument(document: Document, parentDocumentId?: string) {
+    if (!this.documents) {
+      return;
+    }
+
+    if (!parentDocumentId) {
+      this.documents.unshift(document.asNavigationNode);
+      return;
+    }
+
+    const travelNodes = (nodes: NavigationNode[]) =>
+      nodes.forEach((node) => {
+        if (node.id === parentDocumentId) {
+          node.children = [document.asNavigationNode, ...(node.children ?? [])];
+        } else {
+          travelNodes(node.children);
+        }
+      });
+
+    travelNodes(this.documents);
+  }
+
   @action
   updateIndex(index: string) {
     this.index = index;
   }
 
-  getDocumentChildren(documentId: string) {
+  getChildrenForDocument(documentId: string) {
     let result: NavigationNode[] = [];
 
     const travelNodes = (nodes: NavigationNode[]) => {
@@ -220,6 +337,19 @@ export default class Collection extends ParanoidModel {
     }
 
     return result;
+  }
+
+  @computed
+  get asNavigationNode(): NavigationNode {
+    return {
+      type: NavigationNodeType.Collection,
+      id: this.id,
+      title: this.name,
+      color: this.color ?? undefined,
+      icon: this.icon ?? undefined,
+      children: this.documents ?? [],
+      url: this.url,
+    };
   }
 
   pathToDocument(documentId: string) {
@@ -261,10 +391,30 @@ export default class Collection extends ParanoidModel {
   }
 
   @action
-  star = async () => this.store.star(this);
+  star = async (index?: string) => this.store.star(this, index);
 
   @action
   unstar = async () => this.store.unstar(this);
+
+  /**
+   * Subscribes the current user to this collection.
+   *
+   * @returns A promise that resolves when the subscription is created.
+   */
+  @action
+  subscribe = () => this.store.subscribe(this);
+
+  /**
+   * Unsubscribes the current user from this collection.
+   *
+   * @returns A promise that resolves when the subscription is destroyed.
+   */
+  @action
+  unsubscribe = () => this.store.unsubscribe(this);
+
+  archive = () => this.store.archive(this);
+
+  restore = () => this.store.restore(this);
 
   export = (format: FileOperationFormat, includeAttachments: boolean) =>
     client.post("/collections.export", {
@@ -272,4 +422,26 @@ export default class Collection extends ParanoidModel {
       format,
       includeAttachments,
     });
+
+  // hooks
+
+  @AfterChange
+  static removePolicies(
+    model: Collection,
+    previousAttributes: Partial<Collection>
+  ) {
+    if (
+      previousAttributes &&
+      (model.sharing !== previousAttributes?.sharing ||
+        model.permission !== previousAttributes?.permission)
+    ) {
+      const { documents, policies } = model.store.rootStore;
+
+      documents.inCollection(model.id).forEach((document) => {
+        policies.remove(document.id);
+      });
+    }
+  }
+
+  private isFetching = false;
 }

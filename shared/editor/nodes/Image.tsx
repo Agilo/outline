@@ -1,13 +1,26 @@
-import Token from "markdown-it/lib/token";
+import type { Token } from "markdown-it";
 import { InputRule } from "prosemirror-inputrules";
-import { Node as ProsemirrorNode, NodeSpec, NodeType } from "prosemirror-model";
-import { NodeSelection, Plugin, Command } from "prosemirror-state";
+import type {
+  Node as ProsemirrorNode,
+  NodeSpec,
+  NodeType,
+} from "prosemirror-model";
+import type { Command } from "prosemirror-state";
+import { NodeSelection, Plugin, TextSelection } from "prosemirror-state";
 import * as React from "react";
 import { sanitizeUrl } from "../../utils/urls";
-import { default as ImageComponent, Caption } from "../components/Image";
-import { MarkdownSerializerState } from "../lib/markdown/serializer";
-import { ComponentProps } from "../types";
+import Caption from "../components/Caption";
+import ImageComponent from "../components/Image";
+import type { MarkdownSerializerState } from "../lib/markdown/serializer";
+import { EditorStyleHelper } from "../styles/EditorStyleHelper";
+import type { ComponentProps } from "../types";
 import SimpleImage from "./SimpleImage";
+import { LightboxImageFactory } from "../lib/Lightbox";
+import { ImageSource } from "../lib/FileHelper";
+import { DiagramPlaceholder } from "../components/DiagramPlaceholder";
+import { addComment } from "../commands/comment";
+import { addLink } from "../commands/link";
+import { commentedImagePlugin } from "../plugins/CommentedImagePlugin";
 
 const imageSizeRegex = /\s=(\d+)?x(\d+)?$/;
 
@@ -48,22 +61,35 @@ const parseTitleAttribute = (tokenTitle: string): TitleAttributes => {
   return attributes;
 };
 
-const downloadImageNode = async (node: ProsemirrorNode) => {
-  const image = await fetch(node.attrs.src);
-  const imageBlob = await image.blob();
-  const imageURL = URL.createObjectURL(imageBlob);
-  const extension = imageBlob.type.split(/\/|\+/g)[1];
-  const potentialName = node.attrs.alt || "image";
+export const downloadImageNode = async (
+  node: ProsemirrorNode,
+  cache?: RequestCache
+) => {
+  try {
+    const image = await fetch(node.attrs.src, {
+      cache,
+    });
+    const imageBlob = await image.blob();
+    const imageURL = URL.createObjectURL(imageBlob);
+    const extension = imageBlob.type.split(/\/|\+/g)[1];
+    const potentialName = node.attrs.alt || "image";
 
-  // create a temporary link node and click it with our image data
-  const link = document.createElement("a");
-  link.href = imageURL;
-  link.download = `${potentialName}.${extension}`;
-  document.body.appendChild(link);
-  link.click();
+    // create a temporary link node and click it with our image data
+    const link = document.createElement("a");
+    link.href = imageURL;
+    link.download = `${potentialName}.${extension}`;
+    document.body.appendChild(link);
+    link.click();
 
-  // cleanup
-  document.body.removeChild(link);
+    // cleanup
+    document.body.removeChild(link);
+  } catch {
+    if (cache !== "reload") {
+      downloadImageNode(node, "reload");
+    } else {
+      window.open(sanitizeUrl(node.attrs.src), "_blank");
+    }
+  }
 };
 
 export default class Image extends SimpleImage {
@@ -73,6 +99,7 @@ export default class Image extends SimpleImage {
       attrs: {
         src: {
           default: "",
+          validate: "string",
         },
         width: {
           default: undefined,
@@ -82,24 +109,38 @@ export default class Image extends SimpleImage {
         },
         alt: {
           default: null,
+          validate: "string|null",
+        },
+        source: {
+          default: null,
+          validate: "string|null",
         },
         layoutClass: {
           default: null,
+          validate: "string|null",
         },
         title: {
           default: null,
+          validate: "string|null",
+        },
+        marks: {
+          default: undefined,
         },
       },
       content: "text*",
       marks: "",
       group: "inline",
       selectable: true,
-      draggable: true,
+      // See: https://bugzilla.mozilla.org/show_bug.cgi?id=1289000
+      draggable: false,
+      atom: true,
       parseDOM: [
         {
           tag: "div[class~=image]",
           getAttrs: (dom: HTMLDivElement) => {
-            const img = dom.getElementsByTagName("img")[0];
+            const img = dom.getElementsByTagName("img")[0] as
+              | HTMLImageElement
+              | undefined;
             const className = dom.className;
             const layoutClassMatched =
               className && className.match(/image-(.*)$/);
@@ -107,12 +148,13 @@ export default class Image extends SimpleImage {
               ? layoutClassMatched[1]
               : null;
 
-            const width = img.getAttribute("width");
-            const height = img.getAttribute("height");
+            const width = img?.getAttribute("width");
+            const height = img?.getAttribute("height");
             return {
               src: img?.getAttribute("src"),
               alt: img?.getAttribute("alt"),
               title: img?.getAttribute("title"),
+              source: img?.getAttribute("source"),
               width: width ? parseInt(width, 10) : undefined,
               height: height ? parseInt(height, 10) : undefined,
               layoutClass,
@@ -122,8 +164,32 @@ export default class Image extends SimpleImage {
         {
           tag: "img",
           getAttrs: (dom: HTMLImageElement) => {
-            const width = dom.getAttribute("width");
-            const height = dom.getAttribute("height");
+            // Don't parse images from our own editor with this rule.
+            if (
+              dom.parentElement?.classList.contains("image") ||
+              dom.parentElement?.classList.contains("emoji")
+            ) {
+              return false;
+            }
+
+            // First try HTML attributes
+            let width = dom.getAttribute("width");
+            let height = dom.getAttribute("height");
+
+            // If no HTML attributes, try CSS styles
+            if (!width && dom.style.width) {
+              const styleWidth = dom.style.width;
+              if (styleWidth.endsWith("px")) {
+                width = styleWidth.slice(0, -2);
+              }
+            }
+            if (!height && dom.style.height) {
+              const styleHeight = dom.style.height;
+              if (styleHeight.endsWith("px")) {
+                height = styleHeight.slice(0, -2);
+              }
+            }
+
             return {
               src: dom.getAttribute("src"),
               alt: dom.getAttribute("alt"),
@@ -138,11 +204,8 @@ export default class Image extends SimpleImage {
         const className = node.attrs.layoutClass
           ? `image image-${node.attrs.layoutClass}`
           : "image";
-        return [
-          "div",
-          {
-            class: className,
-          },
+
+        const children = [
           [
             "img",
             {
@@ -153,15 +216,33 @@ export default class Image extends SimpleImage {
               contentEditable: "false",
             },
           ],
-          ["p", { class: "caption" }, 0],
+        ];
+
+        if (node.attrs.alt) {
+          children.push([
+            "p",
+            { class: EditorStyleHelper.imageCaption },
+            node.attrs.alt,
+          ]);
+        }
+
+        return [
+          "div",
+          {
+            class: className,
+          },
+          ...children,
         ];
       },
+      leafText: (node) =>
+        node.attrs.alt ? `(image: ${node.attrs.alt})` : "(image)",
     };
   }
 
   get plugins() {
     return [
       ...super.plugins,
+      commentedImagePlugin(),
       new Plugin({
         props: {
           handleKeyDown: (view, event) => {
@@ -190,66 +271,152 @@ export default class Image extends SimpleImage {
   }
 
   handleChangeSize =
-    ({ node, getPos }: { node: ProsemirrorNode; getPos: () => number }) =>
+    ({ node, getPos }: ComponentProps) =>
     ({ width, height }: { width: number; height?: number }) => {
+      const { view, commands } = this.editor;
+      const { doc, tr } = view.state;
+
+      const pos = getPos();
+      const $pos = doc.resolve(pos);
+
+      view.dispatch(tr.setSelection(new NodeSelection($pos)));
+      commands["resizeImage"]({
+        width,
+        height: height || node.attrs.height,
+      });
+    };
+
+  handleCaptionKeyDown =
+    ({ node, getPos }: ComponentProps) =>
+    (event: React.KeyboardEvent<HTMLParagraphElement>) => {
+      // Pressing Enter in the caption field should move the cursor/selection
+      // below the image and create a new paragraph.
+      if (event.key === "Enter") {
+        event.preventDefault();
+
+        const { view } = this.editor;
+        const $pos = view.state.doc.resolve(getPos() + node.nodeSize);
+        view.dispatch(
+          view.state.tr
+            .setSelection(TextSelection.near($pos))
+            .split($pos.pos)
+            .scrollIntoView()
+        );
+        view.focus();
+        return;
+      }
+
+      // Pressing Backspace in an empty caption field focused the image.
+      if (event.key === "Backspace" && event.currentTarget.innerText === "") {
+        event.preventDefault();
+        event.stopPropagation();
+        const { view } = this.editor;
+        const $pos = view.state.doc.resolve(getPos());
+        const tr = view.state.tr.setSelection(new NodeSelection($pos));
+        view.dispatch(tr);
+        view.focus();
+        return;
+      }
+    };
+
+  handleCaptionBlur =
+    ({ node, getPos }: ComponentProps) =>
+    (event: React.FocusEvent<HTMLParagraphElement>) => {
+      const caption = event.currentTarget.innerText;
+      if (caption === node.attrs.alt) {
+        return;
+      }
+
       const { view } = this.editor;
       const { tr } = view.state;
 
+      // update meta on object
       const pos = getPos();
-      const transaction = tr
-        .setNodeMarkup(pos, undefined, {
-          ...node.attrs,
-          width,
-          height,
-        })
-        .setMeta("addToHistory", true);
-      const $pos = transaction.doc.resolve(getPos());
-      view.dispatch(transaction.setSelection(new NodeSelection($pos)));
+      const transaction = tr.setNodeMarkup(pos, undefined, {
+        ...node.attrs,
+        alt: caption,
+      });
+      view.dispatch(transaction);
+    };
+
+  handleZoomIn =
+    ({ getPos, view }: ComponentProps) =>
+    () => {
+      this.editor.updateActiveLightboxImage(
+        LightboxImageFactory.createLightboxImage(view, getPos())
+      );
+    };
+
+  handleClick =
+    ({ getPos, view }: ComponentProps) =>
+    () => {
+      this.editor.updateActiveLightboxImage(
+        LightboxImageFactory.createLightboxImage(view, getPos())
+      );
     };
 
   handleDownload =
-    ({ node }: { node: ProsemirrorNode }) =>
+    ({ node }: ComponentProps) =>
     (event: React.MouseEvent) => {
       event.preventDefault();
       event.stopPropagation();
-      void downloadImageNode(node);
+      return downloadImageNode(node);
     };
 
-  // Ensure only plain text can be pasted into input when pasting from another
-  // rich text source.
-  handlePaste = (event: React.ClipboardEvent<HTMLSpanElement>) => {
-    event.preventDefault();
-    const text = event.clipboardData.getData("text/plain");
-    window.document.execCommand("insertText", false, text);
+  handleEditDiagram =
+    ({ getPos, view }: ComponentProps) =>
+    () => {
+      const { commands } = this.editor;
+      if (!commands.editDiagram) {
+        return;
+      }
+      const pos = getPos();
+      const $pos = view.state.doc.resolve(pos);
+      view.dispatch(view.state.tr.setSelection(new NodeSelection($pos)));
+      commands.editDiagram();
+    };
+
+  component = (props: ComponentProps) => {
+    if (
+      props.node.attrs.source === ImageSource.DiagramsNet &&
+      !props.node.attrs.src
+    ) {
+      return (
+        <DiagramPlaceholder
+          onDoubleClick={this.handleEditDiagram(props)}
+          {...props}
+        />
+      );
+    }
+
+    return (
+      <ImageComponent
+        {...props}
+        onClick={this.handleClick(props)}
+        onDownload={this.handleDownload(props)}
+        onZoomIn={this.handleZoomIn(props)}
+        onChangeSize={this.handleChangeSize(props)}
+      >
+        <Caption
+          width={props.node.attrs.width}
+          onBlur={this.handleCaptionBlur(props)}
+          onKeyDown={this.handleCaptionKeyDown(props)}
+          isSelected={props.isSelected}
+          placeholder={this.options.dictionary.imageCaptionPlaceholder}
+        >
+          {props.node.attrs.alt}
+        </Caption>
+      </ImageComponent>
+    );
   };
 
-  component = (props: ComponentProps) => (
-    <ImageComponent
-      {...props}
-      onClick={this.handleSelect(props)}
-      onDownload={this.handleDownload(props)}
-      onChangeSize={this.handleChangeSize(props)}
-    >
-      <Caption
-        onPaste={this.handlePaste}
-        onKeyDown={this.handleKeyDown(props)}
-        onBlur={this.handleBlur(props)}
-        onMouseDown={this.handleMouseDown}
-        className="caption"
-        tabIndex={-1}
-        role="textbox"
-        contentEditable
-        suppressContentEditableWarning
-        data-caption={this.options.dictionary.imageCaptionPlaceholder}
-      >
-        {props.node.attrs.alt}
-      </Caption>
-    </ImageComponent>
-  );
-
   toMarkdown(state: MarkdownSerializerState, node: ProsemirrorNode) {
-    let markdown =
-      " ![" +
+    // Skip the preceding space for images at the start of a list item or Markdown parsers may
+    // render them as code blocks
+    let markdown = state.inList ? "" : " ";
+
+    markdown +=
+      "![" +
       state.esc((node.attrs.alt || "").replace("\n", "") || "", false) +
       "](" +
       state.esc(node.attrs.src || "", false);
@@ -280,11 +447,15 @@ export default class Image extends SimpleImage {
       node: "image",
       getAttrs: (token: Token) => ({
         src: token.attrGet("src"),
-        alt:
-          (token?.children && token.children[0] && token.children[0].content) ||
-          null,
+        alt: token.content || null,
         ...parseTitleAttribute(token?.attrGet("title") || ""),
       }),
+    };
+  }
+
+  keys(): Record<string, Command> {
+    return {
+      "Mod-Alt-m": addComment({ userId: this.options.userId }),
     };
   }
 
@@ -335,10 +506,14 @@ export default class Image extends SimpleImage {
         if (!(state.selection instanceof NodeSelection)) {
           return false;
         }
+        let layoutClass: string | null = "full-width";
+        if (state.selection.node.attrs.layoutClass === layoutClass) {
+          layoutClass = null;
+        }
         const attrs = {
           ...state.selection.node.attrs,
           title: null,
-          layoutClass: "full-width",
+          layoutClass,
         };
         const { selection } = state;
         dispatch?.(state.tr.setNodeMarkup(selection.from, undefined, attrs));
@@ -353,6 +528,31 @@ export default class Image extends SimpleImage {
         dispatch?.(state.tr.setNodeMarkup(selection.from, undefined, attrs));
         return true;
       },
+      resizeImage:
+        ({ width, height }: { width: number; height: number }): Command =>
+        (state, dispatch) => {
+          if (!(state.selection instanceof NodeSelection)) {
+            return false;
+          }
+
+          const { selection } = state;
+          const transformedAttrs = {
+            ...state.selection.node.attrs,
+            width,
+            height,
+          };
+
+          const tr = state.tr
+            .setNodeMarkup(selection.from, undefined, transformedAttrs)
+            .setMeta("addToHistory", true);
+
+          const $pos = tr.doc.resolve(selection.from);
+          dispatch?.(tr.setSelection(new NodeSelection($pos)));
+          return true;
+        },
+      commentOnImage: (): Command =>
+        addComment({ userId: this.options.userId }),
+      linkOnImage: (): Command => addLink({ href: "" }),
     };
   }
 

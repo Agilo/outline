@@ -1,53 +1,66 @@
-import util from "util";
-import AWS, { S3 } from "aws-sdk";
+import path from "node:path";
+import type { Readable } from "node:stream";
+import type { ObjectCannedACL } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  CopyObjectCommand,
+} from "@aws-sdk/client-s3";
+import { Upload } from "@aws-sdk/lib-storage";
+import "@aws-sdk/signature-v4-crt"; // https://github.com/aws/aws-sdk-js-v3#functionality-requiring-aws-common-runtime-crt
+import type { PresignedPostOptions } from "@aws-sdk/s3-presigned-post";
+import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import fs from "fs-extra";
 import invariant from "invariant";
 import compact from "lodash/compact";
+import tmp from "tmp";
 import env from "@server/env";
 import Logger from "@server/logging/Logger";
 import BaseStorage from "./BaseStorage";
+import type { AppContext } from "@server/types";
 
 export default class S3Storage extends BaseStorage {
   constructor() {
     super();
 
-    this.client = new AWS.S3({
-      s3BucketEndpoint: env.AWS_S3_ACCELERATE_URL ? true : undefined,
-      s3ForcePathStyle: env.AWS_S3_FORCE_PATH_STYLE,
-      accessKeyId: env.AWS_ACCESS_KEY_ID,
-      secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+    this.client = new S3Client({
+      bucketEndpoint: env.AWS_S3_ACCELERATE_URL ? true : false,
+      forcePathStyle: env.AWS_S3_FORCE_PATH_STYLE,
       region: env.AWS_REGION,
       endpoint: this.getEndpoint(),
-      signatureVersion: "v4",
     });
   }
 
   public async getPresignedPost(
+    _ctx: AppContext,
     key: string,
-    acl: string,
+    _acl: string,
     maxUploadSize: number,
     contentType = "image"
   ) {
-    const params = {
-      Bucket: env.AWS_S3_UPLOAD_BUCKET_NAME,
+    const params: PresignedPostOptions = {
+      Bucket: env.AWS_S3_UPLOAD_BUCKET_NAME as string,
+      Key: key,
       Conditions: compact([
         ["content-length-range", 0, maxUploadSize],
         ["starts-with", "$Content-Type", contentType],
         ["starts-with", "$Cache-Control", ""],
       ]),
       Fields: {
-        "Content-Disposition": "attachment",
+        "Content-Disposition": this.getContentDisposition(contentType),
         key,
-        acl,
+        ...(env.AWS_S3_ACL && { ACL: env.AWS_S3_ACL as ObjectCannedACL }),
       },
       Expires: 3600,
     };
 
-    return util.promisify(this.client.createPresignedPost).bind(this.client)(
-      params
-    );
+    return createPresignedPost(this.client, params);
   }
 
-  public getPublicEndpoint(isServerUpload?: boolean) {
+  private getPublicEndpoint(isServerUpload?: boolean) {
     if (env.AWS_S3_ACCELERATE_URL) {
       return env.AWS_S3_ACCELERATE_URL;
     }
@@ -78,119 +91,171 @@ export default class S3Storage extends BaseStorage {
     }`;
   }
 
-  public upload = async ({
+  public getUploadUrl(isServerUpload?: boolean) {
+    return this.getPublicEndpoint(isServerUpload);
+  }
+
+  public getUrlForKey(key: string): string {
+    return `${this.getPublicEndpoint()}/${key}`;
+  }
+
+  public store = async ({
     body,
-    contentLength,
     contentType,
     key,
-    acl,
   }: {
-    body: S3.Body;
-    contentLength: number;
-    contentType: string;
+    body: Buffer | Uint8Array | string | Readable;
+    contentLength?: number;
+    contentType?: string;
     key: string;
-    acl: string;
+    acl?: string;
   }) => {
-    invariant(
-      env.AWS_S3_UPLOAD_BUCKET_NAME,
-      "AWS_S3_UPLOAD_BUCKET_NAME is required"
-    );
-
-    await this.client
-      .putObject({
-        ACL: acl,
-        Bucket: env.AWS_S3_UPLOAD_BUCKET_NAME,
+    const upload = new Upload({
+      client: this.client,
+      params: {
+        ...(env.AWS_S3_ACL && { ACL: env.AWS_S3_ACL as ObjectCannedACL }),
+        Bucket: this.getBucket(),
         Key: key,
         ContentType: contentType,
-        ContentLength: contentLength,
-        ContentDisposition: "attachment",
+        // See bug, if used causes large files to hang: https://github.com/aws/aws-sdk-js-v3/issues/3915
+        // ContentLength: contentLength,
+        ContentDisposition: this.getContentDisposition(contentType),
         Body: body,
-      })
-      .promise();
+      },
+    });
+    await upload.done();
+
     const endpoint = this.getPublicEndpoint(true);
     return `${endpoint}/${key}`;
   };
 
   public async deleteFile(key: string) {
-    invariant(
-      env.AWS_S3_UPLOAD_BUCKET_NAME,
-      "AWS_S3_UPLOAD_BUCKET_NAME is required"
-    );
-
-    await this.client
-      .deleteObject({
-        Bucket: env.AWS_S3_UPLOAD_BUCKET_NAME,
+    await this.client.send(
+      new DeleteObjectCommand({
+        Bucket: this.getBucket(),
         Key: key,
       })
-      .promise();
+    );
   }
 
-  public getSignedUrl = async (key: string, expiresIn = 60) => {
+  public getSignedUrl = async (
+    key: string,
+    expiresIn = S3Storage.defaultSignedUrlExpires
+  ) => {
     const isDocker = env.AWS_S3_UPLOAD_BUCKET_URL.match(/http:\/\/s3:/);
     const params = {
-      Bucket: env.AWS_S3_UPLOAD_BUCKET_NAME,
+      Bucket: this.getBucket(),
       Key: key,
-      Expires: expiresIn,
-      ResponseContentDisposition: "attachment",
     };
 
-    const url = isDocker
-      ? `${this.getPublicEndpoint()}/${key}`
-      : await this.client.getSignedUrlPromise("getObject", params);
-
-    if (env.AWS_S3_ACCELERATE_URL) {
-      return url.replace(
-        env.AWS_S3_UPLOAD_BUCKET_URL,
-        env.AWS_S3_ACCELERATE_URL
+    if (isDocker) {
+      return `${this.getPublicEndpoint()}/${key}`;
+    } else {
+      // Ensure expiration does not exceed AWS S3 Signature V4 limit of 7 days
+      const clampedExpiresIn = Math.min(
+        expiresIn,
+        S3Storage.maxSignedUrlExpires
       );
-    }
 
-    return url;
+      const command = new GetObjectCommand(params);
+      const url = await getSignedUrl(this.client, command, {
+        expiresIn: clampedExpiresIn,
+      });
+
+      if (env.AWS_S3_ACCELERATE_URL) {
+        return url.replace(
+          env.AWS_S3_UPLOAD_BUCKET_URL,
+          env.AWS_S3_ACCELERATE_URL
+        );
+      }
+
+      return url;
+    }
   };
 
-  public getFileStream(key: string) {
-    invariant(
-      env.AWS_S3_UPLOAD_BUCKET_NAME,
-      "AWS_S3_UPLOAD_BUCKET_NAME is required"
-    );
+  public getFileHandle(key: string): Promise<{
+    path: string;
+    cleanup: () => Promise<void>;
+  }> {
+    return new Promise((resolve, reject) => {
+      tmp.dir((err, tmpDir) => {
+        if (err) {
+          return reject(err);
+        }
+        const tmpFile = path.join(tmpDir, "tmp");
+        const dest = fs.createWriteStream(tmpFile);
+        dest.on("error", reject);
+        dest.on("finish", () =>
+          resolve({ path: tmpFile, cleanup: () => fs.rm(tmpFile) })
+        );
 
-    try {
-      return this.client
-        .getObject({
-          Bucket: env.AWS_S3_UPLOAD_BUCKET_NAME,
+        void this.getFileStream(key).then((stream) => {
+          if (!stream) {
+            return reject(new Error("No stream available"));
+          }
+
+          stream
+            .on("error", (error) => {
+              dest.end();
+              reject(error);
+            })
+            .pipe(dest);
+        });
+      });
+    });
+  }
+
+  public getFileExists(key: string): Promise<boolean> {
+    return this.client
+      .send(
+        new HeadObjectCommand({
+          Bucket: this.getBucket(),
           Key: key,
         })
-        .createReadStream();
-    } catch (err) {
-      Logger.error("Error getting file stream from S3 ", err, {
-        key,
-      });
-    }
-
-    return null;
+      )
+      .then(() => true)
+      .catch(() => false);
   }
 
-  public async getFileBuffer(key: string) {
-    invariant(
-      env.AWS_S3_UPLOAD_BUCKET_NAME,
-      "AWS_S3_UPLOAD_BUCKET_NAME is required"
-    );
-
-    const response = await this.client
-      .getObject({
-        Bucket: env.AWS_S3_UPLOAD_BUCKET_NAME,
-        Key: key,
+  public moveFile = async (fromKey: string, toKey: string) => {
+    await this.client.send(
+      new CopyObjectCommand({
+        Bucket: this.getBucket(),
+        CopySource: `${env.AWS_S3_UPLOAD_BUCKET_NAME}/${fromKey}`,
+        Key: toKey,
       })
-      .promise();
+    );
+    await this.client.send(
+      new DeleteObjectCommand({
+        Bucket: this.getBucket(),
+        Key: fromKey,
+      })
+    );
+  };
 
-    if (response.Body) {
-      return response.Body as Blob;
-    }
+  public getFileStream(
+    key: string,
+    range?: { start: number; end: number }
+  ): Promise<NodeJS.ReadableStream | null> {
+    return this.client
+      .send(
+        new GetObjectCommand({
+          Bucket: this.getBucket(),
+          Key: key,
+          Range: range ? `bytes=${range.start}-${range.end}` : undefined,
+        })
+      )
+      .then((item) => item.Body as NodeJS.ReadableStream)
+      .catch((err) => {
+        Logger.error("Error getting file stream from S3 ", err, {
+          key,
+        });
 
-    throw new Error("Error getting file buffer from S3");
+        return null;
+      });
   }
 
-  private client: AWS.S3;
+  private client: S3Client;
 
   private getEndpoint() {
     if (env.AWS_S3_ACCELERATE_URL) {
@@ -202,10 +267,17 @@ export default class S3Storage extends BaseStorage {
     if (env.AWS_S3_UPLOAD_BUCKET_NAME) {
       const url = new URL(env.AWS_S3_UPLOAD_BUCKET_URL);
       if (url.hostname.startsWith(env.AWS_S3_UPLOAD_BUCKET_NAME + ".")) {
+        Logger.warn(
+          "AWS_S3_UPLOAD_BUCKET_URL contains the bucket name, this configuration combination will always point to AWS.\nRename your bucket or hostname if not using AWS S3.\nSee: https://github.com/outline/outline/issues/8025"
+        );
         return undefined;
       }
     }
 
-    return new AWS.Endpoint(env.AWS_S3_UPLOAD_BUCKET_URL);
+    return env.AWS_S3_UPLOAD_BUCKET_URL;
+  }
+
+  private getBucket() {
+    return env.AWS_S3_ACCELERATE_URL || env.AWS_S3_UPLOAD_BUCKET_NAME || "";
   }
 }

@@ -2,7 +2,7 @@ import { observer } from "mobx-react";
 import { WebhooksIcon } from "outline-icons";
 import * as React from "react";
 import { useTranslation, Trans } from "react-i18next";
-import WebhookSubscription from "~/models/WebhookSubscription";
+import type WebhookSubscription from "~/models/WebhookSubscription";
 import { Action } from "~/components/Actions";
 import Button from "~/components/Button";
 import Heading from "~/components/Heading";
@@ -45,32 +45,33 @@ function Webhooks() {
       }
     >
       <Heading>{t("Webhooks")}</Heading>
-      <Text type="secondary">
+      <Text as="p" type="secondary">
         <Trans>
           Webhooks can be used to notify your application when events happen in{" "}
           {{ appName }}. Events are sent as a https request with a JSON payload
           in near real-time.
         </Trans>
       </Text>
-      <PaginatedList
+      <PaginatedList<WebhookSubscription>
         fetch={webhookSubscriptions.fetchPage}
         items={webhookSubscriptions.enabled}
         heading={<h2>{t("Active")}</h2>}
-        renderItem={(webhook: WebhookSubscription) => (
+        renderItem={(webhook) => (
           <WebhookSubscriptionListItem key={webhook.id} webhook={webhook} />
         )}
       />
-      <PaginatedList
+      <PaginatedList<WebhookSubscription>
         items={webhookSubscriptions.disabled}
         heading={<h2>{t("Inactive")}</h2>}
-        renderItem={(webhook: WebhookSubscription) => (
+        renderItem={(webhook) => (
           <WebhookSubscriptionListItem key={webhook.id} webhook={webhook} />
         )}
       />
       <Modal
-        title={t("Create a webhook")}
+        title={t("New webhook")}
         onRequestClose={handleNewModalClose}
         isOpen={newModalOpen}
+        width="480px"
       >
         <WebhookSubscriptionNew onSubmit={handleNewModalClose} />
       </Modal>

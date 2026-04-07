@@ -1,29 +1,49 @@
-import { EditorState } from "prosemirror-state";
-import isMarkActive from "./isMarkActive";
+import type { EditorState } from "prosemirror-state";
+import { isMarkActive } from "./isMarkActive";
+import { isNodeActive } from "./isNodeActive";
+
+type Options = {
+  /** Only check if the selection is inside a code block. */
+  onlyBlock?: boolean;
+  /** Only check if the selection is inside a code mark. */
+  onlyMark?: boolean;
+  /** If true then code must contain entire selection */
+  inclusive?: boolean;
+};
 
 /**
  * Returns true if the selection is inside a code block or code mark.
  *
  * @param state The editor state.
+ * @param options The options.
  * @returns True if the selection is inside a code block or code mark.
  */
-export default function isInCode(state: EditorState): boolean {
+export function isInCode(state: EditorState, options?: Options): boolean {
   const { nodes, marks } = state.schema;
+  const opts =
+    options?.inclusive !== undefined
+      ? { inclusive: options?.inclusive }
+      : undefined;
 
-  if (nodes.code_block || nodes.code_fence) {
-    const $head = state.selection.$head;
-    for (let d = $head.depth; d > 0; d--) {
-      if (nodes.code_block && $head.node(d).type === nodes.code_block) {
-        return true;
-      }
-      if (nodes.code_fence && $head.node(d).type === nodes.code_fence) {
-        return true;
-      }
+  if (!options?.onlyMark) {
+    if (
+      nodes.code_block &&
+      isNodeActive(nodes.code_block, undefined, opts)(state)
+    ) {
+      return true;
+    }
+    if (
+      nodes.code_fence &&
+      isNodeActive(nodes.code_fence, undefined, opts)(state)
+    ) {
+      return true;
     }
   }
 
-  if (marks.code_inline) {
-    return isMarkActive(marks.code_inline)(state);
+  if (!options?.onlyBlock) {
+    if (marks.code_inline) {
+      return isMarkActive(marks.code_inline, undefined, opts)(state);
+    }
   }
 
   return false;

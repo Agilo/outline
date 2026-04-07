@@ -5,31 +5,35 @@ import { TeamIcon } from "outline-icons";
 import { useRef, useState } from "react";
 import * as React from "react";
 import { useTranslation, Trans } from "react-i18next";
+import { toast } from "sonner";
 import { ThemeProvider, useTheme } from "styled-components";
 import { buildDarkTheme, buildLightTheme } from "@shared/styles/theme";
-import { CustomTheme, TeamPreference } from "@shared/types";
+import type { CustomTheme } from "@shared/types";
+import { TOCPosition, TeamPreference } from "@shared/types";
 import { getBaseDomain } from "@shared/utils/domains";
+import { TeamValidation } from "@shared/validations";
 import Button from "~/components/Button";
 import ButtonLink from "~/components/ButtonLink";
 import DefaultCollectionInputSelect from "~/components/DefaultCollectionInputSelect";
 import Heading from "~/components/Heading";
 import Input from "~/components/Input";
 import InputColor from "~/components/InputColor";
+import type { Option } from "~/components/InputSelect";
+import { InputSelect } from "~/components/InputSelect";
 import Scene from "~/components/Scene";
 import Switch from "~/components/Switch";
 import Text from "~/components/Text";
 import useCurrentTeam from "~/hooks/useCurrentTeam";
 import usePolicy from "~/hooks/usePolicy";
 import useStores from "~/hooks/useStores";
-import useToasts from "~/hooks/useToasts";
 import isCloudHosted from "~/utils/isCloudHosted";
 import TeamDelete from "../TeamDelete";
+import { ActionRow } from "./components/ActionRow";
 import ImageInput from "./components/ImageInput";
 import SettingRow from "./components/SettingRow";
 
 function Details() {
-  const { auth, dialogs, ui } = useStores();
-  const { showToast } = useToasts();
+  const { dialogs, ui } = useStores();
   const { t } = useTranslation();
   const team = useCurrentTeam();
   const theme = useTheme();
@@ -43,6 +47,7 @@ function Details() {
     team.preferences?.customTheme?.accentText
   );
   const [name, setName] = useState(team.name);
+  const [description, setDescription] = useState(team.description || "");
   const [subdomain, setSubdomain] = useState(team.subdomain);
   const [publicBranding, setPublicBranding] = useState(
     team.preferences?.publicBranding
@@ -59,6 +64,31 @@ function Details() {
     isHexColor
   );
 
+  const [tocPosition, setTocPosition] = useState(
+    team.getPreference(TeamPreference.TocPosition) as TOCPosition
+  );
+
+  const tocPositionOptions: Option[] = React.useMemo(
+    () =>
+      [
+        {
+          type: "item",
+          label: t("Left"),
+          value: TOCPosition.Left,
+        },
+        {
+          type: "item",
+          label: t("Right"),
+          value: TOCPosition.Right,
+        },
+      ] satisfies Option[],
+    [t]
+  );
+
+  const handleTocPositionChange = React.useCallback((position: string) => {
+    setTocPosition(position as TOCPosition);
+  }, []);
+
   const handleSubmit = React.useCallback(
     async (event?: React.SyntheticEvent) => {
       if (event) {
@@ -66,34 +96,32 @@ function Details() {
       }
 
       try {
-        await auth.updateTeam({
+        await team.save({
           name,
+          description,
           subdomain,
           defaultCollectionId,
           preferences: {
             ...team.preferences,
             publicBranding,
             customTheme,
+            tocPosition,
           },
         });
-        showToast(t("Settings saved"), {
-          type: "success",
-        });
+        toast.success(t("Settings saved"));
       } catch (err) {
-        showToast(err.message, {
-          type: "error",
-        });
+        toast.error(err.message);
       }
     },
     [
-      auth,
+      tocPosition,
+      team,
       name,
+      description,
       subdomain,
       defaultCollectionId,
-      team.preferences,
       publicBranding,
       customTheme,
-      showToast,
       t,
     ]
   );
@@ -112,34 +140,47 @@ function Details() {
     []
   );
 
-  const handleAvatarUpload = async (avatarUrl: string) => {
-    await auth.updateTeam({
-      avatarUrl,
-    });
-    showToast(t("Logo updated"), {
-      type: "success",
-    });
+  const handleAvatarChange = async (avatarUrl: string | null) => {
+    await team.save({ avatarUrl });
+    toast.success(t("Logo updated"));
   };
 
   const handleAvatarError = React.useCallback(
     (error: string | null | undefined) => {
-      showToast(error || t("Unable to upload new logo"));
+      toast.error(error || t("Unable to upload new logo"));
     },
-    [showToast, t]
+    [t]
   );
 
   const showDeleteWorkspace = () => {
     dialogs.openModal({
       title: t("Delete workspace"),
       content: <TeamDelete onSubmit={dialogs.closeAllModals} />,
-      isCentered: true,
     });
   };
 
-  const onSelectCollection = React.useCallback(async (value: string) => {
-    const defaultCollectionId = value === "home" ? null : value;
-    setDefaultCollectionId(defaultCollectionId);
+  const onSelectCollection = React.useCallback((value: string) => {
+    const selectedValue = value === "home" ? null : value;
+    setDefaultCollectionId(selectedValue);
   }, []);
+
+  const handleSeamlessEditChange = React.useCallback(
+    async (checked: boolean) => {
+      team.setPreference(TeamPreference.SeamlessEdit, !checked);
+      await team.save();
+      toast.success(t("Settings saved"));
+    },
+    [team, t]
+  );
+
+  const handleCommentingChange = React.useCallback(
+    async (checked: boolean) => {
+      team.setPreference(TeamPreference.Commenting, checked);
+      await team.save();
+      toast.success(t("Settings saved"));
+    },
+    [team, t]
+  );
 
   const isValid = form.current?.checkValidity();
 
@@ -155,9 +196,9 @@ function Details() {
     <ThemeProvider theme={newTheme}>
       <Scene title={t("Details")} icon={<TeamIcon />}>
         <Heading>{t("Details")}</Heading>
-        <Text type="secondary">
+        <Text as="p" type="secondary">
           <Trans>
-            These settings affect the way that your knowledge base appears to
+            These settings affect the way that your workspace appears to
             everyone on the team.
           </Trans>
         </Text>
@@ -172,7 +213,8 @@ function Details() {
             )}
           >
             <ImageInput
-              onSuccess={handleAvatarUpload}
+              alt={t("Workspace logo")}
+              onSuccess={handleAvatarChange}
               onError={handleAvatarError}
               model={team}
               borderRadius={0}
@@ -194,7 +236,19 @@ function Details() {
             />
           </SettingRow>
           <SettingRow
-            border={false}
+            label={t("Description")}
+            name="description"
+            description={t("A short description of your workspace.")}
+          >
+            <Input
+              id="description"
+              value={description}
+              onChange={(ev: React.ChangeEvent<HTMLInputElement>) => {
+                setDescription(ev.target.value);
+              }}
+            />
+          </SettingRow>
+          <SettingRow
             label={t("Theme")}
             name="accent"
             description={
@@ -210,7 +264,6 @@ function Details() {
                     >
                       {t("Reset theme")}
                     </ButtonLink>
-                    .
                   </>
                 )}
               </>
@@ -231,25 +284,38 @@ function Details() {
               flex
             />
           </SettingRow>
-          {team.avatarUrl && (
+          {(team.avatarUrl || team.description) && (
             <SettingRow
-              border={false}
               name={TeamPreference.PublicBranding}
               label={t("Public branding")}
               description={t(
-                "Show your team’s logo on public pages like login and shared documents."
+                "Show your workspace logo, description, and branding on publicly shared pages."
               )}
             >
               <Switch
                 id={TeamPreference.PublicBranding}
                 name={TeamPreference.PublicBranding}
                 checked={publicBranding}
-                onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-                  setPublicBranding(event.target.checked)
-                }
+                onChange={(checked: boolean) => setPublicBranding(checked)}
               />
             </SettingRow>
           )}
+          <SettingRow
+            border={false}
+            label={t("Table of contents position")}
+            name="tocPosition"
+            description={t(
+              "The side to display the table of contents in relation to the main content."
+            )}
+          >
+            <InputSelect
+              options={tocPositionOptions}
+              value={tocPosition}
+              onChange={handleTocPositionChange}
+              label={t("Table of contents position")}
+              hideLabel
+            />
+          </SettingRow>
 
           <Heading as="h2">{t("Behavior")}</Heading>
 
@@ -260,7 +326,7 @@ function Details() {
             description={
               subdomain ? (
                 <>
-                  <Trans>Your knowledge base will be accessible at</Trans>{" "}
+                  <Trans>Your workspace will be accessible at</Trans>{" "}
                   <strong>
                     {subdomain}.{getBaseDomain()}
                   </strong>
@@ -277,12 +343,15 @@ function Details() {
               value={subdomain || ""}
               onChange={handleSubdomainChange}
               autoComplete="off"
-              minLength={4}
-              maxLength={32}
+              minLength={TeamValidation.minSubdomainLength}
+              maxLength={
+                isCloudHosted
+                  ? TeamValidation.maxSubdomainLength
+                  : TeamValidation.maxSubdomainSelfHostedLength
+              }
             />
           </SettingRow>
           <SettingRow
-            border={false}
             label={t("Start view")}
             name="defaultCollectionId"
             description={t(
@@ -290,15 +359,45 @@ function Details() {
             )}
           >
             <DefaultCollectionInputSelect
-              id="defaultCollectionId"
               onSelectCollection={onSelectCollection}
               defaultCollectionId={defaultCollectionId}
             />
           </SettingRow>
+          <SettingRow
+            name={TeamPreference.SeamlessEdit}
+            label={t("Separate editing")}
+            description={t(
+              "When enabled documents have a separate editing mode by default instead of being always editable. This setting can be overridden by user preferences."
+            )}
+          >
+            <Switch
+              id={TeamPreference.SeamlessEdit}
+              name={TeamPreference.SeamlessEdit}
+              checked={!team.getPreference(TeamPreference.SeamlessEdit)}
+              onChange={handleSeamlessEditChange}
+            />
+          </SettingRow>
+          <SettingRow
+            border={false}
+            name={TeamPreference.Commenting}
+            label={t("Commenting")}
+            description={t(
+              "When enabled team members can add comments to documents."
+            )}
+          >
+            <Switch
+              id={TeamPreference.Commenting}
+              name={TeamPreference.Commenting}
+              checked={team.getPreference(TeamPreference.Commenting)}
+              onChange={handleCommentingChange}
+            />
+          </SettingRow>
 
-          <Button type="submit" disabled={auth.isSaving || !isValid}>
-            {auth.isSaving ? `${t("Saving")}…` : t("Save")}
-          </Button>
+          <ActionRow>
+            <Button type="submit" disabled={team.isSaving || !isValid}>
+              {team.isSaving ? `${t("Saving")}…` : t("Save")}
+            </Button>
+          </ActionRow>
 
           {can.delete && (
             <>

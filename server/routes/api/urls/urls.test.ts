@@ -1,13 +1,26 @@
-import { User } from "@server/models";
+import { UnfurlResourceType } from "@shared/types";
+import env from "@server/env";
+import type { User } from "@server/models";
 import { buildDocument, buildUser } from "@server/test/factories";
 import { getTestServer } from "@server/test/support";
-import resolvers from "@server/utils/unfurl";
+import Iframely from "plugins/iframely/server/iframely";
 
-jest.mock("@server/utils/unfurl", () => ({
-  Iframely: {
-    unfurl: jest.fn(),
+jest.mock("dns", () => ({
+  resolveCname: (
+    input: string,
+    callback: (err: Error | null, addresses: string[]) => void
+  ) => {
+    if (input.includes("valid.custom.domain")) {
+      callback(null, ["secure.outline.dev"]);
+    } else {
+      callback(null, []);
+    }
   },
 }));
+
+jest
+  .spyOn(Iframely, "requestResource")
+  .mockImplementation(() => Promise.resolve({}));
 
 const server = getTestServer();
 
@@ -27,7 +40,7 @@ describe("#urls.unfurl", () => {
 
     const body = await res.json();
     expect(res.status).toEqual(400);
-    expect(body.message).toEqual("url: Invalid url");
+    expect(body.message).toEqual("url: Invalid URL");
   });
 
   it("should fail with status 400 bad request when mention url is invalid", async () => {
@@ -121,9 +134,8 @@ describe("#urls.unfurl", () => {
     });
     const body = await res.json();
     expect(res.status).toEqual(200);
-    expect(body.type).toEqual("mention");
-    expect(body.title).toEqual(mentionedUser.name);
-    expect(body.meta.id).toEqual(mentionedUser.id);
+    expect(body.type).toEqual(UnfurlResourceType.Mention);
+    expect(body.name).toEqual(mentionedUser.name);
   });
 
   it("should succeed with status 200 ok when valid document url is supplied", async () => {
@@ -134,27 +146,48 @@ describe("#urls.unfurl", () => {
     const res = await server.post("/api/urls.unfurl", {
       body: {
         token: user.getJwtToken(),
-        url: `http://localhost:3000/${document.url}`,
+        url: `${env.URL}/${document.url}`,
         documentId: document.id,
       },
     });
     const body = await res.json();
     expect(res.status).toEqual(200);
-    expect(body.type).toEqual("document");
+    expect(body.type).toEqual(UnfurlResourceType.Document);
     expect(body.title).toEqual(document.titleWithDefault);
-    expect(body.meta.id).toEqual(document.id);
+    expect(body.id).toEqual(document.id);
   });
 
   it("should succeed with status 200 ok for a valid external url", async () => {
-    (resolvers.Iframely.unfurl as jest.Mock).mockResolvedValue(
+    (Iframely.requestResource as jest.Mock).mockResolvedValue(
       Promise.resolve({
         url: "https://www.flickr.com",
         type: "rich",
-        title: "Flickr",
-        description:
-          "The safest and most inclusive global community of photography enthusiasts. The best place for inspiration, connection, and sharing!",
-        thumbnail_url:
-          "https://farm4.staticflickr.com/3914/15118079089_489aa62638_b.jpg",
+        meta: {
+          title: "Flickr",
+          description:
+            "The safest and most inclusive global community of photography enthusiasts. The best place for inspiration, connection, and sharing!",
+        },
+        links: {
+          thumbnail: [
+            {
+              href: "https://combo.staticflickr.com/66a031f9fc343c5e42d965ca/671aaf5d51c929e483e8b26d_Open%20Graph%20Home.jpg",
+              type: "image/jpg",
+              rel: ["twitter", "thumbnail", "ssl", "og"],
+              content_length: 412824,
+              media: {
+                width: 1200,
+                height: 630,
+              },
+            },
+          ],
+          icon: [
+            {
+              href: "https://combo.staticflickr.com/66a031f9fc343c5e42d965ca/67167dd041b0982f0f230dab_flickr-webclip.png",
+              rel: ["apple-touch-icon", "icon", "ssl"],
+              type: "image/png",
+            },
+          ],
+        },
       })
     );
 
@@ -165,25 +198,23 @@ describe("#urls.unfurl", () => {
       },
     });
 
+    expect(res.status).toEqual(200);
     const body = await res.json();
 
-    expect(resolvers.Iframely.unfurl).toHaveBeenCalledWith(
-      "https://www.flickr.com"
-    );
     expect(res.status).toEqual(200);
     expect(body.url).toEqual("https://www.flickr.com");
-    expect(body.type).toEqual("rich");
+    expect(body.type).toEqual(UnfurlResourceType.URL);
     expect(body.title).toEqual("Flickr");
     expect(body.description).toEqual(
       "The safest and most inclusive global community of photography enthusiasts. The best place for inspiration, connection, and sharing!"
     );
     expect(body.thumbnailUrl).toEqual(
-      "https://farm4.staticflickr.com/3914/15118079089_489aa62638_b.jpg"
+      "https://combo.staticflickr.com/66a031f9fc343c5e42d965ca/671aaf5d51c929e483e8b26d_Open%20Graph%20Home.jpg"
     );
   });
 
   it("should succeed with status 204 no content for a non-existing external url", async () => {
-    (resolvers.Iframely.unfurl as jest.Mock).mockResolvedValue(
+    (Iframely.requestResource as jest.Mock).mockResolvedValue(
       Promise.resolve({
         status: 404,
         error:
@@ -198,9 +229,73 @@ describe("#urls.unfurl", () => {
       },
     });
 
-    expect(resolvers.Iframely.unfurl).toHaveBeenCalledWith(
-      "https://random.url"
-    );
     expect(res.status).toEqual(204);
+  });
+});
+
+describe("#urls.checkEmbed", () => {
+  let user: User;
+  beforeEach(async () => {
+    user = await buildUser();
+  });
+
+  it("should fail with status 400 bad request when url is missing", async () => {
+    const res = await server.post("/api/urls.checkEmbed", {
+      body: {
+        token: user.getJwtToken(),
+      },
+    });
+
+    expect(res.status).toEqual(400);
+  });
+
+  it("should fail with status 400 bad request when url is not a valid URL", async () => {
+    const res = await server.post("/api/urls.checkEmbed", {
+      body: {
+        token: user.getJwtToken(),
+        url: "not-a-url",
+      },
+    });
+
+    expect(res.status).toEqual(400);
+  });
+
+  it("should return a result for valid URLs", async () => {
+    // Use a YouTube URL which matches a known embed pattern
+    const res = await server.post("/api/urls.checkEmbed", {
+      body: {
+        token: user.getJwtToken(),
+        url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      },
+    });
+
+    const body = await res.json();
+    expect(res.status).toEqual(200);
+    // Result depends on actual HTTP response from YouTube (or network error)
+    expect(body).toHaveProperty("embeddable");
+  });
+});
+
+describe("#urls.validateCustomDomain", () => {
+  it("should succeed with custom domain pointing at server", async () => {
+    const user = await buildUser();
+    const res = await server.post("/api/urls.validateCustomDomain", {
+      body: {
+        token: user.getJwtToken(),
+        hostname: "valid.custom.domain",
+      },
+    });
+    expect(res.status).toEqual(200);
+  });
+
+  it("should fail with another domain", async () => {
+    const user = await buildUser();
+    const res = await server.post("/api/urls.validateCustomDomain", {
+      body: {
+        token: user.getJwtToken(),
+        hostname: "google.com",
+      },
+    });
+    expect(res.status).toEqual(400);
   });
 });

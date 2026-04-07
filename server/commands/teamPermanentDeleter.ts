@@ -1,6 +1,6 @@
-import { Transaction } from "sequelize";
 import Logger from "@server/logging/Logger";
 import { traceFunction } from "@server/logging/tracing";
+import type { Team } from "@server/models";
 import {
   ApiKey,
   Attachment,
@@ -10,7 +10,7 @@ import {
   Event,
   FileOperation,
   Group,
-  Team,
+  Import,
   User,
   UserAuthentication,
   Integration,
@@ -20,6 +20,13 @@ import {
 } from "@server/models";
 import { sequelize } from "@server/storage/database";
 
+/**
+ * Permanently deletes a team and all related data from the database. Note that this does not happen
+ * in a single transaction due to the potential size of such a transaction, so it is possible for
+ * the operation to be interrupted and leave partial data. In which case it can be safely re-run.
+ *
+ * @param team - The team to delete.
+ */
 async function teamPermanentDeleter(team: Team) {
   if (!team.deletedAt) {
     throw new Error(
@@ -29,22 +36,19 @@ async function teamPermanentDeleter(team: Team) {
 
   Logger.info(
     "commands",
-    `Permanently deleting team ${team.name} (${team.id})`
+    `Permanently destroying team ${team.name} (${team.id})`
   );
   const teamId = team.id;
-  let transaction!: Transaction;
 
-  try {
-    transaction = await sequelize.transaction();
-    await Attachment.findAllInBatches<Attachment>(
-      {
-        where: {
-          teamId,
-        },
-        limit: 100,
-        offset: 0,
+  await Attachment.findAllInBatches<Attachment>(
+    {
+      where: {
+        teamId,
       },
-      async (attachments, options) => {
+      batchLimit: 100,
+    },
+    async (attachments, options) => {
+      await sequelize.transaction(async (transaction) => {
         Logger.info(
           "commands",
           `Deleting attachments ${options.offset} – ${
@@ -58,22 +62,32 @@ async function teamPermanentDeleter(team: Team) {
             })
           )
         );
-      }
-    );
-    // Destroy user-relation models
-    await User.findAllInBatches<User>(
-      {
-        attributes: ["id"],
-        where: {
-          teamId,
-        },
-        limit: 100,
-        offset: 0,
+      });
+    }
+  );
+
+  // Destroy user-relation models
+  await User.findAllInBatches<User>(
+    {
+      attributes: ["id"],
+      where: {
+        teamId,
       },
-      async (users) => {
+      batchLimit: 100,
+    },
+    async (users) => {
+      await sequelize.transaction(async (transaction) => {
         const userIds = users.map((user) => user.id);
         await UserAuthentication.destroy({
           where: {
+            userId: userIds,
+          },
+          force: true,
+          transaction,
+        });
+        await Attachment.destroy({
+          where: {
+            teamId,
             userId: userIds,
           },
           force: true,
@@ -88,14 +102,18 @@ async function teamPermanentDeleter(team: Team) {
         });
         await Event.destroy({
           where: {
+            teamId,
             actorId: userIds,
           },
           force: true,
           transaction,
         });
-      }
-    );
-    // Destory team-relation models
+      });
+    }
+  );
+
+  // Destory team-relation models
+  await sequelize.transaction(async (transaction) => {
     await AuthenticationProvider.destroy({
       where: {
         teamId,
@@ -133,6 +151,13 @@ async function teamPermanentDeleter(team: Team) {
       transaction,
     });
     await Group.unscoped().destroy({
+      where: {
+        teamId,
+      },
+      force: true,
+      transaction,
+    });
+    await Import.destroy({
       where: {
         teamId,
       },
@@ -180,14 +205,7 @@ async function teamPermanentDeleter(team: Team) {
         transaction,
       }
     );
-    await transaction.commit();
-  } catch (err) {
-    if (transaction) {
-      await transaction.rollback();
-    }
-
-    throw err;
-  }
+  });
 }
 
 export default traceFunction({

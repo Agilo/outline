@@ -1,4 +1,4 @@
-import { Collection, Document, Pin, User } from "@server/models";
+import type { Collection, Document, Pin, User } from "@server/models";
 import {
   buildAdmin,
   buildCollection,
@@ -168,6 +168,84 @@ describe("#pins.create", () => {
   });
 });
 
+describe("#pins.info", () => {
+  it("should provide info about a home pin", async () => {
+    const admin = await buildAdmin();
+    const document = await buildDocument({
+      userId: admin.id,
+      teamId: admin.teamId,
+    });
+
+    await server.post("/api/pins.create", {
+      body: {
+        token: admin.getJwtToken(),
+        documentId: document.id,
+      },
+    });
+
+    const res = await server.post("/api/pins.info", {
+      body: {
+        token: admin.getJwtToken(),
+        documentId: document.id,
+      },
+    });
+    const pin = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(pin.data.id).toBeDefined();
+    expect(pin.data.documentId).toEqual(document.id);
+    expect(pin.data.collectionId).toBeFalsy();
+  });
+
+  it("should provide info about a collection pin", async () => {
+    const user = await buildUser();
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+
+    await server.post("/api/pins.create", {
+      body: {
+        token: user.getJwtToken(),
+        documentId: document.id,
+        collectionId: document.collectionId,
+      },
+    });
+
+    const res = await server.post("/api/pins.info", {
+      body: {
+        token: user.getJwtToken(),
+        documentId: document.id,
+        collectionId: document.collectionId,
+      },
+    });
+    const pin = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(pin.data.id).toBeDefined();
+    expect(pin.data.documentId).toEqual(document.id);
+    expect(pin.data.collectionId).toEqual(document.collectionId);
+  });
+
+  it("should return 204 if no pin for input", async () => {
+    const user = await buildUser();
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+
+    const res = await server.post("/api/pins.info", {
+      body: {
+        token: user.getJwtToken(),
+        documentId: document.id,
+        collectionId: null,
+      },
+    });
+
+    expect(res.status).toEqual(204);
+  });
+});
+
 describe("#pins.list", () => {
   let user: User;
   let pins: Pin[];
@@ -245,6 +323,80 @@ describe("#pins.list", () => {
     expect(body.data.pins).toBeTruthy();
     expect(body.data.pins).toHaveLength(0);
   });
+
+  it("should fail with status 403 forbidden when user cannot access the collection", async () => {
+    const otherUser = await buildUser();
+    const privateCollection = await buildCollection({
+      teamId: otherUser.teamId,
+      createdById: otherUser.id,
+      permission: null,
+    });
+    const doc = await buildDocument({
+      teamId: otherUser.teamId,
+      collectionId: privateCollection.id,
+    });
+    await buildPin({
+      createdById: otherUser.id,
+      documentId: doc.id,
+      collectionId: privateCollection.id,
+      teamId: otherUser.teamId,
+    });
+
+    // Create a user on the same team but without access to the private collection
+    const teamMember = await buildUser({ teamId: otherUser.teamId });
+
+    const res = await server.post("/api/pins.list", {
+      body: {
+        token: teamMember.getJwtToken(),
+        collectionId: privateCollection.id,
+      },
+    });
+    const body = await res.json();
+    expect(res.status).toEqual(403);
+    expect(body.message).toEqual("Authorization error");
+  });
+
+  it("should succeed with status 200 ok when user can access the collection", async () => {
+    const collectionWithPins = await buildCollection({
+      teamId: user.teamId,
+      createdById: user.id,
+    });
+    const doc = await buildDocument({
+      teamId: user.teamId,
+      collectionId: collectionWithPins.id,
+    });
+    const pin = await buildPin({
+      createdById: user.id,
+      documentId: doc.id,
+      collectionId: collectionWithPins.id,
+      teamId: user.teamId,
+    });
+
+    const res = await server.post("/api/pins.list", {
+      body: {
+        token: user.getJwtToken(),
+        collectionId: collectionWithPins.id,
+      },
+    });
+    const body = await res.json();
+    expect(res.status).toEqual(200);
+    expect(body.data.pins).toHaveLength(1);
+    expect(body.data.pins[0].id).toEqual(pin.id);
+    expect(body.data.documents).toHaveLength(1);
+    expect(body.data.documents[0].id).toEqual(doc.id);
+  });
+
+  it("should fail with status 403 forbidden when collection does not exist", async () => {
+    const res = await server.post("/api/pins.list", {
+      body: {
+        token: user.getJwtToken(),
+        collectionId: "00000000-0000-0000-0000-000000000000",
+      },
+    });
+    const body = await res.json();
+    expect(res.status).toEqual(403);
+    expect(body.message).toEqual("Authorization error");
+  });
 });
 
 describe("#pins.update", () => {
@@ -292,7 +444,9 @@ describe("#pins.update", () => {
     });
     const body = await res.json();
     expect(res.status).toEqual(400);
-    expect(body.message).toEqual("id: Required");
+    expect(body.message).toEqual(
+      "id: Invalid input: expected string, received undefined"
+    );
   });
 
   it("should fail with status 400 bad request when index is missing", async () => {
@@ -304,7 +458,9 @@ describe("#pins.update", () => {
     });
     const body = await res.json();
     expect(res.status).toEqual(400);
-    expect(body.message).toEqual("index: Required");
+    expect(body.message).toEqual(
+      "index: Invalid input: expected string, received undefined"
+    );
   });
 
   it("should fail with status 400 bad request when an invalid index is sent", async () => {
@@ -378,7 +534,9 @@ describe("#pins.delete", () => {
     });
     const body = await res.json();
     expect(res.status).toEqual(400);
-    expect(body.message).toEqual("id: Required");
+    expect(body.message).toEqual(
+      "id: Invalid input: expected string, received undefined"
+    );
   });
 
   it("should fail with status 403 forbidden when user is disallowed to delete the pin", async () => {

@@ -1,9 +1,8 @@
 import * as React from "react";
 import Frame from "../components/Frame";
-import { EmbedProps as Props } from ".";
+import type { EmbedProps as Props } from ".";
 
-function Vimeo(props: Props) {
-  const { matches } = props.attrs;
+function Vimeo({ matches, ...props }: Props) {
   const videoId = matches[4];
   const hId = matches[5];
 
@@ -16,13 +15,9 @@ function Vimeo(props: Props) {
       title={`Vimeo Embed (${videoId})`}
       height="412px"
       border={false}
-      referrerPolicy="origin"
+      referrerPolicy="strict-origin-when-cross-origin"
     />
   );
 }
-
-Vimeo.ENABLED = [
-  /(http|https)?:\/\/(www\.)?vimeo\.com\/(?:channels\/(?:\w+\/)?|groups\/([^/]*)\/videos\/|)(\d+)(?:\/|\?)?([\d\w]+)?/,
-];
 
 export default Vimeo;

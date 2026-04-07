@@ -1,29 +1,36 @@
 import passport from "@outlinewiki/koa-passport";
 import type { Context } from "koa";
 import Router from "koa-router";
-import { Profile } from "passport";
+import type { Profile } from "passport";
 import { Strategy as SlackStrategy } from "passport-slack-oauth2";
 import { IntegrationService, IntegrationType } from "@shared/types";
-import { integrationSettingsPath } from "@shared/utils/routeHelpers";
 import accountProvisioner from "@server/commands/accountProvisioner";
-import env from "@server/env";
+import { ValidationError } from "@server/errors";
+import apexAuthRedirect from "@server/middlewares/apexAuthRedirect";
 import auth from "@server/middlewares/authentication";
 import passportMiddleware from "@server/middlewares/passport";
+import validate from "@server/middlewares/validate";
+import type { User } from "@server/models";
 import {
   IntegrationAuthentication,
-  Collection,
   Integration,
-  Team,
-  User,
+  Collection,
 } from "@server/models";
-import { AppContext, AuthenticationResult } from "@server/types";
+import { authorize } from "@server/policies";
+import { sequelize } from "@server/storage/database";
+import type { APIContext, AuthenticationResult } from "@server/types";
 import {
-  getClientFromContext,
+  getClientFromOAuthState,
   getTeamFromContext,
+  getUserFromOAuthState,
   StateStore,
 } from "@server/utils/passport";
-import { assertPresent, assertUuid } from "@server/validation";
+import { parseEmail } from "@shared/utils/email";
+import env from "../env";
 import * as Slack from "../slack";
+import * as T from "./schema";
+import { SlackUtils } from "plugins/slack/shared/SlackUtils";
+import { createContext } from "@server/context";
 
 type SlackProfile = Profile & {
   team: {
@@ -51,28 +58,19 @@ const scopes = [
   "identity.team",
 ];
 
-function redirectOnClient(ctx: Context, url: string) {
-  ctx.type = "text/html";
-  ctx.body = `
-<html>
-<head>
-<meta http-equiv="refresh" content="0;URL='${url}'"/>
-</head>`;
-}
-
 if (env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET) {
   const strategy = new SlackStrategy(
     {
       clientID: env.SLACK_CLIENT_ID,
       clientSecret: env.SLACK_CLIENT_SECRET,
-      callbackURL: `${env.URL}/auth/slack.callback`,
+      callbackURL: SlackUtils.callbackUrl(),
       passReqToCallback: true,
       // @ts-expect-error StateStore
       store: new StateStore(),
       scope: scopes,
     },
     async function (
-      ctx: Context,
+      context: Context,
       accessToken: string,
       refreshToken: string,
       params: { expires_in: number },
@@ -84,14 +82,23 @@ if (env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET) {
       ) => void
     ) {
       try {
-        const team = await getTeamFromContext(ctx);
-        const client = getClientFromContext(ctx);
+        const team = await getTeamFromContext(context);
+        const client = getClientFromOAuthState(context);
+        const user =
+          context.state?.auth?.user ?? (await getUserFromOAuthState(context));
 
-        const result = await accountProvisioner({
-          ip: ctx.ip,
+        const { domain } = parseEmail(profile.user.email);
+
+        const ctx = createContext({
+          ip: context.ip,
+          user,
+          authType: context.state?.auth?.type,
+        });
+        const result = await accountProvisioner(ctx, {
           team: {
             teamId: team?.id,
             name: profile.team.name,
+            domain,
             subdomain: profile.team.domain,
             avatarUrl: profile.team.image_230,
           },
@@ -124,140 +131,141 @@ if (env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET) {
   passport.use(strategy);
 
   router.get("slack", passport.authenticate(providerName));
-
   router.get("slack.callback", passportMiddleware(providerName));
 
   router.get(
-    "slack.commands",
-    auth({
-      optional: true,
-    }),
-    async (ctx: AppContext) => {
-      const { code, state, error } = ctx.request.query;
-      const { user } = ctx.state.auth;
-      assertPresent(code || error, "code is required");
-
-      if (error) {
-        ctx.redirect(integrationSettingsPath(`slack?error=${error}`));
-        return;
-      }
-
-      // this code block accounts for the root domain being unable to
-      // access authentication for subdomains. We must forward to the appropriate
-      // subdomain to complete the oauth flow
-      if (!user) {
-        if (state) {
-          try {
-            const team = await Team.findByPk(String(state), {
-              rejectOnEmpty: true,
-            });
-            return redirectOnClient(
-              ctx,
-              `${team.url}/auth/slack.commands?${ctx.request.querystring}`
-            );
-          } catch (err) {
-            return ctx.redirect(
-              integrationSettingsPath(`slack?error=unauthenticated`)
-            );
-          }
-        } else {
-          return ctx.redirect(
-            integrationSettingsPath(`slack?error=unauthenticated`)
-          );
-        }
-      }
-
-      const endpoint = `${env.URL}/auth/slack.commands`;
-      const data = await Slack.oauthAccess(String(code), endpoint);
-      const authentication = await IntegrationAuthentication.create({
-        service: IntegrationService.Slack,
-        userId: user.id,
-        teamId: user.teamId,
-        token: data.access_token,
-        scopes: data.scope.split(","),
-      });
-      await Integration.create({
-        service: IntegrationService.Slack,
-        type: IntegrationType.Command,
-        userId: user.id,
-        teamId: user.teamId,
-        authenticationId: authentication.id,
-        settings: {
-          serviceTeamId: data.team_id,
-        },
-      });
-      ctx.redirect(integrationSettingsPath("slack"));
-    }
-  );
-
-  router.get(
     "slack.post",
-    auth({
-      optional: true,
+    auth({ optional: true }),
+    validate(T.SlackPostSchema),
+    apexAuthRedirect<T.SlackPostReq>({
+      getTeamId: (ctx) => SlackUtils.parseState(ctx.input.query.state)?.teamId,
+      getRedirectPath: (ctx, team) =>
+        SlackUtils.connectUrl({
+          baseUrl: team.url,
+          params: ctx.request.querystring,
+        }),
+      getErrorPath: () => SlackUtils.errorUrl("unauthenticated"),
     }),
-    async (ctx: AppContext) => {
-      const { code, error, state } = ctx.request.query;
+    async (ctx: APIContext<T.SlackPostReq>) => {
+      const { code, error, state } = ctx.input.query;
       const { user } = ctx.state.auth;
-      assertPresent(code || error, "code is required");
-
-      const collectionId = state;
-      assertUuid(collectionId, "collectionId must be an uuid");
 
       if (error) {
-        ctx.redirect(integrationSettingsPath(`slack?error=${error}`));
+        ctx.redirect(SlackUtils.errorUrl(error));
         return;
       }
 
-      // this code block accounts for the root domain being unable to
-      // access authentication for subdomains. We must forward to the
-      // appropriate subdomain to complete the oauth flow
-      if (!user) {
-        try {
-          const collection = await Collection.findOne({
-            where: {
-              id: String(state),
-            },
-            rejectOnEmpty: true,
-          });
-          const team = await Team.findByPk(collection.teamId, {
-            rejectOnEmpty: true,
-          });
-          return redirectOnClient(
-            ctx,
-            `${team.url}/auth/slack.post?${ctx.request.querystring}`
-          );
-        } catch (err) {
-          return ctx.redirect(
-            integrationSettingsPath(`slack?error=unauthenticated`)
-          );
-        }
+      let parsedState;
+      try {
+        parsedState = SlackUtils.parseState<{
+          collectionId: string;
+        }>(state);
+      } catch (_err) {
+        throw ValidationError("Invalid state");
       }
 
-      const endpoint = `${env.URL}/auth/slack.post`;
-      const data = await Slack.oauthAccess(code as string, endpoint);
-      const authentication = await IntegrationAuthentication.create({
-        service: IntegrationService.Slack,
-        userId: user.id,
-        teamId: user.teamId,
-        token: data.access_token,
-        scopes: data.scope.split(","),
-      });
+      const { collectionId, type } = parsedState;
 
-      await Integration.create({
-        service: IntegrationService.Slack,
-        type: IntegrationType.Post,
-        userId: user.id,
-        teamId: user.teamId,
-        authenticationId: authentication.id,
-        collectionId,
-        events: ["documents.update", "documents.publish"],
-        settings: {
-          url: data.incoming_webhook.url,
-          channel: data.incoming_webhook.channel,
-          channelId: data.incoming_webhook.channel_id,
-        },
-      });
-      ctx.redirect(integrationSettingsPath("slack"));
+      switch (type) {
+        case IntegrationType.Post: {
+          const collection = await Collection.findByPk(collectionId, {
+            userId: user.id,
+          });
+          authorize(user, "read", collection);
+          authorize(user, "update", user.team);
+
+          // validation middleware ensures that code is non-null at this point
+          const data = await Slack.oauthAccess(code!, SlackUtils.connectUrl());
+
+          await sequelize.transaction(async (transaction) => {
+            const authentication = await IntegrationAuthentication.create(
+              {
+                service: IntegrationService.Slack,
+                userId: user.id,
+                teamId: user.teamId,
+                token: data.access_token,
+                scopes: data.scope.split(","),
+              },
+              { transaction }
+            );
+            await Integration.create<Integration<IntegrationType.Post>>(
+              {
+                service: IntegrationService.Slack,
+                type: IntegrationType.Post,
+                userId: user.id,
+                teamId: user.teamId,
+                authenticationId: authentication.id,
+                collectionId,
+                events: ["documents.update", "documents.publish"],
+                settings: {
+                  url: data.incoming_webhook.url,
+                  channel: data.incoming_webhook.channel,
+                  channelId: data.incoming_webhook.channel_id,
+                },
+              },
+              { transaction }
+            );
+          });
+          break;
+        }
+
+        case IntegrationType.Command: {
+          authorize(user, "update", user.team);
+
+          // validation middleware ensures that code is non-null at this point
+          const data = await Slack.oauthAccess(code!, SlackUtils.connectUrl());
+
+          await sequelize.transaction(async (transaction) => {
+            const authentication = await IntegrationAuthentication.create(
+              {
+                service: IntegrationService.Slack,
+                userId: user.id,
+                teamId: user.teamId,
+                token: data.access_token,
+                scopes: data.scope.split(","),
+              },
+              { transaction }
+            );
+            await Integration.create<Integration<IntegrationType.Command>>(
+              {
+                service: IntegrationService.Slack,
+                type: IntegrationType.Command,
+                userId: user.id,
+                teamId: user.teamId,
+                authenticationId: authentication.id,
+                settings: {
+                  serviceTeamId: data.team_id,
+                },
+              },
+              { transaction }
+            );
+          });
+          break;
+        }
+
+        case IntegrationType.LinkedAccount: {
+          // validation middleware ensures that code is non-null at this point
+          const data = await Slack.oauthAccess(code!, SlackUtils.connectUrl());
+          await Integration.create<Integration<IntegrationType.LinkedAccount>>({
+            service: IntegrationService.Slack,
+            type: IntegrationType.LinkedAccount,
+            userId: user.id,
+            teamId: user.teamId,
+            settings: {
+              slack: {
+                serviceUserId: data.user_id,
+                serviceTeamId: data.team_id,
+              },
+            },
+          });
+          break;
+        }
+
+        default:
+          throw ValidationError("Invalid integration type");
+      }
+
+      ctx.redirect(SlackUtils.url);
     }
   );
 }

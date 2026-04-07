@@ -1,74 +1,29 @@
 import has from "lodash/has";
-import { Transaction } from "sequelize";
+import isEqual from "lodash/isEqual";
 import { TeamPreference } from "@shared/types";
 import env from "@server/env";
-import { Event, Team, TeamDomain, User } from "@server/models";
+import type { Team, User } from "@server/models";
+import { TeamDomain } from "@server/models";
+import type { APIContext } from "@server/types";
 
-type TeamUpdaterProps = {
+type Props = {
   params: Partial<Omit<Team, "allowedDomains">> & { allowedDomains?: string[] };
-  ip?: string;
   user: User;
   team: Team;
-  transaction: Transaction;
 };
 
-const teamUpdater = async ({
-  params,
-  user,
-  team,
-  ip,
-  transaction,
-}: TeamUpdaterProps) => {
-  const {
-    name,
-    avatarUrl,
-    subdomain,
-    sharing,
-    guestSignin,
-    documentEmbeds,
-    memberCollectionCreate,
-    defaultCollectionId,
-    defaultUserRole,
-    inviteRequired,
-    allowedDomains,
-    preferences,
-  } = params;
+const teamUpdater = async (ctx: APIContext, { params, user, team }: Props) => {
+  const { allowedDomains, preferences, subdomain, ...attributes } = params;
+  team.setAttributes(attributes);
 
   if (subdomain !== undefined && env.isCloudHosted) {
     team.subdomain = subdomain === "" ? null : subdomain;
   }
 
-  if (name) {
-    team.name = name;
-  }
-  if (sharing !== undefined) {
-    team.sharing = sharing;
-  }
-  if (documentEmbeds !== undefined) {
-    team.documentEmbeds = documentEmbeds;
-  }
-  if (guestSignin !== undefined) {
-    team.guestSignin = guestSignin;
-  }
-  if (avatarUrl !== undefined) {
-    team.avatarUrl = avatarUrl;
-  }
-  if (memberCollectionCreate !== undefined) {
-    team.memberCollectionCreate = memberCollectionCreate;
-  }
-  if (defaultCollectionId !== undefined) {
-    team.defaultCollectionId = defaultCollectionId;
-  }
-  if (defaultUserRole !== undefined) {
-    team.defaultUserRole = defaultUserRole;
-  }
-  if (inviteRequired !== undefined) {
-    team.inviteRequired = inviteRequired;
-  }
   if (allowedDomains !== undefined) {
     const existingAllowedDomains = await TeamDomain.findAll({
       where: { teamId: team.id },
-      transaction,
+      transaction: ctx.state.transaction,
     });
 
     // Only keep existing domains if they are still in the list of allowed domains
@@ -84,14 +39,11 @@ const teamUpdater = async ({
     await Promise.all(
       newDomains.map(async (newDomain) => {
         newAllowedDomains.push(
-          await TeamDomain.create(
-            {
-              name: newDomain,
-              teamId: team.id,
-              createdById: user.id,
-            },
-            { transaction }
-          )
+          await TeamDomain.createWithCtx(ctx, {
+            name: newDomain,
+            teamId: team.id,
+            createdById: user.id,
+          })
         );
       })
     );
@@ -100,45 +52,22 @@ const teamUpdater = async ({
     const deletedDomains = existingAllowedDomains.filter(
       (x) => !allowedDomains.includes(x.name)
     );
-    await Promise.all(deletedDomains.map((x) => x.destroy({ transaction })));
-
+    await Promise.all(deletedDomains.map((x) => x.destroyWithCtx(ctx)));
     team.allowedDomains = newAllowedDomains;
   }
+
   if (preferences) {
-    for (const value of Object.values(TeamPreference)) {
-      if (has(preferences, value)) {
-        team.setPreference(value, preferences[value]);
+    for (const key of Object.values(TeamPreference)) {
+      if (
+        has(preferences, key) &&
+        !isEqual(preferences[key], team.getPreference(key))
+      ) {
+        team.setPreference(key, preferences[key]);
       }
     }
   }
 
-  const changes = team.changed();
-
-  const savedTeam = await team.save({
-    transaction,
-  });
-
-  if (changes) {
-    const data = changes.reduce(
-      (acc, curr) => ({ ...acc, [curr]: team[curr] }),
-      {}
-    );
-
-    await Event.create(
-      {
-        name: "teams.update",
-        actorId: user.id,
-        teamId: user.teamId,
-        data,
-        ip,
-      },
-      {
-        transaction,
-      }
-    );
-  }
-
-  return savedTeam;
+  return team.saveWithCtx(ctx);
 };
 
 export default teamUpdater;

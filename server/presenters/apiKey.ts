@@ -1,11 +1,18 @@
-import ApiKey from "@server/models/ApiKey";
+import type ApiKey from "@server/models/ApiKey";
+import presentUser from "./user";
 
-export default function presentApiKey(key: ApiKey) {
+export default function presentApiKey(apiKey: ApiKey) {
   return {
-    id: key.id,
-    name: key.name,
-    secret: key.secret,
-    createdAt: key.createdAt,
-    updatedAt: key.updatedAt,
+    id: apiKey.id,
+    user: presentUser(apiKey.user),
+    userId: apiKey.userId,
+    name: apiKey.name,
+    scope: apiKey.scope,
+    value: apiKey.value,
+    last4: apiKey.last4,
+    createdAt: apiKey.createdAt,
+    updatedAt: apiKey.updatedAt,
+    expiresAt: apiKey.expiresAt,
+    lastActiveAt: apiKey.lastActiveAt,
   };
 }
