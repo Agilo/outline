@@ -127,7 +127,7 @@ jobs:
         uses: easingthemes/ssh-deploy@v2.1.1
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_KEY }}
-          ARGS: "-rltgoDzvO --delete --exclude=.env --exclude=post-deploy"
+          ARGS: "-rltgoDzvO --delete --exclude=.env --exclude=post-deploy --exclude=node_modules"
           SOURCE: "./"
           REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
           REMOTE_USER: ${{ secrets.REMOTE_USER }}
