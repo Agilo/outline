@@ -138,5 +138,5 @@ jobs:
           host: ${{ secrets.REMOTE_HOST }}
           user: ${{ secrets.REMOTE_USER }}
           key: ${{ secrets.SSH_KEY }}
-          command: "bash -i ${{ secrets.REMOTE_TARGET }}post-deploy"
-          args: "-tt -vvv"
+          command: "bash ${{ secrets.REMOTE_TARGET }}post-deploy"
+          args: "-vvv"
