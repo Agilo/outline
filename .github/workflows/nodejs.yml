@@ -124,8 +124,8 @@ jobs:
       - run: yarn install --immutable
       - run: yarn build
       - name: Deploy to Server
-        uses: easingthemes/ssh-deploy@v2.1.1
-        env:
+        uses: easingthemes/ssh-deploy@v2.1.4
+        with:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_KEY }}
           ARGS: "-rltgoDzvO --delete --exclude=.env --exclude=post-deploy --exclude=node_modules"
           SOURCE: "./"
@@ -138,5 +138,6 @@ jobs:
           host: ${{ secrets.REMOTE_HOST }}
           user: ${{ secrets.REMOTE_USER }}
           key: ${{ secrets.SSH_KEY }}
-          command: "bash ${{ secrets.REMOTE_TARGET }}post-deploy"
+          # Ensure remote production dependencies are installed before running post-deploy
+          command: "cd ${{ secrets.REMOTE_TARGET }} && yarn install --production --frozen-lockfile && bash post-deploy"
           args: "-vvv"
