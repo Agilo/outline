@@ -1,5 +1,5 @@
 import isEqual from "fast-deep-equal";
-import uniq from "lodash/uniq";
+import { uniq } from "es-toolkit/compat";
 import { yDocToProsemirrorJSON } from "y-prosemirror";
 import * as Y from "yjs";
 import type { ProsemirrorData } from "@shared/types";
@@ -71,7 +71,7 @@ export default async function documentCollaborativeUpdater({
     const pud = new Y.PermanentUserData(ydoc);
     const pudIds = Array.from(pud.clients.values());
     const collaboratorIds = uniq([
-      ...document.collaboratorIds,
+      ...(document.collaboratorIds ?? []),
       ...sessionCollaboratorIds,
       ...pudIds,
     ]);

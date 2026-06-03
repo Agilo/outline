@@ -1,6 +1,6 @@
 import copy from "copy-to-clipboard";
 import invariant from "invariant";
-import uniqBy from "lodash/uniqBy";
+import { capitalize, uniqBy } from "es-toolkit/compat";
 import {
   DownloadIcon,
   DuplicateIcon,
@@ -39,6 +39,7 @@ import { toast } from "sonner";
 import Icon from "@shared/components/Icon";
 import type { NavigationNode } from "@shared/types";
 import { ExportContentType, TeamPreference } from "@shared/types";
+import { isMobile } from "@shared/utils/browser";
 import { getEventFiles } from "@shared/utils/files";
 import { Week } from "@shared/utils/time";
 import type UserMembership from "~/models/UserMembership";
@@ -80,7 +81,7 @@ import {
   trashPath,
   documentEditPath,
 } from "~/utils/routeHelpers";
-import capitalize from "lodash/capitalize";
+import { documentBreadcrumbText } from "~/components/DocumentBreadcrumb";
 import CollectionIcon from "~/components/Icons/CollectionIcon";
 import type {
   Action,
@@ -108,19 +109,21 @@ export const openDocument = createActionWithChildren({
   shortcut: ["o", "d"],
   keywords: "go to",
   icon: <DocumentIcon />,
-  children: ({ stores }) => {
+  children: ({ stores, t }) => {
     const nodes = stores.collections.navigationNodes.reduce(
       (acc, node) => [...acc, ...node.children],
       [] as NavigationNode[]
     );
     const documents = stores.documents.orderedData;
 
-    return uniqBy([...documents, ...nodes], "id").map((item) =>
-      createInternalLinkAction({
+    return uniqBy([...documents, ...nodes], "id").map((item) => {
+      const document = stores.documents.get(item.id);
+      return createInternalLinkAction({
         // Note: using url which includes the slug rather than id here to bust
         // cache if the document is renamed
         id: item.url,
         name: item.title,
+        description: document ? documentBreadcrumbText(document, t) : undefined,
         icon: item.icon ? (
           <Icon
             value={item.icon}
@@ -128,12 +131,12 @@ export const openDocument = createActionWithChildren({
             color={item.color ?? undefined}
           />
         ) : (
-          <DocumentIcon />
+          <DocumentIcon outline={item.isDraft} />
         ),
         section: DocumentSection,
         to: item.url,
-      })
-    );
+      });
+    });
   },
 });
 
@@ -269,10 +272,14 @@ const createDocumentBefore = createInternalLinkAction({
       return false;
     }
     const document = stores.documents.get(activeDocumentId);
-    return (
-      !!document?.collectionId &&
-      stores.policies.abilities(currentTeamId).createDocument
-    );
+    if (!document?.collectionId) {
+      return false;
+    }
+    const collection = stores.collections.get(document.collectionId);
+    if (collection?.sort.field === "title") {
+      return false;
+    }
+    return stores.policies.abilities(currentTeamId).createDocument;
   },
   to: ({ activeDocumentId, stores, sidebarContext }) => {
     const document = activeDocumentId
@@ -307,10 +314,14 @@ const createDocumentAfter = createInternalLinkAction({
       return false;
     }
     const document = stores.documents.get(activeDocumentId);
-    return (
-      !!document?.collectionId &&
-      stores.policies.abilities(currentTeamId).createDocument
-    );
+    if (!document?.collectionId) {
+      return false;
+    }
+    const collection = stores.collections.get(document.collectionId);
+    if (collection?.sort.field === "title") {
+      return false;
+    }
+    return stores.policies.abilities(currentTeamId).createDocument;
   },
   to: ({ activeDocumentId, stores, sidebarContext }) => {
     const document = activeDocumentId
@@ -335,6 +346,18 @@ const createDocumentAfter = createInternalLinkAction({
   },
 });
 
+function isAlphabeticallySorted(
+  stores: ActionContext["stores"],
+  activeDocumentId: string
+): boolean {
+  const document = stores.documents.get(activeDocumentId);
+  if (!document?.collectionId) {
+    return false;
+  }
+  const collection = stores.collections.get(document.collectionId);
+  return collection?.sort.field === "title";
+}
+
 export const createNewDocument = createActionWithChildren({
   name: ({ t }) => t("New document"),
   analyticsName: "New document",
@@ -342,16 +365,47 @@ export const createNewDocument = createActionWithChildren({
   icon: <NewDocumentIcon />,
   keywords: "create",
   visible: ({ currentTeamId, activeDocumentId, stores }) => {
-    if (!activeDocumentId) {
+    if (!activeDocumentId || !currentTeamId) {
       return false;
     }
-
-    return (
-      !!currentTeamId && stores.policies.abilities(currentTeamId).createDocument
-    );
+    if (!stores.policies.abilities(currentTeamId).createDocument) {
+      return false;
+    }
+    return !isAlphabeticallySorted(stores, activeDocumentId);
   },
   children: [createDocumentBefore, createDocumentAfter, createNestedDocument],
 });
+
+export const createNewDocumentInAlphabeticalCollection =
+  createInternalLinkAction({
+    name: ({ t }) => t("New document"),
+    analyticsName: "New document",
+    section: ActiveDocumentSection,
+    icon: <NewDocumentIcon />,
+    keywords: "create",
+    visible: ({ currentTeamId, activeDocumentId, stores }) => {
+      if (!activeDocumentId || !currentTeamId) {
+        return false;
+      }
+      if (!stores.policies.abilities(currentTeamId).createDocument) {
+        return false;
+      }
+      if (!stores.policies.abilities(activeDocumentId).createChildDocument) {
+        return false;
+      }
+      return isAlphabeticallySorted(stores, activeDocumentId);
+    },
+    to: ({ activeDocumentId, sidebarContext }) => {
+      const [pathname, search] =
+        newNestedDocumentPath(activeDocumentId).split("?");
+
+      return {
+        pathname,
+        search,
+        state: { sidebarContext },
+      };
+    },
+  });
 
 export const starDocument = createAction({
   name: ({ t }) => t("Star"),
@@ -969,7 +1023,11 @@ export const openDocumentInDesktop = createAction({
     }
     const document = stores.documents.get(activeDocumentId);
     return (
-      isCloudHosted && (isMac || isWindows) && !!document && !document.isDeleted
+      isCloudHosted &&
+      (isMac || isWindows) &&
+      !!document &&
+      !document.isDeleted &&
+      !isMobile()
     );
   },
   perform: ({ activeDocumentId, stores }) => {
@@ -988,7 +1046,7 @@ export const presentDocument = createAction({
   section: ActiveDocumentSection,
   icon: <EmbedIcon />,
   shortcut: ["Control+Alt+KeyP"],
-  visible: ({ activeDocumentId }) => !!activeDocumentId,
+  visible: ({ activeDocumentId }) => !!activeDocumentId && !isMobile(),
   perform: ({ activeDocumentId, stores }) => {
     if (stores.ui.presentationData) {
       stores.ui.setPresentingDocument(null);
@@ -1524,6 +1582,7 @@ export const rootDocumentActions = [
   createDocument,
   createDraftDocument,
   createNewDocument,
+  createNewDocumentInAlphabeticalCollection,
   createNestedDocument,
   createTemplateFromDocument,
   deleteDocument,

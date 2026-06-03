@@ -2,6 +2,7 @@ import JWT from "jsonwebtoken";
 import Router from "koa-router";
 import mime from "mime-types";
 import contentDisposition from "content-disposition";
+import { bytesToHumanReadable } from "@shared/utils/files";
 import env from "@server/env";
 import {
   AuthenticationError,
@@ -28,7 +29,7 @@ const router = new Router();
 
 router.post(
   "files.create",
-  rateLimiter(RateLimiterStrategy.TenPerMinute),
+  rateLimiter(RateLimiterStrategy.TwentyFivePerMinute),
   auth(),
   validate(T.FilesCreateSchema),
   timeout(30 * 60 * 1000), // 30 minutes for large file uploads
@@ -43,6 +44,10 @@ router.post(
     const { key } = ctx.input.body;
     const file = ctx.input.file;
 
+    if (!file) {
+      throw ValidationError("Request must include a file parameter");
+    }
+
     const attachment = await Attachment.findOne({
       where: { key },
       rejectOnEmpty: true,
@@ -50,6 +55,16 @@ router.post(
 
     if (attachment.userId !== actor.id) {
       throw AuthorizationError("Invalid key");
+    }
+
+    const declaredSize = Number(attachment.size);
+
+    if (file.size > declaredSize) {
+      throw ValidationError(
+        `The uploaded file exceeds the declared size of ${bytesToHumanReadable(
+          declaredSize
+        )}`
+      );
     }
 
     try {
@@ -61,6 +76,10 @@ router.post(
         );
       }
       throw err;
+    }
+
+    if (declaredSize !== file.size) {
+      await attachment.update({ size: file.size }, { silent: true });
     }
 
     ctx.body = {

@@ -1,5 +1,5 @@
 import Router from "koa-router";
-import isUndefined from "lodash/isUndefined";
+import { isUndefined } from "es-toolkit/compat";
 import type { FindOptions, WhereAttributeHash, WhereOptions } from "sequelize";
 import { Op } from "sequelize";
 import { subMinutes } from "date-fns";
@@ -56,7 +56,7 @@ router.post(
     const { id, collectionId, documentId } = ctx.input.body;
     const { user } = ctx.state.auth;
     const teamFromCtx = await getTeamFromContext(ctx, {
-      includeStateCookie: false,
+      includeOAuthState: false,
     });
 
     // only public link loads will send "id".
@@ -80,27 +80,26 @@ router.post(
 
       const team = teamFromCtx?.id === share.teamId ? teamFromCtx : share.team;
 
-      const [serializedCollection, serializedDocument, serializedTeam] =
-        await Promise.all([
-          collection
-            ? await presentCollection(ctx, collection, {
-                isPublic: cannot(user, "read", collection),
-                shareId: share.id,
-                includeUpdatedAt: share.showLastUpdated,
-              })
-            : null,
-          document
-            ? await presentDocument(ctx, document, {
-                isPublic: cannot(user, "read", document),
-                shareId: share.id,
-                includeUpdatedAt: share.showLastUpdated,
-              })
-            : null,
-          presentPublicTeam(
-            team,
-            !!team.getPreference(TeamPreference.PublicBranding)
-          ),
-        ]);
+      const [serializedCollection, serializedDocument] = await Promise.all([
+        collection
+          ? presentCollection(ctx, collection, {
+              isPublic: cannot(user, "read", collection),
+              shareId: share.id,
+              includeUpdatedAt: share.showLastUpdated,
+            })
+          : Promise.resolve(null),
+        document
+          ? presentDocument(ctx, document, {
+              isPublic: cannot(user, "read", document),
+              shareId: share.id,
+              includeUpdatedAt: share.showLastUpdated,
+            })
+          : Promise.resolve(null),
+      ]);
+      const serializedTeam = presentPublicTeam(
+        team,
+        !!team.getPreference(TeamPreference.PublicBranding)
+      );
 
       ctx.body = {
         data: {
@@ -251,6 +250,7 @@ router.post(
 
 router.post(
   "shares.create",
+  rateLimiter(RateLimiterStrategy.TwentyFivePerMinute),
   auth(),
   validate(T.SharesCreateSchema),
   transaction(),
@@ -280,12 +280,28 @@ router.post(
         })
       : null;
 
-    // user could be creating the share link to share with team members
-    authorize(user, "read", collectionId ? collection : document);
+    if (documentId && !document) {
+      throw NotFoundError();
+    }
+    if (collectionId && !collection) {
+      throw NotFoundError();
+    }
+
+    if (document) {
+      authorize(user, "read", document);
+    }
+    if (collection) {
+      authorize(user, "read", collection);
+    }
 
     if (published) {
       authorize(user, "share", user.team);
-      authorize(user, "share", collectionId ? collection : document);
+      if (document) {
+        authorize(user, "share", document);
+      }
+      if (collection) {
+        authorize(user, "share", collection);
+      }
     }
 
     const [share] = await Share.findOrCreateWithCtx(ctx, {
@@ -298,7 +314,7 @@ router.post(
       defaults: {
         userId: user.id,
         published,
-        includeChildDocuments,
+        includeChildDocuments: published || includeChildDocuments,
         allowIndexing,
         allowSubscriptions,
         showLastUpdated,
@@ -334,6 +350,8 @@ router.post(
       allowSubscriptions,
       showLastUpdated,
       showTOC,
+      title,
+      iconUrl,
     } = ctx.input.body;
 
     const { user } = ctx.state.auth;
@@ -372,6 +390,14 @@ router.post(
     }
     if (showTOC !== undefined) {
       share.showTOC = showTOC;
+    }
+
+    if (!isUndefined(title)) {
+      share.title = title || null;
+    }
+
+    if (!isUndefined(iconUrl)) {
+      share.iconUrl = iconUrl || null;
     }
 
     await share.saveWithCtx(ctx);
@@ -414,7 +440,7 @@ router.get(
   validate(T.SharesSitemapSchema),
   async (ctx: APIContext<T.SharesSitemapReq>) => {
     const { id } = ctx.input.query;
-    const team = await getTeamFromContext(ctx, { includeStateCookie: false });
+    const team = await getTeamFromContext(ctx, { includeOAuthState: false });
 
     const { share, sharedTree } = await loadPublicShare({
       id,
@@ -447,7 +473,7 @@ router.post(
 
     const { shareId, documentId, email } = ctx.input.body;
     const { transaction } = ctx.state;
-    const team = await getTeamFromContext(ctx, { includeStateCookie: false });
+    const team = await getTeamFromContext(ctx, { includeOAuthState: false });
 
     // Validate the share exists and is published
     const { share, document } = await loadPublicShare({
@@ -514,7 +540,7 @@ router.post(
     const confirmUrl = ShareSubscriptionHelper.confirmUrl(subscription);
     const usePublicBranding =
       share.team?.getPreference(TeamPreference.PublicBranding) ?? false;
-    new ShareSubscriptionConfirmEmail({
+    await new ShareSubscriptionConfirmEmail({
       to: email,
       documentTitle: document?.titleWithDefault ?? "",
       confirmUrl,
